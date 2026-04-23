@@ -13,6 +13,7 @@ import { ItemDrawer } from './item-drawer'
 import { Pagination } from './pagination'
 import { SearchBar } from './search-bar'
 import { TableKindTabs } from './table-kind-tabs'
+import { TableNav } from './table-nav'
 
 type SearchParams = Record<string, string | string[] | undefined>
 
@@ -67,6 +68,10 @@ export async function TableView({ boardSlug, kind, searchParams }: Props) {
           </p>
         </div>
       </header>
+
+      <div className="mb-3">
+        <TableNav />
+      </div>
 
       <TableKindTabs boardSlug={boardSlug} active={kind} />
 

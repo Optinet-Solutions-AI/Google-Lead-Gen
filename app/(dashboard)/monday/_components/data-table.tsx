@@ -37,7 +37,7 @@ export function DataTable({ config, rows, selectedItemId }: Props) {
     <>
       {/* Desktop — table (with top mirror scrollbar + drag-to-pan) */}
       <ScrollSync className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
-        <table className="w-full border-collapse text-[13px]">
+        <table className="w-full border-collapse text-[11px]">
           <thead className="bg-[color:var(--color-bg-secondary)]">
             <tr>
               {config.columns.map(col => (
