@@ -2,11 +2,13 @@ import { notFound } from 'next/navigation'
 import {
   DEFAULT_PAGE_SIZE,
   PAGE_SIZE_OPTIONS,
+  getBoardBySlug,
   getTableConfig,
   type TableKind,
 } from '../_lib/tables'
-import { queryTable } from '../_lib/query-data'
+import { queryItemWithUpdates, queryTable } from '../_lib/query-data'
 import { DataTable } from './data-table'
+import { ItemDrawer } from './item-drawer'
 import { Pagination } from './pagination'
 import { SearchBar } from './search-bar'
 import { TableKindTabs } from './table-kind-tabs'
@@ -23,6 +25,9 @@ type Props = {
  * Shared renderer for both the board items page and the board updates
  * page. Reads search params, validates the table, runs the query,
  * renders.
+ *
+ * When viewing an items table and `?item=<monday_item_id>` is set,
+ * also fetches the item row + its updates and renders the ItemDrawer.
  */
 export async function TableView({ boardSlug, kind, searchParams }: Props) {
   const config = getTableConfig(boardSlug, kind)
@@ -34,8 +39,20 @@ export async function TableView({ boardSlug, kind, searchParams }: Props) {
   const sort = typeof sp.sort === 'string' ? sp.sort : null
   const order: 'asc' | 'desc' = sp.order === 'asc' ? 'asc' : 'desc'
   const q = typeof sp.q === 'string' ? sp.q : null
+  const selectedItemId =
+    kind === 'items' && typeof sp.item === 'string' && sp.item.length > 0
+      ? sp.item
+      : ''
 
-  const { rows, total } = await queryTable(config, { page, size, sort, order, q })
+  const [tablePage, drawerData] = await Promise.all([
+    queryTable(config, { page, size, sort, order, q }),
+    selectedItemId
+      ? queryItemWithUpdates(boardSlug, selectedItemId)
+      : Promise.resolve({ item: null, updates: [] }),
+  ])
+
+  const { rows, total } = tablePage
+  const board = getBoardBySlug(boardSlug)
 
   return (
     <section className="flex min-w-0 flex-col">
@@ -57,10 +74,23 @@ export async function TableView({ boardSlug, kind, searchParams }: Props) {
       </div>
 
       <div className="min-w-0 overflow-hidden rounded-md md:rounded-md">
-        <DataTable config={config} rows={rows} />
+        <DataTable
+          config={config}
+          rows={rows}
+          {...(selectedItemId ? { selectedItemId } : {})}
+        />
       </div>
 
       <Pagination page={page} size={size} total={total} />
+
+      {kind === 'items' && (
+        <ItemDrawer
+          itemId={selectedItemId}
+          item={drawerData.item}
+          updates={drawerData.updates}
+          boardLabel={board?.label ?? config.label}
+        />
+      )}
     </section>
   )
 }

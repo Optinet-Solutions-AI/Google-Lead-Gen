@@ -1,6 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase/service'
-import type { TableConfig } from './tables'
+import { getBoardBySlug, type TableConfig } from './tables'
 
 export type DataQueryResult = {
   rows: Array<Record<string, unknown>>
@@ -60,4 +60,51 @@ export async function queryTable(
     )
   }
   return { rows: (data ?? []) as Array<Record<string, unknown>>, total: count ?? 0 }
+}
+
+export type ItemWithUpdates = {
+  item: Record<string, unknown> | null
+  updates: Array<Record<string, unknown>>
+}
+
+/**
+ * Fetches the item matching `mondayItemId` plus every update linked to
+ * that item (ordered newest first, capped at 200). Used by the
+ * right-side drawer that opens when the user clicks a row in an items
+ * table.
+ */
+export async function queryItemWithUpdates(
+  boardSlug: string,
+  mondayItemId: string,
+): Promise<ItemWithUpdates> {
+  const board = getBoardBySlug(boardSlug)
+  if (!board) return { item: null, updates: [] }
+
+  const supabase = createServiceClient()
+
+  const [itemRes, updatesRes] = await Promise.all([
+    supabase
+      .from(board.items.sqlTable)
+      .select('*')
+      .eq('monday_item_id', mondayItemId)
+      .maybeSingle(),
+    supabase
+      .from(board.updates.sqlTable)
+      .select('*')
+      .eq('monday_item_id', mondayItemId)
+      .order('monday_created_at', { ascending: false, nullsFirst: false })
+      .limit(200),
+  ])
+
+  if (itemRes.error) {
+    throw new Error(`Fetching item ${mondayItemId}: ${itemRes.error.message}`)
+  }
+  if (updatesRes.error) {
+    throw new Error(`Fetching updates for ${mondayItemId}: ${updatesRes.error.message}`)
+  }
+
+  return {
+    item: (itemRes.data ?? null) as Record<string, unknown> | null,
+    updates: (updatesRes.data ?? []) as Array<Record<string, unknown>>,
+  }
 }

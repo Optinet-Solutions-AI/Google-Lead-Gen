@@ -1,4 +1,5 @@
 import type { TableConfig } from '../_lib/tables'
+import { ClickableCard, ClickableRow } from './clickable-row'
 import { SortHeader } from './sort-header'
 
 type Row = Record<string, unknown>
@@ -6,6 +7,8 @@ type Row = Record<string, unknown>
 type Props = {
   config: TableConfig
   rows: Row[]
+  /** When viewing an items table, the currently-selected monday_item_id. */
+  selectedItemId?: string
 }
 
 /**
@@ -14,7 +17,8 @@ type Props = {
  * Desktop: scrollable table with sortable headers.
  * Mobile: stacked cards (no horizontal scroll pain).
  */
-export function DataTable({ config, rows }: Props) {
+export function DataTable({ config, rows, selectedItemId }: Props) {
+  const rowsClickable = config.kind === 'items'
   if (rows.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-16 text-center">
@@ -54,24 +58,41 @@ export function DataTable({ config, rows }: Props) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, rowIdx) => (
-              <tr
-                key={String(row.id ?? rowIdx)}
-                className="border-b border-[color:var(--color-border)] transition-colors last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]"
-              >
-                {config.columns.map(col => (
-                  <td
-                    key={col.key}
-                    className={[
-                      'px-3 py-2 align-top text-[color:var(--color-text-primary)]',
-                      col.className ?? '',
-                    ].join(' ')}
+            {rows.map((row, rowIdx) => {
+              const mondayItemId = stringify(row.monday_item_id)
+              const cells = config.columns.map(col => (
+                <td
+                  key={col.key}
+                  className={[
+                    'px-3 py-2 align-top text-[color:var(--color-text-primary)]',
+                    col.className ?? '',
+                  ].join(' ')}
+                >
+                  {renderCell(row[col.key], col.key)}
+                </td>
+              ))
+
+              if (rowsClickable && mondayItemId) {
+                return (
+                  <ClickableRow
+                    key={String(row.id ?? rowIdx)}
+                    mondayItemId={mondayItemId}
+                    isActive={selectedItemId === mondayItemId}
                   >
-                    {renderCell(row[col.key], col.key)}
-                  </td>
-                ))}
-              </tr>
-            ))}
+                    {cells}
+                  </ClickableRow>
+                )
+              }
+
+              return (
+                <tr
+                  key={String(row.id ?? rowIdx)}
+                  className="border-b border-[color:var(--color-border)] transition-colors last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]"
+                >
+                  {cells}
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -79,6 +100,7 @@ export function DataTable({ config, rows }: Props) {
       {/* Mobile — card list */}
       <div className="flex flex-col gap-2 md:hidden">
         {rows.map((row, rowIdx) => {
+          const mondayItemId = stringify(row.monday_item_id)
           const heading = firstNonEmpty(row[config.mobileCard.heading]) ?? '—'
           const badge = config.mobileCard.badge
             ? firstNonEmpty(row[config.mobileCard.badge])
@@ -87,11 +109,8 @@ export function DataTable({ config, rows }: Props) {
             ? firstNonEmpty(row[config.mobileCard.footer])
             : null
 
-          return (
-            <div
-              key={String(row.id ?? rowIdx)}
-              className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3"
-            >
+          const body = (
+            <>
               <div className="mb-2 flex items-start justify-between gap-2">
                 <p className="text-[14px] font-medium text-[color:var(--color-text-primary)]">
                   {heading}
@@ -109,10 +128,7 @@ export function DataTable({ config, rows }: Props) {
                   if (!value) return null
                   const label = config.columns.find(c => c.key === key)?.label ?? key
                   return (
-                    <div
-                      key={key}
-                      className="flex gap-2 text-[12px]"
-                    >
+                    <div key={key} className="flex gap-2 text-[12px]">
                       <dt className="shrink-0 text-[color:var(--color-text-secondary)]">
                         {label}:
                       </dt>
@@ -129,6 +145,27 @@ export function DataTable({ config, rows }: Props) {
                   {footer}
                 </p>
               )}
+            </>
+          )
+
+          if (rowsClickable && mondayItemId) {
+            return (
+              <ClickableCard
+                key={String(row.id ?? rowIdx)}
+                mondayItemId={mondayItemId}
+                isActive={selectedItemId === mondayItemId}
+              >
+                {body}
+              </ClickableCard>
+            )
+          }
+
+          return (
+            <div
+              key={String(row.id ?? rowIdx)}
+              className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3"
+            >
+              {body}
             </div>
           )
         })}
@@ -167,6 +204,13 @@ function renderCell(value: unknown, key: string): React.ReactNode {
   }
 
   return truncate(str, 120)
+}
+
+function stringify(v: unknown): string {
+  if (v == null) return ''
+  if (typeof v === 'string') return v
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  return ''
 }
 
 function firstNonEmpty(v: unknown): string | null {
