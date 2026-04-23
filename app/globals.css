@@ -38,3 +38,23 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* Thin scrollbars app-wide (WebKit + Firefox). */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-secondary);
+}
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}

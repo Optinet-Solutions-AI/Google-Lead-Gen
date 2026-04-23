@@ -8,6 +8,7 @@ import {
 } from '../_lib/tables'
 import { queryItemWithUpdates, queryTable } from '../_lib/query-data'
 import { DataTable } from './data-table'
+import { InfiniteScrollSentinel } from './infinite-scroll-sentinel'
 import { ItemDrawer } from './item-drawer'
 import { Pagination } from './pagination'
 import { SearchBar } from './search-bar'
@@ -80,6 +81,11 @@ export async function TableView({ boardSlug, kind, searchParams }: Props) {
           {...(selectedItemId ? { selectedItemId } : {})}
         />
       </div>
+
+      <InfiniteScrollSentinel
+        currentPage={page}
+        totalPages={Math.max(1, Math.ceil(total / size))}
+      />
 
       <Pagination page={page} size={size} total={total} />
 

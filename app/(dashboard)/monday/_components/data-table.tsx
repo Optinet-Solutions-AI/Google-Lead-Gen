@@ -1,5 +1,6 @@
 import type { TableConfig } from '../_lib/tables'
 import { ClickableCard, ClickableRow } from './clickable-row'
+import { ScrollSync } from './scroll-sync'
 import { SortHeader } from './sort-header'
 
 type Row = Record<string, unknown>
@@ -34,8 +35,8 @@ export function DataTable({ config, rows, selectedItemId }: Props) {
 
   return (
     <>
-      {/* Desktop — table */}
-      <div className="hidden overflow-x-auto rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
+      {/* Desktop — table (with top mirror scrollbar + drag-to-pan) */}
+      <ScrollSync className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[13px]">
           <thead className="bg-[color:var(--color-bg-secondary)]">
             <tr>
@@ -95,7 +96,7 @@ export function DataTable({ config, rows, selectedItemId }: Props) {
             })}
           </tbody>
         </table>
-      </div>
+      </ScrollSync>
 
       {/* Mobile — card list */}
       <div className="flex flex-col gap-2 md:hidden">
