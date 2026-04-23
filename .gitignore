@@ -46,3 +46,6 @@ next-env.d.ts
 .claude/
 .gitnexus/
 supabase/.temp/
+
+# script output (may contain sensitive data dumps)
+scripts/**/output/
