@@ -14,9 +14,11 @@
     "monday:sync": "tsx scripts/monday/sync.ts",
     "monday:register-webhooks": "tsx scripts/monday/register-webhooks.ts",
     "monday:list-webhooks": "tsx scripts/monday/list-webhooks.ts",
-    "monday:unregister-webhooks": "tsx scripts/monday/unregister-webhooks.ts"
+    "monday:unregister-webhooks": "tsx scripts/monday/unregister-webhooks.ts",
+    "auth:seed-admin": "tsx scripts/auth/seed-admin.ts"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.104.0",
     "jose": "^6.2.2",
     "lucide-react": "^1.8.0",
