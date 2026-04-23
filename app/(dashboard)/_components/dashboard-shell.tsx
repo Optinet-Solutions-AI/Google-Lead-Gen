@@ -155,7 +155,7 @@ export function DashboardShell({ children, username }: Props) {
       {/* Main area */}
       <div
         className={[
-          'flex min-h-screen flex-1 flex-col transition-[margin] duration-200',
+          'flex min-h-screen min-w-0 flex-1 flex-col transition-[margin] duration-200',
           expanded ? 'md:ml-60' : 'md:ml-16',
         ].join(' ')}
       >
@@ -171,7 +171,7 @@ export function DashboardShell({ children, username }: Props) {
           <span className="text-[13px] font-semibold">Rooster Partners</span>
         </header>
 
-        <main className="flex-1 bg-[color:var(--color-bg-primary)]">{children}</main>
+        <main className="min-w-0 flex-1 bg-[color:var(--color-bg-primary)]">{children}</main>
       </div>
     </div>
   )

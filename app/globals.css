@@ -24,6 +24,10 @@ body {
   font-family: var(--font-sans);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  /* Prevent the page from ever scrolling horizontally — tables with many
+     columns should scroll *inside* their own overflow-x-auto wrapper, not
+     push the layout out of the viewport. */
+  overflow-x: hidden;
 }
 
 /* Hide scrollbars on horizontal scroll containers used for mobile nav */

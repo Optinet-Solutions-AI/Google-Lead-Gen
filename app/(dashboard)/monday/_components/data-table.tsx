@@ -155,7 +155,7 @@ function renderCell(value: unknown, key: string): React.ReactNode {
         href={prefixUrl(str)}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-[color:var(--color-accent-hover)] underline-offset-2 hover:underline"
+        className="font-semibold underline underline-offset-2 decoration-[color:var(--color-text-primary)]"
       >
         {truncate(str, 40)}
       </a>
