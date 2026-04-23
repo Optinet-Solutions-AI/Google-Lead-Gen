@@ -118,7 +118,7 @@ export function ScrollSync({ children, className }: Props) {
         ref={topRef}
         onScroll={onTopScroll}
         aria-hidden="true"
-        className="overflow-x-auto overflow-y-hidden border-b border-[color:var(--color-border)]"
+        className="discrete-scrollbar overflow-x-auto overflow-y-hidden border-b border-[color:var(--color-border)]"
       >
         <div style={{ width: contentWidth, height: 1 }} />
       </div>

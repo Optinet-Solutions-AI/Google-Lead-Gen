@@ -58,3 +58,19 @@ html {
   scrollbar-width: thin;
   scrollbar-color: var(--color-border-strong) transparent;
 }
+
+/* Extra-subtle scrollbar for the top mirror track above the table. */
+.discrete-scrollbar::-webkit-scrollbar {
+  height: 4px;
+  width: 4px;
+}
+.discrete-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(107, 107, 107, 0.15);
+}
+.discrete-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: rgba(107, 107, 107, 0.35);
+}
+.discrete-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(107, 107, 107, 0.15) transparent;
+}
