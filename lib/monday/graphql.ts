@@ -1,9 +1,8 @@
 /**
- * Minimal Monday.com GraphQL client for one-off server-side scripts.
+ * Monday.com GraphQL client usable from both Next.js API routes and
+ * Node scripts. Reads MONDAY_API_URL and MONDAY_API_TOKEN from env.
  *
- * - Reads MONDAY_API_URL and MONDAY_API_TOKEN from process.env
- * - Retries on HTTP 429 using the Retry-After header
- * - Throws on GraphQL errors (no silent partial responses)
+ * Retries on HTTP 429 using the Retry-After header.
  */
 
 const DEFAULT_API_URL = 'https://api.monday.com/v2'
@@ -44,20 +43,17 @@ export async function mondayGQL<T = unknown>(
     body: JSON.stringify({ query, variables }),
   })
 
-  // Handle rate limit with Retry-After
   if (res.status === 429 && attempt < 5) {
     const waitSeconds = Number(res.headers.get('retry-after') ?? 10)
-    console.log(`[monday] 429 — waiting ${waitSeconds}s (attempt ${attempt + 1}/5)`)
     await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000))
     return mondayGQL<T>(query, variables, attempt + 1)
   }
 
   if (!res.ok) {
-    const body = await res.text()
     throw new MondayApiError(
-      `Monday API returned HTTP ${res.status}`,
+      `Monday API HTTP ${res.status}`,
       res.status,
-      body,
+      await res.text(),
     )
   }
 
@@ -88,7 +84,29 @@ export async function mondayGQL<T = unknown>(
   return body.data
 }
 
-/** Rough throttle helper — sleep between requests to stay under complexity budget. */
 export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
+
+// ---------------------------------------------------------------------------
+// Common query fragments
+// ---------------------------------------------------------------------------
+
+/** Fields we fetch for every item (same shape used by sync + webhooks). */
+export const ITEM_FIELDS = `
+  id
+  name
+  created_at
+  updated_at
+  group { id title }
+  column_values { id type text value }
+  subitems { id }
+`
+
+export const UPDATE_FIELDS = `
+  id
+  body
+  text_body
+  created_at
+  creator { id name email }
+`

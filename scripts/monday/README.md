@@ -1,53 +1,107 @@
-# Monday.com → Supabase sync
+# Monday.com ↔ Supabase
 
-Two scripts for one-time data export from 4 Monday boards into Supabase replica tables.
+Two layers:
 
-## Prereqs
+- **Bulk sync** — one-time (or on-demand) full export of all items + updates.
+- **Real-time webhooks** — Monday pushes every item/update change to our Next.js API route; the handler upserts to Supabase in ~1–3 seconds.
 
-In `.env.local`:
+## Env vars (`.env.local`)
 
 ```
-MONDAY_API_TOKEN=<personal token from Profile → Developers → My Access Tokens>
+MONDAY_API_TOKEN=<personal token — Profile → Developers → My Access Tokens>
+MONDAY_SIGNING_SECRET=<Monday app signing secret — used to verify webhook JWTs>
+MONDAY_APP_ID=<Monday app ID — optional pin for webhook verification>
 NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service role key>
 ```
 
-## 1. Discovery (already run)
+---
+
+## Bulk sync (first-time load)
+
+### 1. Discovery
 
 ```bash
 npm run monday:discover
 ```
 
-Enumerates the 4 target boards, dumps their column schemas + sample items to `scripts/monday/output/schemas.json` (gitignored).
+Enumerates the 4 target boards and dumps their column schemas to `scripts/monday/output/schemas.json` (gitignored).
 
-## 2. Apply the migration
+### 2. Apply the migration
 
-The migration `supabase/migrations/20260423120000_monday_replica_tables.sql` creates 8 tables (4 boards × 2):
+`supabase/migrations/20260423120000_monday_replica_tables.sql` creates 8 tables (4 boards × 2).
 
-- `leads_table`, `leads_updates_table`
-- `affiliates_table`, `affiliates_updates_table`
-- `not_relevant_leads_table`, `not_relevant_leads_updates_table`
-- `email_undelivered_leads_table`, `email_undelivered_leads_updates_table`
+- **Dashboard:** https://supabase.com/dashboard/project/veqfloktkejmyueskltp/sql/new → paste the migration → Run.
+- **CLI:** `supabase link --project-ref veqfloktkejmyueskltp && supabase db push`
 
-Apply one of two ways:
-
-**Option A — Supabase Dashboard:** SQL Editor → paste the file contents → Run.
-
-**Option B — Supabase CLI:**
-```bash
-supabase link --project-ref veqfloktkejmyueskltp
-supabase db push
-```
-
-## 3. Sync
+### 3. Run the sync
 
 ```bash
 npm run monday:sync
 ```
 
-Walks every item on every board, upserts to the matching `_table` + every `updates` to the matching `_updates_table`. Safe to re-run (upserts on `monday_item_id` / `monday_update_id`).
+~15–25 min for ~13,000 items + updates at 25 items/page, 700 ms throttle. Idempotent — safe to re-run.
 
-**Expected runtime:** ~15–25 min for ~13,000 items + their updates at 25 items/page and a 700 ms throttle. Progress is logged per page.
+---
+
+## Real-time webhooks
+
+Endpoint: `POST /api/monday/webhook` (at [app/api/monday/webhook/route.ts](../../app/api/monday/webhook/route.ts))
+
+Handles two request shapes:
+
+1. **Challenge handshake** (during `create_webhook` registration) — echoes the `challenge` field back with 200.
+2. **Event delivery** — verifies the JWT in the `Authorization` header using `MONDAY_SIGNING_SECRET`, then dispatches to the matching handler.
+
+Events subscribed to on every board:
+
+| Event | Action |
+|---|---|
+| `create_item`, `change_column_value`, `change_name` | Fetch item via GraphQL, upsert into `{board}_table` |
+| `item_deleted`, `item_archived` | DELETE from `{board}_table` + its updates |
+| `create_update`, `edit_update` | Fetch update via GraphQL, upsert into `{board}_updates_table` |
+| `delete_update` | DELETE from `{board}_updates_table` |
+
+Events for boards not in `lib/monday/board-registry.ts` are ignored (returns 200) so Monday doesn't retry.
+
+### Deployment prerequisites
+
+- Next.js app deployed to a publicly reachable HTTPS URL (e.g. `https://yourapp.vercel.app`). For local testing: `ngrok http 3000`.
+- `MONDAY_SIGNING_SECRET` set in the deployment's env (Vercel → Project Settings → Environment Variables).
+
+### Register the webhooks
+
+Once deployed (or ngrok'd):
+
+```bash
+npm run monday:register-webhooks -- --url https://yourapp.vercel.app/api/monday/webhook
+```
+
+Registers 4 boards × 8 events = **32 webhooks**. Skips any webhook already registered for the same `(board, event, url)` triple.
+
+Monday does a challenge handshake during registration; our route handler responds correctly, so no extra setup is needed. If the handshake fails (wrong URL, HTTP instead of HTTPS, app not deployed yet), `create_webhook` returns an error and the script logs it.
+
+### List current webhooks
+
+```bash
+npm run monday:list-webhooks
+```
+
+Shows every webhook on the 4 target boards with its ID, event type, and target URL.
+
+### Unregister (cleanup)
+
+```bash
+# Remove ALL webhooks on the 4 boards (use with care)
+npm run monday:unregister-webhooks -- --confirm
+
+# Remove only webhooks pointing at a specific URL (e.g. switching from ngrok → Vercel)
+npm run monday:unregister-webhooks -- --confirm --url https://<old-url>/api/monday/webhook
+```
+
+Requires the explicit `--confirm` flag to prevent accidents.
+
+---
 
 ## Board → table mapping
 
@@ -58,8 +112,13 @@ Walks every item on every board, upserts to the matching `_table` + every `updat
 | Not Relevant Leads | 1237789472 | `not_relevant_leads_table` | `not_relevant_leads_updates_table` | 16 |
 | Email Undelivered Leads | 1237006289 | `email_undelivered_leads_table` | `email_undelivered_leads_updates_table` | 16 |
 
+Config lives in [lib/monday/board-registry.ts](../../lib/monday/board-registry.ts) — one-file edit to change a column map or add a board.
+
+---
+
 ## Known limits
 
-- **Updates are fetched inline (100 per item, per page).** Items with >100 updates will only have their first 100 synced. Acceptable for initial load; a follow-up script can paginate further per item if needed.
-- **Monday files/subitems are not recursively fetched.** The `files` column stores Monday's asset JSON as text; `subitems_count` is the count only — not the subitem rows themselves.
-- **Column values are stored as `text`.** Monday's `text` display value is kept in typed SQL columns (keywords, status, etc.); the full shape lives in `raw_column_values` jsonb for re-processing.
+- **Updates in bulk sync:** 100 per item per page. Items with >100 updates will only have their first 100 synced. Webhooks catch up on changes after that.
+- **Monday files/subitems:** `files` stores Monday's asset JSON as text; `subitems_count` is the count only, not the subitem rows.
+- **Column values:** stored as `text` (Monday's display value) in typed SQL columns; full raw shape lives in `raw_column_values` jsonb.
+- **Schema changes on Monday (added/renamed/deleted columns):** not caught by webhooks. New columns land silently in `raw_column_values` jsonb. Update `column_map` in `lib/monday/board-registry.ts` and apply an `ALTER TABLE` migration to surface them as typed columns.

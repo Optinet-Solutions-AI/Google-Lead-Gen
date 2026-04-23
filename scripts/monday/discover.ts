@@ -8,7 +8,7 @@
 import { config as loadEnv } from 'dotenv'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { mondayGQL, sleep } from './client.js'
+import { mondayGQL, sleep } from '@/lib/monday/graphql'
 
 // Next.js convention: local secrets live in .env.local (gitignored)
 loadEnv({ path: join(process.cwd(), '.env.local') })

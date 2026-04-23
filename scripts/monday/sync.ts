@@ -11,126 +11,22 @@
  * Prereqs:
  *   - .env.local has MONDAY_API_TOKEN, NEXT_PUBLIC_SUPABASE_URL,
  *     SUPABASE_SERVICE_ROLE_KEY
- *   - The migration above has been applied (via Supabase Dashboard
- *     SQL Editor or supabase CLI).
+ *   - The migration has been applied (Supabase Dashboard or CLI).
  */
 
 import { config as loadEnv } from 'dotenv'
 import { join } from 'node:path'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { mondayGQL, sleep } from './client.js'
+import { BOARDS, type BoardConfig } from '@/lib/monday/board-registry'
+import { mondayGQL, sleep, ITEM_FIELDS, UPDATE_FIELDS } from '@/lib/monday/graphql'
+import {
+  mapItemToRow,
+  mapUpdateToRow,
+  type MondayItem,
+  type MondayUpdate,
+} from '@/lib/monday/row-mapping'
 
 loadEnv({ path: join(process.cwd(), '.env.local') })
-
-// ---------------------------------------------------------------------------
-// Board configuration
-// ---------------------------------------------------------------------------
-
-type BoardKey = 'leads' | 'affiliates' | 'not_relevant_leads' | 'email_undelivered_leads'
-
-type BoardConfig = {
-  key: BoardKey
-  monday_board_id: string
-  monday_board_name: string
-  items_table: string
-  updates_table: string
-  /** Maps Monday column id -> SQL column name on the items table. */
-  column_map: Record<string, string>
-}
-
-const BOARDS: BoardConfig[] = [
-  {
-    key: 'leads',
-    monday_board_id: '1236073873',
-    monday_board_name: 'Leads',
-    items_table: 'leads_table',
-    updates_table: 'leads_updates_table',
-    column_map: {
-      text54: 'keywords',
-      status: 'status',
-      text82: 'comments',
-      email: 'email',
-      status_12: 'traffic_size',
-      status_1: 'source',
-      files: 'files',
-      project_owner: 'owner',
-      text0: 'geo',
-      date: 'date',
-      text1: 'website',
-    },
-  },
-  {
-    key: 'affiliates',
-    monday_board_id: '1237788929',
-    monday_board_name: 'Affiliates',
-    items_table: 'affiliates_table',
-    updates_table: 'affiliates_updates_table',
-    column_map: {
-      text54: 'keywords',
-      text3: 'l7_sj_rs_lv_ro',
-      text: 'rb_fp_su',
-      text6__1: 'pm',
-      text46__1: 'nd',
-      text86: 'affiliate_name',
-      status: 'status',
-      text82: 'comments',
-      email: 'email',
-      status_12: 'traffic_size',
-      status_1: 'source',
-      files: 'files',
-      text0: 'geo',
-      project_owner: 'owner',
-      date: 'date',
-      text1: 'website',
-    },
-  },
-  {
-    key: 'not_relevant_leads',
-    monday_board_id: '1237789472',
-    monday_board_name: 'Not Relevant Leads',
-    items_table: 'not_relevant_leads_table',
-    updates_table: 'not_relevant_leads_updates_table',
-    column_map: {
-      text54: 'keywords',
-      text3: 'affiliate_id',
-      text86: 'affiliate_name',
-      status: 'status',
-      text82: 'comments',
-      numbers0: 'google_page',
-      email: 'email',
-      status_12: 'traffic_size',
-      status_1: 'source',
-      files: 'files',
-      text0: 'geo',
-      project_owner: 'owner',
-      date: 'date',
-      text1: 'website',
-    },
-  },
-  {
-    key: 'email_undelivered_leads',
-    monday_board_id: '1237006289',
-    monday_board_name: 'Email Undelivered Leads',
-    items_table: 'email_undelivered_leads_table',
-    updates_table: 'email_undelivered_leads_updates_table',
-    column_map: {
-      long_text5: 'keywords',
-      text3: 'affiliate_id',
-      text86: 'affiliate_name',
-      status: 'status',
-      text82: 'comments',
-      numbers0: 'google_page',
-      email: 'email',
-      status_12: 'traffic_size',
-      status_1: 'source',
-      files: 'files',
-      text0: 'geo',
-      project_owner: 'owner',
-      date: 'date',
-      text1: 'website',
-    },
-  },
-]
 
 // Page sizes — keep under 5M complexity budget per query.
 // With 25 items/page and 100 updates/item + column_values, stays well within.
@@ -139,59 +35,20 @@ const UPDATES_PER_ITEM = 100
 const BATCH_UPSERT_SIZE = 200
 const SLEEP_BETWEEN_REQUESTS_MS = 700
 
-// ---------------------------------------------------------------------------
-// Types for GraphQL responses
-// ---------------------------------------------------------------------------
-
-type ColumnValue = {
-  id: string
-  type: string
-  text: string | null
-  value: string | null
-}
-
-type Update = {
-  id: string
-  body: string | null
-  text_body: string | null
-  created_at: string | null
-  creator: { id: string; name: string; email: string | null } | null
-}
-
-type MondayItem = {
-  id: string
-  name: string
-  created_at: string | null
-  updated_at: string | null
-  group: { id: string; title: string } | null
-  column_values: ColumnValue[]
-  subitems: Array<{ id: string }> | null
-  updates: Update[]
-}
+// sync fetches updates inline with each item; the webhook path does
+// not, so extend the shared MondayItem type locally.
+type MondayItemWithUpdates = MondayItem & { updates: MondayUpdate[] }
 
 type ItemsPage = {
   cursor: string | null
-  items: MondayItem[]
+  items: MondayItemWithUpdates[]
 }
 
-// ---------------------------------------------------------------------------
-// Query builders
-// ---------------------------------------------------------------------------
-
-const ITEM_FIELDS = `
-  id
-  name
-  created_at
-  updated_at
-  group { id title }
-  column_values { id type text value }
-  subitems { id }
+// Compose the fields string with updates nested inline (sync only).
+const ITEM_FIELDS_WITH_UPDATES = `
+  ${ITEM_FIELDS}
   updates(limit: ${UPDATES_PER_ITEM}) {
-    id
-    body
-    text_body
-    created_at
-    creator { id name email }
+    ${UPDATE_FIELDS}
   }
 `
 
@@ -201,7 +58,7 @@ async function fetchFirstPage(boardId: string): Promise<ItemsPage> {
       boards(ids: $id) {
         items_page(limit: $limit) {
           cursor
-          items { ${ITEM_FIELDS} }
+          items { ${ITEM_FIELDS_WITH_UPDATES} }
         }
       }
     }`,
@@ -217,63 +74,13 @@ async function fetchNextPage(cursor: string): Promise<ItemsPage> {
     `query ($cursor: String!, $limit: Int!) {
       next_items_page(cursor: $cursor, limit: $limit) {
         cursor
-        items { ${ITEM_FIELDS} }
+        items { ${ITEM_FIELDS_WITH_UPDATES} }
       }
     }`,
     { cursor, limit: ITEMS_PER_PAGE },
   )
   return data.next_items_page
 }
-
-// ---------------------------------------------------------------------------
-// Row mapping
-// ---------------------------------------------------------------------------
-
-function mapItemToRow(item: MondayItem, board: BoardConfig): Record<string, unknown> {
-  const base: Record<string, unknown> = {
-    monday_item_id: item.id,
-    name: item.name,
-    group_title: item.group?.title ?? null,
-    subitems_count: item.subitems?.length ?? 0,
-    raw_column_values: item.column_values,
-    monday_created_at: item.created_at,
-    monday_updated_at: item.updated_at,
-    synced_at: new Date().toISOString(),
-  }
-
-  // Initialize all mapped columns to null so the upsert payload has them all
-  for (const sqlCol of Object.values(board.column_map)) {
-    base[sqlCol] = null
-  }
-
-  // Fill from Monday column_values (use `text` — the display string)
-  for (const cv of item.column_values) {
-    const sqlCol = board.column_map[cv.id]
-    if (sqlCol) {
-      base[sqlCol] = cv.text ?? null
-    }
-  }
-
-  return base
-}
-
-function mapUpdateToRow(update: Update, mondayItemId: string): Record<string, unknown> {
-  return {
-    monday_update_id: update.id,
-    monday_item_id: mondayItemId,
-    body_html: update.body,
-    body_text: update.text_body,
-    creator_id: update.creator?.id ?? null,
-    creator_name: update.creator?.name ?? null,
-    creator_email: update.creator?.email ?? null,
-    monday_created_at: update.created_at,
-    synced_at: new Date().toISOString(),
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Supabase upserts — batched
-// ---------------------------------------------------------------------------
 
 async function upsertBatch(
   supabase: SupabaseClient,
@@ -293,10 +100,6 @@ async function upsertBatch(
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Per-board sync
-// ---------------------------------------------------------------------------
 
 async function syncBoard(supabase: SupabaseClient, board: BoardConfig): Promise<void> {
   console.log(`\n[${board.monday_board_name}] syncing from board ${board.monday_board_id}`)
@@ -335,10 +138,6 @@ async function syncBoard(supabase: SupabaseClient, board: BoardConfig): Promise<
     `[${board.monday_board_name}] done — ${totalItems} items, ${totalUpdates} updates synced`,
   )
 }
-
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
 
 async function main() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
