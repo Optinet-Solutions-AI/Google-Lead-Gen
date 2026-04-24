@@ -2,9 +2,18 @@
 
 import { useEffect, useState } from 'react'
 import { X, ExternalLink, Mail, Phone, Tag } from 'lucide-react'
-import { getLeadDetails } from '../actions'
+import type { LeadDetail } from '../_lib/detail-query'
 
-type Detail = Awaited<ReturnType<typeof getLeadDetails>>
+type Detail = LeadDetail
+
+async function fetchLeadDetail(leadId: number, signal: AbortSignal): Promise<Detail> {
+  const res = await fetch(`/api/leads/${leadId}`, { signal, cache: 'no-store' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body?.error ?? `HTTP ${res.status}`)
+  }
+  return res.json()
+}
 
 type Props = {
   leadId: number | null
@@ -18,24 +27,23 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
 
   useEffect(() => {
     if (leadId === null) return
-    let cancelled = false
+    const controller = new AbortController()
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
      
     setError(null)
-    getLeadDetails(leadId)
+    fetchLeadDetail(leadId, controller.signal)
       .then(d => {
-        if (!cancelled) setDetail(d)
+        if (!controller.signal.aborted) setDetail(d)
       })
       .catch(e => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+        if (controller.signal.aborted) return
+        setError(e instanceof Error ? e.message : String(e))
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (!controller.signal.aborted) setLoading(false)
       })
-    return () => {
-      cancelled = true
-    }
+    return () => controller.abort()
   }, [leadId])
 
   // When the drawer closes, clear stale state so a subsequent re-open
