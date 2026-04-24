@@ -1,4 +1,7 @@
+'use client'
+
 import Link from 'next/link'
+import { useState } from 'react'
 import { SortHeader } from '../../monday/_components/sort-header'
 import type { LeadRow } from '../_lib/query'
 import {
@@ -9,6 +12,7 @@ import {
   setStagVerifiedLabel,
 } from '../actions'
 import { BooleanLabelEditor } from './boolean-label-editor'
+import { LeadDetailDrawer } from './lead-detail-drawer'
 import { MondayLabelEditor } from './monday-label-editor'
 
 type Props = {
@@ -19,6 +23,7 @@ type Props = {
 }
 
 export function LeadsTable({ rows, jobContext = false }: Props) {
+  const [openLeadId, setOpenLeadId] = useState<number | null>(null)
   if (rows.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-10 text-center text-[12px] text-[color:var(--color-text-secondary)]">
@@ -69,7 +74,9 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
               >
                 {jobContext ? (
                   <>
-                    <Td className="max-w-[220px] truncate" title={row.domain ?? ''}>{row.domain ?? '—'}</Td>
+                    <Td className="max-w-[220px] truncate p-0" title={row.domain ?? ''}>
+                      <DomainButton domain={row.domain} onOpen={() => setOpenLeadId(row.id)} />
+                    </Td>
                     <Td>
                       <TypeBadge type={row.result_type} />
                     </Td>
@@ -83,7 +90,9 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                       <TypeBadge type={row.result_type} />
                     </Td>
                     <Td>{row.overall_position ?? '—'}</Td>
-                    <Td>{row.domain ?? '—'}</Td>
+                    <Td className="p-0">
+                      <DomainButton domain={row.domain} onOpen={() => setOpenLeadId(row.id)} />
+                    </Td>
                   </>
                 )}
                 <Td className="max-w-[280px] truncate">
@@ -178,9 +187,13 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3"
           >
             <div className="mb-1.5 flex items-start justify-between gap-2">
-              <p className="truncate text-[13px] font-medium text-[color:var(--color-text-primary)]">
+              <button
+                type="button"
+                onClick={() => setOpenLeadId(row.id)}
+                className="truncate text-left text-[13px] font-medium text-[color:var(--color-text-primary)] underline-offset-2 hover:underline"
+              >
                 {jobContext ? (row.domain ?? '—') : (row.keyword ?? '—')}
-              </p>
+              </button>
               <TypeBadge type={row.result_type} />
             </div>
             <dl className="space-y-1 text-[12px]">
@@ -271,7 +284,27 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
           </div>
         ))}
       </div>
+
+      <LeadDetailDrawer leadId={openLeadId} onClose={() => setOpenLeadId(null)} />
     </>
+  )
+}
+
+function DomainButton({
+  domain,
+  onOpen,
+}: {
+  domain: string | null
+  onOpen: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="block w-full truncate px-3 py-2 text-left font-medium text-[color:var(--color-text-primary)] underline-offset-2 hover:underline"
+    >
+      {domain ?? '—'}
+    </button>
   )
 }
 
