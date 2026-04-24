@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import {
+  CalendarClock,
   ChevronLeft,
   Database,
   KeyRound,
@@ -28,6 +29,12 @@ const NAV_ITEMS = [
     href: '/scrape',
     icon: Search,
     match: (p: string) => p.startsWith('/scrape'),
+  },
+  {
+    label: 'Schedules',
+    href: '/schedules',
+    icon: CalendarClock,
+    match: (p: string) => p.startsWith('/schedules'),
   },
   {
     label: 'Leads',
