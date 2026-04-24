@@ -135,10 +135,22 @@ def run_scrape(
     keyword: str,
     country_name: str,
     pages: int,
-) -> tuple[subprocess.CompletedProcess[str], Path]:
-    """Invoke the scraper as a subprocess. Returns the result + output path."""
+) -> tuple[int, str, Path, Path]:
+    """
+    Invoke the scraper as a subprocess.
+
+    stdout + stderr are redirected to a combined file on disk so the
+    OS pipe buffer (~64 KB) can never fill and deadlock the child.
+    The scraper is noisy — Chromium / GoLogin / Sentry emit hundreds
+    of KB of telemetry per run, which would block a capture_output
+    subprocess within seconds.
+
+    Returns: (exit_code, combined_log_text, json_output_path, log_path)
+    """
     output_path = Path(RESULTS_DIR) / f"scrape_{WORKER_ID}_{GOLOGIN_PORT}.json"
+    log_path    = Path(RESULTS_DIR) / f"scrape_{WORKER_ID}_{GOLOGIN_PORT}.log"
     output_path.unlink(missing_ok=True)
+    log_path.unlink(missing_ok=True)
 
     cmd = [
         "python3",
@@ -152,16 +164,25 @@ def run_scrape(
     ]
 
     env = {**os.environ, "DISPLAY": ":1"}
-    log.info("launching scraper (port=%d profile=%s)", GOLOGIN_PORT, profile_id[:8])
+    log.info("launching scraper (port=%d profile=%s log=%s)",
+             GOLOGIN_PORT, profile_id[:8], log_path)
 
-    result = subprocess.run(
-        cmd,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=SCRAPE_TIMEOUT_S,
-    )
-    return result, output_path
+    with open(log_path, "w", encoding="utf-8") as log_f:
+        result = subprocess.run(
+            cmd,
+            env=env,
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+            timeout=SCRAPE_TIMEOUT_S,
+        )
+
+    # Read back only what we need to classify the outcome. Scraper logs
+    # can be multi-MB, but the [RESULT] marker is always near the end.
+    try:
+        combined = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        combined = ""
+    return result.returncode, combined, output_path, log_path
 
 
 def process_job(job: dict[str, Any]) -> None:
@@ -188,7 +209,9 @@ def process_job(job: dict[str, Any]) -> None:
     _kill_port()
 
     try:
-        result, output_path = run_scrape(profile_id, keyword, country_name, pages)
+        exit_code, combined_log, output_path, log_path = run_scrape(
+            profile_id, keyword, country_name, pages,
+        )
     except subprocess.TimeoutExpired:
         _kill_port()
         fail_job(job_id, f"Scraper timed out after {SCRAPE_TIMEOUT_S}s")
@@ -198,20 +221,17 @@ def process_job(job: dict[str, Any]) -> None:
         fail_job(job_id, f"Scraper invocation failed: {exc}")
         return
 
-    stdout = result.stdout or ""
-    stderr = result.stderr or ""
-
-    # Classify the outcome by the [RESULT] marker on stdout
-    if "[RESULT] CAPTCHA" in stdout:
-        log.warning("job %s hit CAPTCHA", job_id)
+    # Classify the outcome by the [RESULT] marker the scraper prints.
+    if "[RESULT] CAPTCHA" in combined_log:
+        log.warning("job %s hit CAPTCHA (log=%s)", job_id, log_path)
         _kill_port()
         captcha_job(job_id)
         return
 
-    if "[RESULT] SUCCESS" not in stdout:
+    if "[RESULT] SUCCESS" not in combined_log:
         _kill_port()
-        tail = (stderr or stdout)[-800:]
-        fail_job(job_id, f"Scraper exit={result.returncode} — {tail}")
+        tail = combined_log[-800:] if combined_log else "(empty log)"
+        fail_job(job_id, f"Scraper exit={exit_code} — {tail}")
         return
 
     # Load the results JSON the scraper dropped for us
