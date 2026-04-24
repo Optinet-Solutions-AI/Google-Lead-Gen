@@ -1,6 +1,7 @@
+import sys
 import psutil
 
-PORT = 9222
+DEFAULT_PORT = 9222
 
 def kill_port_process(port):
     killed = False
@@ -21,4 +22,6 @@ def kill_port_process(port):
         print(f"No process found using port {port}")
 
 if __name__ == "__main__":
-    kill_port_process(PORT)
+    # Concurrent workers each kill their own port: `python3 kill_gologin.py 9223`
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PORT
+    kill_port_process(port)

@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 import json
@@ -314,16 +315,26 @@ def main():
 
     parser.add_argument("profile_id", help="GoLogin profile ID")
     parser.add_argument("-k", "--keyword", required=True, help="Search keyword")
-    parser.add_argument("-c", "--country", required=True, help="Country code (e.g., US, UK, AU)")
+    parser.add_argument("-c", "--country", required=True, help="Country display name (e.g. 'Germany')")
     parser.add_argument("--pages", type=int, default=10, help="Number of pages to scrape")
-    parser.add_argument("--webhook", default="https://automateoptinet.app.n8n.cloud/webhook/b166aa52-b779-407c-896b-8e1434aa2a93", help="Webhook URL")
+    parser.add_argument("--port", type=int, default=9222, help="Chrome debugger port (must be unique per concurrent worker)")
+    parser.add_argument("--output", default="/tmp/google_results.json", help="Path to write the results JSON")
+    parser.add_argument("--webhook", default=None, help="Optional webhook URL to POST results to (not used by the Supabase worker)")
 
     args = parser.parse_args()
 
+    # GoLogin API token — required, read from env to support multi-worker
+    # deployments without hardcoding secrets in the source.
+    gologin_token = os.environ.get("GOLOGIN_API_TOKEN")
+    if not gologin_token:
+        print("[ERROR] GOLOGIN_API_TOKEN is not set in the environment", file=sys.stderr)
+        print("[RESULT] FAILED")
+        sys.exit(1)
+
     gl = GoLogin({
-        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2OTgzMTFiZDRlN2JmZWNkZDE3ZTc2YjQiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2OTgzMTMyY2VkOGI3NTY4YTk1NmU4YjIifQ.ATh8yvDYVeMn16tw71ILcfH6P3sa3G1rIerzD5YVNrk",
+        "token": gologin_token,
         "profile_id": args.profile_id,
-        "port": 9222,
+        "port": args.port,
     })
 
     for attempt in range(1, MAX_RETRIES + 1):
@@ -351,7 +362,7 @@ def main():
                 max_pages=args.pages
             )
 
-            save_to_file(data)
+            save_to_file(data, args.output)
 
             if args.webhook:
                 send_to_webhook(data, args.webhook)

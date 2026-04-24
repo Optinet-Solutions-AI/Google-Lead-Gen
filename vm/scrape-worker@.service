@@ -1,0 +1,40 @@
+# ============================================================
+# Systemd template unit for the scrape worker.
+#
+# Install (as root):
+#   sudo cp scrape-worker@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#
+# Start three workers on ports 9222 / 9223 / 9224:
+#   sudo systemctl enable --now scrape-worker@9222
+#   sudo systemctl enable --now scrape-worker@9223
+#   sudo systemctl enable --now scrape-worker@9224
+#
+# Logs:
+#   sudo journalctl -u scrape-worker@9222 -f
+#
+# The `%i` placeholder is replaced with the number after `@`. Each
+# instance reads the SAME /home/ubuntu/.env but overrides WORKER_ID
+# + GOLOGIN_PORT so the three don't step on each other.
+# ============================================================
+
+[Unit]
+Description=Scrape Queue Worker (port %i)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+EnvironmentFile=/home/ubuntu/.env
+Environment=WORKER_ID=vm1-%i
+Environment=GOLOGIN_PORT=%i
+Environment=DISPLAY=:1
+ExecStart=/usr/bin/python3 /home/ubuntu/worker.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
