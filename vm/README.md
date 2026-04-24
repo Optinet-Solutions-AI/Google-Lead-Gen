@@ -4,37 +4,56 @@ Three Python processes per VM, each on a different GoLogin port, all polling the
 
 ## What lives on the VM
 
-| Path | Purpose | Edit in this repo? |
-|---|---|---|
-| `~/gologin_start_profile_api_and_webscrape.py` | The scraper | Yes (edit in repo, scp over) |
-| `~/kill_gologin.py` | Kills whatever is on a given port | Yes |
-| `~/worker.py` | **New.** The polling daemon | Yes |
-| `~/.env` | Secrets (GoLogin token, Supabase URL + service key, worker id + port) | No — one copy per VM, see `.env.example` |
-| `/etc/systemd/system/scrape-worker@.service` | Systemd template that runs N workers | Yes |
+Only four files. Everything else stays in the Next.js repo.
 
-The source of truth for the first three + the systemd unit is this repo. Deploy = `scp` them over (or `git pull` if the VM clones the repo).
+| VM path | Source in repo |
+|---|---|
+| `~/scraper.py` | [scraper.py](../scraper.py) |
+| `~/kill_gologin.py` | [kill_gologin.py](../kill_gologin.py) |
+| `~/worker.py` | [vm/worker.py](worker.py) |
+| `/etc/systemd/system/scrape-worker@.service` | [vm/scrape-worker@.service](scrape-worker@.service) |
+| `~/.env` | template at [vm/.env.example](.env.example) |
 
-## One-time VM setup
+## Deploy / update (one command)
+
+Repo is public, so you can pull the four files directly with `curl`. Run this on the VM any time you edit something in the repo and want the VM to catch up.
 
 ```bash
-# System deps (Ubuntu; adjust for other distros)
+BASE=https://raw.githubusercontent.com/Optinet-Solutions-AI/Google-Lead-Gen/main
+
+curl -fL -o ~/scraper.py                                          "$BASE/scraper.py"
+curl -fL -o ~/kill_gologin.py                                     "$BASE/kill_gologin.py"
+curl -fL -o ~/worker.py                                           "$BASE/vm/worker.py"
+sudo curl -fL -o /etc/systemd/system/scrape-worker@.service       "$BASE/vm/scrape-worker@.service"
+
+sudo systemctl daemon-reload
+sudo systemctl restart 'scrape-worker@*' 2>/dev/null || true
+```
+
+The last line restarts any already-enabled worker instances so they pick up the new code. Harmless if none are running yet.
+
+## One-time setup
+
+Do this once per VM. Skip on subsequent deploys.
+
+### 1. System + Python dependencies
+
+```bash
 sudo apt-get update
 sudo apt-get install -y python3-pip python3-venv xvfb x11vnc
 
-# Python deps for the scraper + worker
-pip3 install --user gologin selenium beautifulsoup4 requests supabase python-dotenv psutil
-
-# Place files
-cp gologin_start_profile_api_and_webscrape.py ~/
-cp kill_gologin.py                             ~/
-cp vm/worker.py                                ~/
-cp vm/.env.example                             ~/.env     # edit with real values
-
-sudo cp vm/scrape-worker@.service /etc/systemd/system/
-sudo systemctl daemon-reload
+pip3 install --user \
+  gologin selenium beautifulsoup4 requests \
+  supabase python-dotenv psutil
 ```
 
-Fill in `~/.env`:
+### 2. Fetch the files
+
+Same command as the "Deploy / update" block above.
+
+### 3. Create `~/.env`
+
+Copy [vm/.env.example](.env.example) — either via curl or paste — and fill in the real values:
 
 ```
 WORKER_ID=vm1-9222                    # overridden per instance by the systemd unit
@@ -43,11 +62,11 @@ POLL_INTERVAL_SECONDS=5
 SCRAPE_TIMEOUT_SECONDS=1200
 SUPABASE_URL=https://veqfloktkejmyueskltp.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=sb_secret_...
-GOLOGIN_API_TOKEN=eyJhbGci...         # was hardcoded in the Python source; now here
+GOLOGIN_API_TOKEN=eyJhbGci...         # was hardcoded in Python, now lives here
 DISPLAY=:1
 ```
 
-## Start three workers
+### 4. Enable three workers
 
 ```bash
 sudo systemctl enable --now scrape-worker@9222
@@ -55,47 +74,42 @@ sudo systemctl enable --now scrape-worker@9223
 sudo systemctl enable --now scrape-worker@9224
 ```
 
-Each instance reads the same `.env` but the systemd unit overrides `WORKER_ID=vm1-<port>` and `GOLOGIN_PORT=<port>`. That way three Chromiums don't fight for the same debugger port.
+Each reads the same `~/.env` but the unit file overrides `WORKER_ID=vm1-<port>` and `GOLOGIN_PORT=<port>` so the three Chromiums don't fight for the same debugger port.
 
 ## Verify
 
 ```bash
-# Follow logs of one worker
 sudo journalctl -u scrape-worker@9222 -f
-
-# Expect on startup:
-#   [INFO] worker started | port=9222 poll=5s
-
-# Insert a test row from Supabase SQL editor or the Next.js UI (commit 4):
-#   insert into scrape_queue (keyword, country_code, pages)
-#     values ('Top 10 online casinos', 'DE', 1);
-
-# One of the three workers picks it up within ~5 s.
+# Expect:  worker started | port=9222 poll=5s
 ```
+
+Insert a test job from the Supabase SQL editor:
+
+```sql
+insert into scrape_queue (keyword, country_code, pages)
+values ('Top 10 online casinos', 'DE', 1);
+```
+
+Within ~5 s one of the three workers claims it (`scrape_queue.status` → `running`, a row appears in `active_profile_locks` for `DE`). In 2–4 min the status flips to `completed` and rows land in `google_lead_gen_table`.
 
 ## Scaling to VM #2
 
-Identical steps on the new VM. Only difference: bump the `WORKER_ID` prefix (`vm2-9222`, `vm2-9223`, `vm2-9224`) so you can tell them apart in logs + the `claimed_by` column. No Next.js change, no queue config change, nothing else.
+Same deploy commands, same `~/.env` template, but set `WORKER_ID=vm2-9222` etc. so you can tell the VMs apart in logs and the `claimed_by` column. No Next.js change, no queue config change, nothing else.
 
-## Stopping / troubleshooting
+## Troubleshooting
 
 ```bash
-# Graceful stop (drains the current job)
+# Graceful stop (drains current job)
 sudo systemctl stop scrape-worker@9222
 
-# Force-kill any stuck GoLogin / Chromium on a port
+# Force-kill anything stuck on a port
 python3 ~/kill_gologin.py 9222
 
-# See claimed-but-not-finished jobs in Supabase:
-#   select * from scrape_queue where status = 'running' order by started_at;
-# If any are stale (started > 30 min ago), Supabase's release_stale_locks()
-# RPC requeues them — runs automatically if you set up pg_cron, or call
-# it manually:
-#   select release_stale_locks(30);
+# Jobs stuck in 'running'?  Manually requeue after 30 min cap:
+# (in Supabase SQL editor)
+select release_stale_locks(30);
 ```
 
 ## Concurrency guarantee
 
-Even with all workers running, two scrapes for the SAME country can't execute at the same time. The `active_profile_locks` table (primary key on `country_code`) blocks that at the database level — the `claim_scrape_job` RPC returns NULL if another worker is currently holding the country. The second worker just tries the next pending job instead.
-
-So "3 workers on one VM" really means "up to 3 DIFFERENT countries in parallel at any instant." Same-country work always serializes.
+Even with all workers running, two scrapes for the **same country** can't execute at the same time. The `active_profile_locks` table (primary key on `country_code`) blocks that at the database level — `claim_scrape_job` returns `NULL` if another worker holds the country, so the waiting worker picks a different pending job instead. Same-country work always serializes.

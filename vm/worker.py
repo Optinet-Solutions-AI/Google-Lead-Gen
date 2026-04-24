@@ -47,7 +47,7 @@ SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_KEY         = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 SCRAPER_PATH         = os.environ.get(
     "SCRAPER_PATH",
-    str(Path.home() / "gologin_start_profile_api_and_webscrape.py"),
+    str(Path.home() / "scraper.py"),
 )
 KILL_SCRIPT_PATH     = os.environ.get(
     "KILL_SCRIPT_PATH",
