@@ -11,6 +11,7 @@ import {
   queryLeads,
 } from '../../leads/_lib/query'
 import { EnrichmentStages } from '../_components/enrichment-stages'
+import { fetchStageSummary } from '../_lib/queries'
 
 type SearchParams = Record<string, string | string[] | undefined>
 
@@ -69,16 +70,19 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const countryCode = typeof sp.country_code === 'string' ? sp.country_code : ''
   const resultType = typeof sp.result_type === 'string' ? sp.result_type : ''
 
-  const { rows, total } = await queryLeads({
-    page,
-    size,
-    sort,
-    order,
-    q,
-    countryCode,
-    resultType,
-    scrapeJobId: id,
-  })
+  const [{ rows, total }, stageSummary] = await Promise.all([
+    queryLeads({
+      page,
+      size,
+      sort,
+      order,
+      q,
+      countryCode,
+      resultType,
+      scrapeJobId: id,
+    }),
+    fetchStageSummary(id),
+  ])
 
   return (
     <div className="flex min-w-0 flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
@@ -119,7 +123,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
 
       <JobMeta job={job} />
 
-      <EnrichmentStages jobId={job.id} />
+      <EnrichmentStages jobId={job.id} summary={stageSummary} />
 
       <div className="flex flex-wrap items-center gap-3 pt-2">
         <SearchBar />

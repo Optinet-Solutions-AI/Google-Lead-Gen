@@ -53,6 +53,97 @@ export type ScrapeJob = {
   enrichment: EnrichmentStatus
 }
 
+export type StageStatus = {
+  lastRunAt: string | null
+  total: number
+  /** The primary "positive" count for the stage — interpretation varies:
+   *  Monday/stagCheck = matched; Affiliate/Rooster/Contact/Stag = positive flag count. */
+  positive: number
+  /** Fetch-errored (only tracked for affiliate detection via confidence=ERROR). */
+  errored: number
+}
+
+export type StageSummary = {
+  monday: StageStatus
+  affiliate: StageStatus
+  rooster: StageStatus
+  contact: StageStatus
+  stag: StageStatus
+  stagCheck: StageStatus
+}
+
+const EMPTY_STATUS = (): StageStatus => ({ lastRunAt: null, total: 0, positive: 0, errored: 0 })
+
+export async function fetchStageSummary(jobId: string): Promise<StageSummary> {
+  const svc = createServiceClient()
+  const { data, error } = await svc
+    .from('google_lead_gen_table')
+    .select(
+      [
+        'id',
+        'monday_checked_at, is_on_monday',
+        'affiliate_checked_at, is_affiliate, affiliate_confidence',
+        'rooster_checked_at, is_rooster_partner',
+        'contact_checked_at, has_contact_details',
+        's_tags_checked_at, has_s_tags',
+        'stag_check_checked_at',
+      ].join(', '),
+    )
+    .eq('scrape_job_id', jobId)
+  if (error) throw error
+
+  const rows = (data ?? []) as unknown as Array<Record<string, unknown>>
+  const s: StageSummary = {
+    monday: EMPTY_STATUS(),
+    affiliate: EMPTY_STATUS(),
+    rooster: EMPTY_STATUS(),
+    contact: EMPTY_STATUS(),
+    stag: EMPTY_STATUS(),
+    stagCheck: EMPTY_STATUS(),
+  }
+  // We also need s-tag-check matches from s_tags_table — query it once and
+  // aggregate matched counts per job.
+  const { data: tagData, error: tagErr } = await svc
+    .from('s_tags_table')
+    .select('lead_id, is_existing_on_monday')
+    .not('is_existing_on_monday', 'is', null)
+  if (tagErr) throw tagErr
+  const tagMatchedByLead = new Map<number, boolean>()
+  for (const t of tagData ?? []) {
+    const leadId = t.lead_id as number
+    if (t.is_existing_on_monday === true) tagMatchedByLead.set(leadId, true)
+    else if (!tagMatchedByLead.has(leadId)) tagMatchedByLead.set(leadId, false)
+  }
+
+  for (const row of rows) {
+    bump(s.monday, row.monday_checked_at as string | null, row.is_on_monday === true, false)
+    bump(
+      s.affiliate,
+      row.affiliate_checked_at as string | null,
+      row.is_affiliate === true,
+      row.affiliate_confidence === 'ERROR',
+    )
+    bump(s.rooster, row.rooster_checked_at as string | null, row.is_rooster_partner === true, false)
+    bump(s.contact, row.contact_checked_at as string | null, row.has_contact_details === true, false)
+    bump(s.stag, row.s_tags_checked_at as string | null, row.has_s_tags === true, false)
+
+    // s-tag dup check: stamp is on parent lead row, match status is per tag
+    const leadId = row.id as number | undefined
+    const tagCheckTs = row.stag_check_checked_at as string | null
+    const tagMatched = leadId != null && tagMatchedByLead.get(leadId) === true
+    bump(s.stagCheck, tagCheckTs, tagMatched, false)
+  }
+  return s
+}
+
+function bump(target: StageStatus, ts: string | null, positive: boolean, errored: boolean) {
+  if (!ts) return
+  target.total += 1
+  if (positive) target.positive += 1
+  if (errored) target.errored += 1
+  if (!target.lastRunAt || ts > target.lastRunAt) target.lastRunAt = ts
+}
+
 export async function listRecentJobs(limit = 30): Promise<ScrapeJob[]> {
   const svc = createServiceClient()
   const { data, error } = await svc
