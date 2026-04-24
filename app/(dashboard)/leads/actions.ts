@@ -68,3 +68,119 @@ export async function setMondayLabel(formData: FormData): Promise<void> {
   revalidatePath('/leads')
   revalidatePath('/scrape', 'layout')
 }
+
+// ============================================================
+// Generic boolean-flag override (used by 7.2–7.6 editors)
+// ============================================================
+
+const BOOL_VALUES: ReadonlySet<string> = new Set(['yes', 'no', 'clear'])
+
+async function setBooleanFlag(params: {
+  leadId: number
+  value: string
+  valueColumn: string
+  overrideColumn: string
+  extraPatch?: Record<string, unknown>
+}) {
+  const { leadId, value, valueColumn, overrideColumn, extraPatch } = params
+  if (!Number.isFinite(leadId)) throw new Error('Missing lead id.')
+  if (!BOOL_VALUES.has(value)) throw new Error(`Invalid value: ${value}`)
+
+  const svc = createServiceClient()
+  let patch: Record<string, unknown>
+  switch (value) {
+    case 'clear':
+      patch = { [valueColumn]: null, [overrideColumn]: null, ...(extraPatch ?? {}) }
+      break
+    case 'yes':
+      patch = { [valueColumn]: true, [overrideColumn]: new Date().toISOString() }
+      break
+    default: // 'no'
+      patch = { [valueColumn]: false, [overrideColumn]: new Date().toISOString() }
+  }
+
+  const { error } = await svc.from('google_lead_gen_table').update(patch).eq('id', leadId)
+  if (error) throw new Error(error.message)
+
+  revalidatePath('/leads')
+  revalidatePath('/scrape', 'layout')
+}
+
+async function assertSignedIn(): Promise<void> {
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) throw new Error('Not signed in.')
+}
+
+export async function setAffiliateLabel(formData: FormData): Promise<void> {
+  await assertSignedIn()
+  await setBooleanFlag({
+    leadId: Number(formData.get('lead_id')),
+    value: String(formData.get('value') ?? ''),
+    valueColumn: 'is_affiliate',
+    overrideColumn: 'is_affiliate_overridden_at',
+  })
+}
+
+export async function setRoosterLabel(formData: FormData): Promise<void> {
+  await assertSignedIn()
+  await setBooleanFlag({
+    leadId: Number(formData.get('lead_id')),
+    value: String(formData.get('value') ?? ''),
+    valueColumn: 'is_rooster_partner',
+    overrideColumn: 'is_rooster_overridden_at',
+  })
+}
+
+export async function setContactLabel(formData: FormData): Promise<void> {
+  await assertSignedIn()
+  await setBooleanFlag({
+    leadId: Number(formData.get('lead_id')),
+    value: String(formData.get('value') ?? ''),
+    valueColumn: 'has_contact_details',
+    overrideColumn: 'is_contact_overridden_at',
+  })
+}
+
+export async function setStagLabel(formData: FormData): Promise<void> {
+  await assertSignedIn()
+  await setBooleanFlag({
+    leadId: Number(formData.get('lead_id')),
+    value: String(formData.get('value') ?? ''),
+    valueColumn: 'has_s_tags',
+    overrideColumn: 'is_stag_overridden_at',
+  })
+}
+
+/**
+ * S-tag verification = "has the duplicate-check run on this lead's tags?"
+ * Uses s_tags_checked_at as the flag. `yes` sets the timestamp to now
+ * (marking it manually verified), `no`/`clear` nulls it.
+ */
+export async function setStagVerifiedLabel(formData: FormData): Promise<void> {
+  await assertSignedIn()
+  const leadId = Number(formData.get('lead_id'))
+  const value = String(formData.get('value') ?? '')
+  if (!Number.isFinite(leadId)) throw new Error('Missing lead id.')
+  if (!BOOL_VALUES.has(value)) throw new Error(`Invalid value: ${value}`)
+
+  const svc = createServiceClient()
+  const now = new Date().toISOString()
+  const patch: Record<string, unknown> =
+    value === 'clear'
+      ? { s_tags_checked_at: null }
+      : value === 'yes'
+        ? { s_tags_checked_at: now }
+        : { s_tags_checked_at: null } // 'no' = mark as not-verified
+
+  const { error } = await svc
+    .from('google_lead_gen_table')
+    .update(patch)
+    .eq('id', leadId)
+  if (error) throw new Error(error.message)
+
+  revalidatePath('/leads')
+  revalidatePath('/scrape', 'layout')
+}

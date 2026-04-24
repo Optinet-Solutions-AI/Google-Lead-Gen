@@ -1,6 +1,14 @@
 import Link from 'next/link'
 import { SortHeader } from '../../monday/_components/sort-header'
 import type { LeadRow } from '../_lib/query'
+import {
+  setAffiliateLabel,
+  setContactLabel,
+  setRoosterLabel,
+  setStagLabel,
+  setStagVerifiedLabel,
+} from '../actions'
+import { BooleanLabelEditor } from './boolean-label-editor'
 import { MondayLabelEditor } from './monday-label-editor'
 
 type Props = {
@@ -27,12 +35,15 @@ export function LeadsTable({ rows }: Props) {
               <Th><SortHeader columnKey="country_code" label="Country" sortable /></Th>
               <Th><SortHeader columnKey="result_type" label="Type" sortable /></Th>
               <Th><SortHeader columnKey="overall_position" label="Pos" sortable /></Th>
-              <Th><SortHeader columnKey="page_number" label="Page" sortable /></Th>
               <Th><SortHeader columnKey="domain" label="Domain" sortable /></Th>
               <Th>URL</Th>
-              <Th>Monday</Th>
+              <Th>Is on Monday?</Th>
+              <Th>Is an affiliate?</Th>
+              <Th>Rooster brand?</Th>
+              <Th>Has contacts?</Th>
+              <Th>S-tags</Th>
+              <Th>Verified s-tags</Th>
               <Th><SortHeader columnKey="batch_id" label="Batch" sortable /></Th>
-              <Th><SortHeader columnKey="created_at" label="Scraped at" sortable /></Th>
             </tr>
           </thead>
           <tbody>
@@ -47,9 +58,8 @@ export function LeadsTable({ rows }: Props) {
                   <TypeBadge type={row.result_type} />
                 </Td>
                 <Td>{row.overall_position ?? '—'}</Td>
-                <Td>{row.page_number ?? '—'}</Td>
                 <Td>{row.domain ?? '—'}</Td>
-                <Td className="max-w-[320px] truncate">
+                <Td className="max-w-[280px] truncate">
                   {row.url ? (
                     <a
                       href={row.url}
@@ -57,7 +67,7 @@ export function LeadsTable({ rows }: Props) {
                       rel="noopener noreferrer"
                       className="font-semibold underline underline-offset-2 decoration-[color:var(--color-text-primary)]"
                     >
-                      {row.url.length > 60 ? row.url.slice(0, 60) + '…' : row.url}
+                      {row.url.length > 55 ? row.url.slice(0, 55) + '…' : row.url}
                     </a>
                   ) : (
                     '—'
@@ -72,6 +82,48 @@ export function LeadsTable({ rows }: Props) {
                   />
                 </Td>
                 <Td>
+                  <BooleanLabelEditor
+                    leadId={row.id}
+                    value={row.is_affiliate}
+                    isOverridden={row.is_affiliate_overridden_at !== null}
+                    action={setAffiliateLabel}
+                  />
+                </Td>
+                <Td>
+                  <BooleanLabelEditor
+                    leadId={row.id}
+                    value={row.is_rooster_partner}
+                    isOverridden={row.is_rooster_overridden_at !== null}
+                    action={setRoosterLabel}
+                  />
+                </Td>
+                <Td>
+                  <BooleanLabelEditor
+                    leadId={row.id}
+                    value={row.has_contact_details}
+                    isOverridden={row.is_contact_overridden_at !== null}
+                    action={setContactLabel}
+                  />
+                </Td>
+                <Td>
+                  <BooleanLabelEditor
+                    leadId={row.id}
+                    value={row.has_s_tags}
+                    isOverridden={row.is_stag_overridden_at !== null}
+                    action={setStagLabel}
+                  />
+                </Td>
+                <Td>
+                  <BooleanLabelEditor
+                    leadId={row.id}
+                    value={row.s_tags_checked_at !== null ? true : row.has_s_tags === null ? null : false}
+                    isOverridden={false}
+                    action={setStagVerifiedLabel}
+                    yesLabel="Verified"
+                    noLabel="Not yet"
+                  />
+                </Td>
+                <Td>
                   {row.scrape_job_id ? (
                     <Link
                       href={`/scrape/${row.scrape_job_id}`}
@@ -82,9 +134,6 @@ export function LeadsTable({ rows }: Props) {
                   ) : (
                     row.batch_id ?? '—'
                   )}
-                </Td>
-                <Td className="text-[color:var(--color-text-secondary)]">
-                  {formatTimestamp(row.created_at)}
                 </Td>
               </tr>
             ))}
@@ -108,14 +157,6 @@ export function LeadsTable({ rows }: Props) {
             <dl className="space-y-1 text-[12px]">
               <Field label="Country">{row.country_code ?? '—'}</Field>
               <Field label="Domain">{row.domain ?? '—'}</Field>
-              <Field label="Monday">
-                <MondayLabelEditor
-                  leadId={row.id}
-                  isOnMonday={row.is_on_monday}
-                  board={row.monday_board}
-                  isOverridden={row.monday_overridden_at !== null}
-                />
-              </Field>
               <Field label="URL">
                 {row.url ? (
                   <a
@@ -130,8 +171,55 @@ export function LeadsTable({ rows }: Props) {
                   '—'
                 )}
               </Field>
-              <Field label="Position">
-                #{row.overall_position ?? '—'} (page {row.page_number ?? '—'})
+              <Field label="Is on Monday?">
+                <MondayLabelEditor
+                  leadId={row.id}
+                  isOnMonday={row.is_on_monday}
+                  board={row.monday_board}
+                  isOverridden={row.monday_overridden_at !== null}
+                />
+              </Field>
+              <Field label="Is an affiliate?">
+                <BooleanLabelEditor
+                  leadId={row.id}
+                  value={row.is_affiliate}
+                  isOverridden={row.is_affiliate_overridden_at !== null}
+                  action={setAffiliateLabel}
+                />
+              </Field>
+              <Field label="Rooster brand?">
+                <BooleanLabelEditor
+                  leadId={row.id}
+                  value={row.is_rooster_partner}
+                  isOverridden={row.is_rooster_overridden_at !== null}
+                  action={setRoosterLabel}
+                />
+              </Field>
+              <Field label="Has contacts?">
+                <BooleanLabelEditor
+                  leadId={row.id}
+                  value={row.has_contact_details}
+                  isOverridden={row.is_contact_overridden_at !== null}
+                  action={setContactLabel}
+                />
+              </Field>
+              <Field label="S-tags">
+                <BooleanLabelEditor
+                  leadId={row.id}
+                  value={row.has_s_tags}
+                  isOverridden={row.is_stag_overridden_at !== null}
+                  action={setStagLabel}
+                />
+              </Field>
+              <Field label="Verified s-tags">
+                <BooleanLabelEditor
+                  leadId={row.id}
+                  value={row.s_tags_checked_at !== null ? true : row.has_s_tags === null ? null : false}
+                  isOverridden={false}
+                  action={setStagVerifiedLabel}
+                  yesLabel="Verified"
+                  noLabel="Not yet"
+                />
               </Field>
               <Field label="Batch">
                 {row.scrape_job_id ? (

@@ -17,10 +17,28 @@ export type LeadRow = {
   result_type: string | null
   batch_id: number | null
   scrape_job_id: string | null
+  // Monday duplicate check (7.1)
   is_on_monday: boolean | null
   monday_board: string | null
   monday_item_id: string | null
   monday_overridden_at: string | null
+  // Affiliate detection (7.2)
+  is_affiliate: boolean | null
+  affiliate_confidence: string | null
+  is_affiliate_overridden_at: string | null
+  // Rooster partner (7.3)
+  is_rooster_partner: boolean | null
+  brand: string | null
+  is_rooster_overridden_at: string | null
+  // Contacts (7.4)
+  has_contact_details: boolean | null
+  is_contact_overridden_at: string | null
+  // S-tags (7.5)
+  has_s_tags: boolean | null
+  is_stag_overridden_at: string | null
+  // S-tag verified (7.6)
+  s_tags_checked_at: string | null
+  s_tag_id: number | null
   created_at: string
 }
 
@@ -53,7 +71,18 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
   let query = svc
     .from('google_lead_gen_table')
     .select(
-      'id, keyword, country, country_code, url, domain, page_number, position_on_page, overall_position, result_type, batch_id, scrape_job_id, is_on_monday, monday_board, monday_item_id, monday_overridden_at, created_at',
+      [
+        'id, keyword, country, country_code, url, domain',
+        'page_number, position_on_page, overall_position',
+        'result_type, batch_id, scrape_job_id',
+        'is_on_monday, monday_board, monday_item_id, monday_overridden_at',
+        'is_affiliate, affiliate_confidence, is_affiliate_overridden_at',
+        'is_rooster_partner, brand, is_rooster_overridden_at',
+        'has_contact_details, is_contact_overridden_at',
+        'has_s_tags, is_stag_overridden_at',
+        's_tags_checked_at, s_tag_id',
+        'created_at',
+      ].join(', '),
       { count: 'exact' },
     )
 
@@ -81,7 +110,7 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
       `queryLeads failed: ${error.message} (details: ${JSON.stringify(error.details ?? {})})`,
     )
   }
-  return { rows: (data ?? []) as LeadRow[], total: count ?? 0 }
+  return { rows: (data ?? []) as unknown as LeadRow[], total: count ?? 0 }
 }
 
 export async function listCountryFilters(): Promise<Array<{ code: string; name: string }>> {
