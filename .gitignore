@@ -49,3 +49,9 @@ supabase/.temp/
 
 # script output (may contain sensitive data dumps)
 scripts/**/output/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
