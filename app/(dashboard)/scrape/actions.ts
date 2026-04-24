@@ -19,13 +19,30 @@ export async function enqueueScrape(
   } = await supabase.auth.getUser()
   if (!user) return { status: 'error', error: 'Not signed in.' }
 
-  const keyword = String(formData.get('keyword') ?? '').trim()
+  const rawKeywords = String(formData.get('keyword') ?? '')
   const country_code = String(formData.get('country_code') ?? '').trim().toUpperCase()
   const pages = clampInt(formData.get('pages'), 1, 10, 1)
   const priority = clampInt(formData.get('priority'), 0, 100, 0)
 
-  if (!keyword) return { status: 'error', error: 'Enter a keyword.' }
-  if (keyword.length > 500) return { status: 'error', error: 'Keyword is too long (max 500 chars).' }
+  // Parse the textarea — one keyword per line, trim whitespace,
+  // dedupe exact duplicates, drop blanks.
+  const keywords = Array.from(
+    new Set(
+      rawKeywords
+        .split(/\r?\n/)
+        .map(k => k.trim())
+        .filter(k => k.length > 0),
+    ),
+  )
+
+  if (keywords.length === 0) return { status: 'error', error: 'Enter at least one keyword.' }
+  const tooLong = keywords.find(k => k.length > 500)
+  if (tooLong) {
+    return {
+      status: 'error',
+      error: `One of the keywords is too long (max 500 chars): "${tooLong.slice(0, 50)}…"`,
+    }
+  }
   if (!country_code) return { status: 'error', error: 'Pick a country.' }
 
   const svc = createServiceClient()
@@ -43,16 +60,17 @@ export async function enqueueScrape(
     return { status: 'error', error: `Country ${country_code} has no GoLogin profile configured.` }
   }
 
-  const { error: insertError } = await svc
-    .from('scrape_queue')
-    .insert({ keyword, country_code, pages, priority })
-
+  const rows = keywords.map(keyword => ({ keyword, country_code, pages, priority }))
+  const { error: insertError } = await svc.from('scrape_queue').insert(rows)
   if (insertError) return { status: 'error', error: insertError.message }
 
   revalidatePath('/scrape')
   return {
     status: 'ok',
-    message: `Queued "${keyword}" for ${country_code} (${pages} page${pages === 1 ? '' : 's'}).`,
+    message:
+      keywords.length === 1
+        ? `Added "${keywords[0]}" to the queue for ${country_code}.`
+        : `Added ${keywords.length} keywords to the queue for ${country_code}.`,
   }
 }
 
