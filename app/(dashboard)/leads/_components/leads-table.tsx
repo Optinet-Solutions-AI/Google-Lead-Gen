@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { SortHeader } from '../../monday/_components/sort-header'
 import type { LeadRow } from '../_lib/query'
+import { MondayLabelEditor } from './monday-label-editor'
 
 type Props = {
   rows: LeadRow[]
@@ -63,7 +64,12 @@ export function LeadsTable({ rows }: Props) {
                   )}
                 </Td>
                 <Td>
-                  <MondayBadge isOnMonday={row.is_on_monday} board={row.monday_board} />
+                  <MondayLabelEditor
+                    leadId={row.id}
+                    isOnMonday={row.is_on_monday}
+                    board={row.monday_board}
+                    isOverridden={row.monday_overridden_at !== null}
+                  />
                 </Td>
                 <Td>
                   {row.scrape_job_id ? (
@@ -103,7 +109,12 @@ export function LeadsTable({ rows }: Props) {
               <Field label="Country">{row.country_code ?? '—'}</Field>
               <Field label="Domain">{row.domain ?? '—'}</Field>
               <Field label="Monday">
-                <MondayBadge isOnMonday={row.is_on_monday} board={row.monday_board} />
+                <MondayLabelEditor
+                  leadId={row.id}
+                  isOnMonday={row.is_on_monday}
+                  board={row.monday_board}
+                  isOverridden={row.monday_overridden_at !== null}
+                />
               </Field>
               <Field label="URL">
                 {row.url ? (
@@ -181,40 +192,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <dt className="shrink-0 text-[color:var(--color-text-secondary)]">{label}:</dt>
       <dd className="min-w-0 text-[color:var(--color-text-primary)]">{children}</dd>
     </div>
-  )
-}
-
-const MONDAY_CATEGORY_STYLES: Record<string, { label: string; cls: string }> = {
-  affiliate: { label: 'Affiliate', cls: 'bg-rose-100 text-rose-800' },
-  leads: { label: 'Leads', cls: 'bg-amber-100 text-amber-800' },
-  updates: { label: 'Updates', cls: 'bg-sky-100 text-sky-800' },
-}
-
-function MondayBadge({
-  isOnMonday,
-  board,
-}: {
-  isOnMonday: boolean | null
-  board: string | null
-}) {
-  if (isOnMonday === null) return <span className="text-[color:var(--color-text-secondary)]">—</span>
-  if (isOnMonday === false) {
-    return (
-      <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
-        No
-      </span>
-    )
-  }
-  const meta = (board && MONDAY_CATEGORY_STYLES[board]) || {
-    label: 'On Monday',
-    cls: 'bg-zinc-200 text-zinc-700',
-  }
-  return (
-    <span
-      className={['inline-block rounded-full px-2 py-0.5 text-[10px] font-medium', meta.cls].join(' ')}
-    >
-      {meta.label}
-    </span>
   )
 }
 
