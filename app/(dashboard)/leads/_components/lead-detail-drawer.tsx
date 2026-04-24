@@ -72,8 +72,9 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
 
   return (
     <>
-      {/* Drawer — no backdrop so pagination + other rows stay clickable */}
-      <aside className="fixed right-0 top-0 z-40 flex h-full w-full max-w-[460px] flex-col border-l border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] shadow-xl">
+      {/* Drawer — no backdrop so pagination + other rows stay clickable.
+          z-50 keeps it above the sidebar (z-40) and mobile backdrop (z-30). */}
+      <aside className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[460px] flex-col border-l border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] shadow-xl">
         <header className="flex items-start justify-between gap-3 border-b border-[color:var(--color-border)] px-4 py-3">
           <div className="min-w-0">
             <p className="truncate text-[14px] font-semibold text-[color:var(--color-text-primary)]">
