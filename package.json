@@ -15,7 +15,8 @@
     "monday:register-webhooks": "tsx scripts/monday/register-webhooks.ts",
     "monday:list-webhooks": "tsx scripts/monday/list-webhooks.ts",
     "monday:unregister-webhooks": "tsx scripts/monday/unregister-webhooks.ts",
-    "auth:seed-admin": "tsx scripts/auth/seed-admin.ts"
+    "auth:seed-admin": "tsx scripts/auth/seed-admin.ts",
+    "gologin:sync-profiles": "tsx scripts/gologin/sync-profiles.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.2",

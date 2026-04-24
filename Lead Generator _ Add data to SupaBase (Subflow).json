@@ -1,0 +1,671 @@
+{
+  "name": "Lead Generator | Add data to SupaBase (Subflow)",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Get the first input item\nconst input = items[0].json.body.results;\n\n// Map each result into a proper n8n item\nreturn input.map(result => ({ json: result }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        224
+      ],
+      "id": "e493efda-72df-4439-8b70-2b72fcaf2de2",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        976,
+        224
+      ],
+      "id": "3c75690d-fcff-416c-a62f-b4440a92e180",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "DISPLAY=:1 python3 ~/kill_gologin.py"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        80,
+        32
+      ],
+      "id": "4ce952f9-142a-40e4-86ee-98945435bcee",
+      "name": "Close all Gologin Sessions",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "3Ovath7RL1KFFNLB",
+          "name": "SSH Password account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 0.3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1648,
+        304
+      ],
+      "id": "f818e8aa-a273-4798-8c57-a976bb6895f8",
+      "name": "Wait",
+      "webhookId": "bde851f2-62d8-4b08-a271-f9dfd426c448"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -144,
+        -192
+      ],
+      "id": "43471c0b-652d-465a-a1c6-3d5666b86932",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        80,
+        -192
+      ],
+      "id": "3082e1a9-be4e-44f6-9842-0586b6cd79aa",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "tableId": "google_lead_gen_table",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "keyword",
+              "fieldValue": "={{ $json.keyword }}"
+            },
+            {
+              "fieldId": "country",
+              "fieldValue": "={{ $json.country }}"
+            },
+            {
+              "fieldId": "url",
+              "fieldValue": "={{ $json.url }}"
+            },
+            {
+              "fieldId": "domain",
+              "fieldValue": "={{ $json.full_url }}"
+            },
+            {
+              "fieldId": "position_on_page",
+              "fieldValue": "={{ $json.position }}"
+            },
+            {
+              "fieldId": "page_number",
+              "fieldValue": "={{ $json.page }}"
+            },
+            {
+              "fieldId": "overall_position",
+              "fieldValue": "={{ $json.overall_position }}"
+            },
+            {
+              "fieldId": "result_type",
+              "fieldValue": "={{ $json.resultType }}"
+            },
+            {
+              "fieldId": "batch_id",
+              "fieldValue": "={{ $json.new_batch_id }}"
+            },
+            {
+              "fieldId": "time_stamp",
+              "fieldValue": "={{ $now }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1424,
+        224
+      ],
+      "id": "d4109c61-ee60-4e1c-b44d-ce209faef82e",
+      "name": "Create a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"Success\",\n  \"message\": \"Successful Scraping\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1200,
+        32
+      ],
+      "id": "ab425100-9f67-487f-b39f-3ff59e8c33ce",
+      "name": "Success Webhook"
+    },
+    {
+      "parameters": {
+        "url": "https://ogzxpnwoxakynexyfvad.supabase.co/rest/v1/google_lead_gen_table?select=batch_id&order=id.desc&limit=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        80,
+        416
+      ],
+      "id": "29627408-5c0c-4df2-ae97-31af7d603a31",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "JCKadasIFFd6No3l",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        304,
+        320
+      ],
+      "id": "b6387ea9-82a7-40cf-8ed1-30b5110e94ca",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// Each item's .json is one object from the original array\nconst allObjects = items.map(item => item.json);\n\n// Find the batch_id value\nconst batchObj = allObjects.find(obj => obj.batch_id !== undefined);\nconst batch_id = batchObj?.batch_id;\n\n// Filter out the batch_id object and inject batch_id into the rest\nconst result = allObjects\n  .filter(obj => obj.batch_id === undefined)\n  .map(obj => ({ json: { ...obj, batch_id } }));\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        752,
+        224
+      ],
+      "id": "5f1820b3-33fa-41d7-b312-254efeb7fc35",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "45837550-617f-4538-a444-d57df61b8a96",
+              "name": "=new_batch_id",
+              "value": "={{ ($json.batch_id ?? 0) + 1 }}",
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1200,
+        224
+      ],
+      "id": "531fa486-c1af-4b12-b4f7-1809c9ac111e",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a73376f3-6a52-4d82-bb99-1adce2284afc",
+              "leftValue": "={{ $('Merge').first().json.url }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        528,
+        320
+      ],
+      "id": "d609a56c-d0d4-41f7-bfdc-3c6fbff99429",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"The GoLogin Browser Being Tagged as Bot, as No Results Have Been Scraped. Please wait a bit.\",\n  \"failed_node\": \"Run Web Scraper Script\", \n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        752,
+        416
+      ],
+      "id": "74350ca8-2485-4ff2-b142-880f715eaeeb",
+      "name": "Error Webhook1"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "b166aa52-b779-407c-896b-8e1434aa2a93",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -144,
+        224
+      ],
+      "id": "25407df8-cba3-4b10-af0f-cbdf29bf37e6",
+      "name": "Webhook",
+      "webhookId": "b166aa52-b779-407c-896b-8e1434aa2a93",
+      "executeOnce": true
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "automateoptinet.app.n8n.cloud",
+            "user-agent": "python-requests/2.31.0",
+            "content-length": "4245",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "54.79.22.202",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "AU",
+            "cf-ray": "9ea2bc35df4698ec-SYD",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "x-forwarded-for": "54.79.22.202, 162.158.39.161",
+            "x-forwarded-host": "automateoptinet.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-31-557477d57d-hfrzn",
+            "x-is-trusted": "yes",
+            "x-real-ip": "54.79.22.202"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "params": {
+              "keyword": "Top 10 online casinos",
+              "country": "Germany"
+            },
+            "total_results": 13,
+            "organic_results": 12,
+            "ppc_results": 1,
+            "pages_scraped": 1,
+            "timestamp": "2026-04-10 15:20:21",
+            "results": [
+              {
+                "url": "https://www.bild.de/casinos/",
+                "full_url": "https://www.bild.de",
+                "title": "Die besten Online Casinos in Deutschland 2026",
+                "resultType": "Organic",
+                "page": 1,
+                "position": 1,
+                "overall_position": 1,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              },
+              {
+                "url": "https://www.augsburger-allgemeine.de/casinos/",
+                "full_url": "https://www.augsburger-allgemeine.de",
+                "title": "Beste Online Casinos für legale Glücksspiele in Deutschland",
+                "resultType": "Organic",
+                "page": 1,
+                "position": 2,
+                "overall_position": 2,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              },
+              {
+                "url": "https://casino.welt.de/",
+                "full_url": "https://casino.welt.de",
+                "title": "Beste Online Casinos in Deutschland 2026 | 10+ Legale ...",
+                "resultType": "Organic",
+                "page": 1,
+                "position": 3,
+                "overall_position": 3,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              },
+              {
+                "url": "https://coincierge.de/online-casinos/serioese-casinos/",
+                "full_url": "https://coincierge.de",
+                "title": "Seriöse Online Casinos 2026 - Top 10 der sichersten ...",
+                "resultType": "Organic",
+                "page": 1,
+                "position": 4,
+                "overall_position": 4,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              },
+              {
+                "url": "https://thelistwire.usatoday.com/story/casinos/2026/04/08/top-10-online-casinos-april-2026-rankings/88611195007/",
+                "full_url": "https://thelistwire.usatoday.com",
+                "title": "Top-10 Online Casinos in U.S. | April 2026 Expert Rankings",
+                "resultType": "Organic",
+                "page": 1,
+                "position": 5,
+                "overall_position": 5,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              },
+              {
+                "url": "https://www.askgamblers.com/online-casinos/top-10",
+                "full_url": "https://www.askgamblers.com",
+                "title": "Our Picks: Top 10 Online Casinos in 2026",
+                "resultType": "Organic",
+                "page": 1,
+                "position": 6,
+                "overall_position": 6,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              },
+              {
+                "url": "https://www.rotowire.com/article/top-10-online-casinos-in-the-us-for-real-money-in-april-2026-110580",
+                "full_url": "https://www.rotowire.com",
+                "title": "Top 10 Online Casinos In The U.S. For Real Money In April, 2026 | RotoWire",
+                "resultType": "Organic",
+                "page": 1,
+                "position": 7,
+                "overall_position": 7,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              },
+              {
+                "url": "https://www.legalsportsreport.com/online-casinos/",
+                "full_url": "https://www.legalsportsreport.com",
+                "title": "Best Online Casinos That Pay Real Money for April 2026",
+                "resultType": "Organic",
+                "page": 1,
+                "position": 8,
+                "overall_position": 8,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              },
+              {
+                "url": "https://media.hopper.com/articles/the-ten-best-casinos-in-the-world",
+                "full_url": "https://media.hopper.com",
+                "title": "The Ten Best Casinos in the World - Hopper",
+                "resultType": "Organic",
+                "page": 1,
+                "position": 10,
+                "overall_position": 10,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              },
+              {
+                "url": "https://www.spielbank.com.de/online-casinos/beste/",
+                "full_url": "https://www.spielbank.com.de",
+                "title": "Beste Online Casinos | Unsere 10 TOP ...",
+                "resultType": "Organic",
+                "page": 1,
+                "position": 11,
+                "overall_position": 11,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              },
+              {
+                "url": "https://www.american-football.com/news/die-besten-online-casinos-in-deutschland-top-10-im-Ueberblick-5790",
+                "full_url": "https://www.american-football.com",
+                "title": "Die besten Online-Casinos in Deutschland: Top 10 im Überblick",
+                "resultType": "Organic",
+                "page": 1,
+                "position": 12,
+                "overall_position": 12,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              },
+              {
+                "url": "https://apps.apple.com/de/app/top-10-deutsche-online-casino/id1022263734",
+                "full_url": "https://apps.apple.com",
+                "title": "Top 10 Deutsche Online Casino - App Store",
+                "resultType": "Organic",
+                "page": 1,
+                "position": 13,
+                "overall_position": 13,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              },
+              {
+                "url": "https://ad.doubleclick.net/",
+                "full_url": "https://ad.doubleclick.net",
+                "title": "",
+                "resultType": "PPC",
+                "page": 1,
+                "position": null,
+                "overall_position": 14,
+                "keyword": "Top 10 online casinos",
+                "country": "Germany"
+              }
+            ]
+          },
+          "webhookUrl": "https://automateoptinet.app.n8n.cloud/webhook/b166aa52-b779-407c-896b-8e1434aa2a93",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Success Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close all Gologin Sessions": {
+      "main": [
+        []
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a row": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Close all Gologin Sessions",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "1b194569-048f-478c-9cb7-b86de3afe934",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "ciMs_kI63iL-Z13EiJTic",
+  "tags": []
+}
