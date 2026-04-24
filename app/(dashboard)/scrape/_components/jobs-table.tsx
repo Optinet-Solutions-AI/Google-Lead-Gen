@@ -1,5 +1,6 @@
 import Link from 'next/link'
-import type { ScrapeJob } from '../_lib/queries'
+import { Check } from 'lucide-react'
+import { PIPELINE_STAGES, type EnrichmentStatus, type ScrapeJob } from '../_lib/queries'
 
 type Props = { jobs: ScrapeJob[] }
 
@@ -9,6 +10,39 @@ const STATUS_STYLES: Record<ScrapeJob['status'], string> = {
   completed: 'bg-green-100 text-green-800',
   failed: 'bg-red-100 text-red-800',
   captcha: 'bg-amber-100 text-amber-800',
+}
+
+function PipelineBadges({
+  status,
+  enrichment,
+}: {
+  status: ScrapeJob['status']
+  enrichment: EnrichmentStatus
+}) {
+  if (status !== 'completed') {
+    return <span className="text-[color:var(--color-text-secondary)]">—</span>
+  }
+  return (
+    <div className="flex items-center gap-1">
+      {PIPELINE_STAGES.map(stage => {
+        const applied = enrichment[stage.key] === true
+        return (
+          <span
+            key={stage.key}
+            title={`${stage.label}: ${applied ? 'applied' : 'not yet'}`}
+            className={[
+              'inline-flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-medium',
+              applied
+                ? 'bg-emerald-100 text-emerald-700'
+                : 'border border-dashed border-[color:var(--color-border)] text-[color:var(--color-text-secondary)]',
+            ].join(' ')}
+          >
+            {applied ? <Check className="h-2.5 w-2.5" strokeWidth={3} /> : null}
+          </span>
+        )
+      })}
+    </div>
+  )
 }
 
 export function JobsTable({ jobs }: Props) {
@@ -33,6 +67,7 @@ export function JobsTable({ jobs }: Props) {
             <Th>Started</Th>
             <Th>Duration</Th>
             <Th>Results</Th>
+            <Th>Pipeline</Th>
             <Th>Batch</Th>
             <Th>Error</Th>
           </tr>
@@ -67,6 +102,9 @@ export function JobsTable({ jobs }: Props) {
                 <LinkTd href={href}>{formatTimestamp(job.started_at)}</LinkTd>
                 <LinkTd href={href}>{formatDuration(job.started_at, job.completed_at)}</LinkTd>
                 <LinkTd href={href}>{totalResults(job.result_summary) ?? '—'}</LinkTd>
+                <LinkTd href={href}>
+                  <PipelineBadges status={job.status} enrichment={job.enrichment} />
+                </LinkTd>
                 <LinkTd href={href}>{job.batch_id ?? '—'}</LinkTd>
                 <LinkTd
                   href={href}
@@ -117,6 +155,11 @@ export function JobsCardList({ jobs }: Props) {
               <span>{totalResults(job.result_summary)} results</span>
             )}
           </div>
+          {job.status === 'completed' && (
+            <div className="mt-1.5">
+              <PipelineBadges status={job.status} enrichment={job.enrichment} />
+            </div>
+          )}
           {job.error_message && (
             <p className="mt-1.5 text-[11px] text-red-700" title={job.error_message}>
               {job.error_message.length > 100
