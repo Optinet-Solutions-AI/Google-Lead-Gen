@@ -4,13 +4,15 @@ import { revalidatePath } from 'next/cache'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 
-/** All accepted manual values for the Monday duplicate-check label. */
-export const MONDAY_LABEL_VALUES = ['no', 'leads', 'affiliate', 'updates', 'clear'] as const
-export type MondayLabelValue = (typeof MONDAY_LABEL_VALUES)[number]
+type MondayLabelValue = 'no' | 'leads' | 'affiliate' | 'updates' | 'clear'
 
-function isMondayLabelValue(v: string): v is MondayLabelValue {
-  return (MONDAY_LABEL_VALUES as readonly string[]).includes(v)
-}
+const VALID: ReadonlySet<string> = new Set([
+  'no',
+  'leads',
+  'affiliate',
+  'updates',
+  'clear',
+])
 
 /**
  * Set the Monday match label for a single lead row.
@@ -27,9 +29,10 @@ export async function setMondayLabel(formData: FormData): Promise<void> {
   if (!user) throw new Error('Not signed in.')
 
   const leadId = Number(formData.get('lead_id'))
-  const value = String(formData.get('value') ?? '')
+  const rawValue = String(formData.get('value') ?? '')
   if (!Number.isFinite(leadId)) throw new Error('Missing lead id.')
-  if (!isMondayLabelValue(value)) throw new Error(`Invalid value: ${value}`)
+  if (!VALID.has(rawValue)) throw new Error(`Invalid value: ${rawValue}`)
+  const value = rawValue as MondayLabelValue
 
   const svc = createServiceClient()
 
