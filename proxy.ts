@@ -3,9 +3,10 @@ import { updateSession } from '@/lib/supabase/middleware'
 
 /**
  * Protects every route except:
- *   /login               — the sign-in page itself
- *   /api/monday/webhook  — Monday authenticates via HS256 JWT, not Supabase
- *   static assets        — handled by the `matcher` below
+ *   /login                  — the sign-in page itself
+ *   /api/monday/webhook     — Monday authenticates via HS256 JWT, not Supabase
+ *   /api/scheduler/tick     — Vercel cron authenticates via Bearer CRON_SECRET
+ *   static assets           — handled by the `matcher` below
  *
  * Unauthenticated users on a protected route are redirected to /login
  * with ?from=<original-path> so the login page can bounce them back.
@@ -13,8 +14,12 @@ import { updateSession } from '@/lib/supabase/middleware'
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Never gate the webhook or the login page itself
-  if (pathname.startsWith('/api/monday/webhook') || pathname.startsWith('/login')) {
+  // Never gate the webhook, the scheduler cron, or the login page itself
+  if (
+    pathname.startsWith('/api/monday/webhook') ||
+    pathname.startsWith('/api/scheduler/tick') ||
+    pathname.startsWith('/login')
+  ) {
     return NextResponse.next()
   }
 
@@ -31,10 +36,8 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Run on all routes except static assets and the webhook endpoint.
-  // The `api/monday/webhook` early-return above handles that case too,
-  // but excluding it from the matcher avoids even entering middleware.
+  // Run on all routes except static assets + endpoints that authenticate themselves.
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|api/monday/webhook).*)',
+    '/((?!_next/static|_next/image|favicon.ico|api/monday/webhook|api/scheduler/tick).*)',
   ],
 }

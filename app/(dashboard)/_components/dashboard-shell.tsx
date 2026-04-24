@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Search,
   X,
 } from 'lucide-react'
 import { signOutAction } from '../_actions/auth'
@@ -20,6 +21,12 @@ const NAV_ITEMS = [
     href: '/',
     icon: LayoutDashboard,
     match: (p: string) => p === '/',
+  },
+  {
+    label: 'Scrape',
+    href: '/scrape',
+    icon: Search,
+    match: (p: string) => p.startsWith('/scrape'),
   },
   {
     label: 'Monday Data',
