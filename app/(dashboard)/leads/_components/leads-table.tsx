@@ -184,11 +184,10 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-const MONDAY_BOARD_STYLES: Record<string, { label: string; cls: string }> = {
-  affiliates: { label: 'Rooster brand', cls: 'bg-rose-100 text-rose-800' },
-  leads: { label: 'On Leads', cls: 'bg-amber-100 text-amber-800' },
-  not_relevant_leads: { label: 'Not relevant', cls: 'bg-zinc-200 text-zinc-700' },
-  email_undelivered_leads: { label: 'Email undelivered', cls: 'bg-sky-100 text-sky-800' },
+const MONDAY_CATEGORY_STYLES: Record<string, { label: string; cls: string }> = {
+  affiliate: { label: 'Affiliate', cls: 'bg-rose-100 text-rose-800' },
+  leads: { label: 'Leads', cls: 'bg-amber-100 text-amber-800' },
+  updates: { label: 'Updates', cls: 'bg-sky-100 text-sky-800' },
 }
 
 function MondayBadge({
@@ -202,11 +201,11 @@ function MondayBadge({
   if (isOnMonday === false) {
     return (
       <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
-        New
+        No
       </span>
     )
   }
-  const meta = (board && MONDAY_BOARD_STYLES[board]) || {
+  const meta = (board && MONDAY_CATEGORY_STYLES[board]) || {
     label: 'On Monday',
     cls: 'bg-zinc-200 text-zinc-700',
   }
