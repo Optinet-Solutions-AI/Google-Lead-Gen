@@ -1,0 +1,624 @@
+{
+  "name": "Lead Generator | PPC Take Screenshot Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "process-ppc",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -160,
+        -16
+      ],
+      "id": "b81bb004-b097-412c-bc03-cb912655a6e8",
+      "name": "Webhook",
+      "webhookId": "ae9baf27-af41-4806-8a9e-7ba4633a4556"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nreturn [{\n  json: item.body\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        64,
+        -16
+      ],
+      "id": "0c27f1c1-1602-4de2-9f2e-f7e88e0edb9a",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {
+        "name": "=FileID_{{ $json.id }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1x1Zt1J_wyy5rhZanxLS1KN9rZpQyrGG7",
+          "mode": "list",
+          "cachedResultName": "Google Lead Gen - PPC Screenshots",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1x1Zt1J_wyy5rhZanxLS1KN9rZpQyrGG7"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1184,
+        80
+      ],
+      "id": "24db49ad-e52b-46a6-8eb0-b829a6e0e586",
+      "name": "Upload file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "5EOxB7baxjQiIOLD",
+          "name": "MAIN credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"Success\",\n  \"message\": \"Successfully Added Screenshot on Google Drive.\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1856,
+        224
+      ],
+      "id": "8de69204-108c-40fd-a4e1-755a092ce0cc",
+      "name": "Success Webhook"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        -240
+      ],
+      "id": "c15f75b2-fe16-4bd4-9ca5-4c7365691de9",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        64,
+        -240
+      ],
+      "id": "9573b3b4-072e-4036-aff7-2162b442c00b",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"Error on Screenshot API.\",\n  \"failed_node\": \"Take Screenshot\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1184,
+        464
+      ],
+      "id": "112c9882-97a3-49e9-a43b-af7ecb87e032",
+      "name": "Error Webhook1"
+    },
+    {
+      "parameters": {
+        "url": "https://api.capturekit.dev/v1/capture",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            },
+            {
+              "name": "format",
+              "value": "png"
+            },
+            {
+              "name": "full_page",
+              "value": "true"
+            },
+            {
+              "name": "proxy",
+              "value": "={{ $json.proxy }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        512,
+        176
+      ],
+      "id": "07dec192-6657-4084-ab9f-a2693d6f0ac5",
+      "name": "Take Screenshot",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "G0B1H3jtxS5JAysf",
+          "name": "CaptureKit Credentials"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://api.capturekit.dev/v1/capture",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            },
+            {
+              "name": "format",
+              "value": "png"
+            },
+            {
+              "name": "full_page",
+              "value": "true"
+            },
+            {
+              "name": "proxy",
+              "value": "={{ $json.proxy }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        960,
+        416
+      ],
+      "id": "f0dc184b-f5fc-4bc2-b434-4c4be979cce8",
+      "name": "Take Screenshot1",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "G0B1H3jtxS5JAysf",
+          "name": "CaptureKit Credentials"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "=FileID_{{ $json.id }}",
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "1x1Zt1J_wyy5rhZanxLS1KN9rZpQyrGG7",
+            "mode": "list",
+            "cachedResultName": "Google Lead Gen - PPC Screenshots",
+            "cachedResultUrl": "https://drive.google.com/drive/folders/1x1Zt1J_wyy5rhZanxLS1KN9rZpQyrGG7"
+          }
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        288,
+        -16
+      ],
+      "id": "cf29f4b8-bc3c-45e8-ab50-832cac459e80",
+      "name": "Search files and folders",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "5EOxB7baxjQiIOLD",
+          "name": "MAIN credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "deleteFile",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        512,
+        -16
+      ],
+      "id": "3c58990e-c17e-429b-92a7-0a4cd2c67055",
+      "name": "Delete a file",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "5EOxB7baxjQiIOLD",
+          "name": "MAIN credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1f9364e-5519-47f4-9eae-e13f2026c8cf",
+              "name": "source_id",
+              "value": "={{ $json.id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1184,
+        272
+      ],
+      "id": "aacb2acb-0075-47da-8392-2a4db14e2820",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1408,
+        224
+      ],
+      "id": "fa46f070-f313-4590-a053-814a482aedbd",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.source_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "screenshot_content_link",
+              "fieldValue": "={{ $json.webContentLink }}"
+            },
+            {
+              "fieldId": "screenshot_view_link",
+              "fieldValue": "={{ $json.webViewLink }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1632,
+        224
+      ],
+      "id": "94868302-7cce-4cbf-ac5b-e16a92b1aec6",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://automateoptinet.app.n8n.cloud/webhook/add-proxy-proxyLite",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"id\": {{ JSON.stringify($json.id) }},\n  \"url\": {{ JSON.stringify($json.url) }},\n  \"country\": {{ JSON.stringify($json.country) }},\n  \"domain\": {{ JSON.stringify($json.domain) }},\n  \"result_type\": {{ JSON.stringify($json.result_type) }},\n  \"is_rooster_partner\": {{ JSON.stringify($json.is_rooster_partner) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        288,
+        176
+      ],
+      "id": "82a15595-e09a-448e-9294-b91b7e2959cc",
+      "name": "Set Proxy (ProxyLite)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://automateoptinet.app.n8n.cloud/webhook/add-proxy-enigma",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"id\": {{ JSON.stringify($json.id) }},\n  \"url\": {{ JSON.stringify($json.url) }},\n  \"country\": {{ JSON.stringify($json.country) }},\n  \"domain\": {{ JSON.stringify($json.domain) }},\n  \"result_type\": {{ JSON.stringify($json.result_type) }},\n  \"is_rooster_partner\": {{ JSON.stringify($json.is_rooster_partner) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        736,
+        416
+      ],
+      "id": "e96b90ea-9629-4555-a228-fa75010e7e0f",
+      "name": "Set Proxy (Enigma)"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "automateoptinet.app.n8n.cloud",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 OPR/127.0.0.0",
+            "content-length": "118",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "accept-language": "en-US,en;q=0.9",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "124.104.194.239",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "PH",
+            "cf-ray": "9d2757f8afea715b-HKG",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "origin": "https://lead-gen-ui-v3.vercel.app",
+            "priority": "u=1, i",
+            "referer": "https://lead-gen-ui-v3.vercel.app/",
+            "sec-ch-ua": "\"Opera GX\";v=\"127\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "cross-site",
+            "x-forwarded-for": "124.104.194.239, 172.71.214.182",
+            "x-forwarded-host": "automateoptinet.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-31-674f44b4c9-zzrz7",
+            "x-is-trusted": "yes",
+            "x-real-ip": "124.104.194.239"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "id": 369,
+            "url": "https://luckydays.ca/",
+            "domain": "https://luckydays.ca",
+            "result_type": "PPC",
+            "country": "Canada",
+            "is_rooster_partner": "false"
+          },
+          "webhookUrl": "https://automateoptinet.app.n8n.cloud/webhook-test/scrape-affiliate-site-for-s-tags",
+          "executionMode": "test"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "Search files and folders",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Set Proxy (ProxyLite)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload file": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Take Screenshot": {
+      "main": [
+        [
+          {
+            "node": "Upload file",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Proxy (Enigma)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Take Screenshot1": {
+      "main": [
+        [
+          {
+            "node": "Upload file",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search files and folders": {
+      "main": [
+        [
+          {
+            "node": "Delete a file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Update a row": {
+      "main": [
+        [
+          {
+            "node": "Success Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Proxy (ProxyLite)": {
+      "main": [
+        [
+          {
+            "node": "Take Screenshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Proxy (Enigma)": {
+      "main": [
+        [
+          {
+            "node": "Take Screenshot1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "26cbb1f5-4742-4ba1-b5dd-fc5f72433058",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "bob5_OT6iDji6xSD0Twp3",
+  "tags": []
+}

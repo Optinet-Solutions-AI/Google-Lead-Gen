@@ -1,0 +1,712 @@
+{
+  "name": "Lead Generator | Insert S-Tags To Supabase",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -192,
+        144
+      ],
+      "id": "923acd4f-fb75-4e71-a9a4-ef6c50048ebb",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "tableId": "s_tags_table",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "s_tag_id",
+              "fieldValue": "={{ $json.new_s_tag_id }}"
+            },
+            {
+              "fieldId": "s_tag",
+              "fieldValue": "={{ $json.s_tag }}"
+            },
+            {
+              "fieldId": "brand",
+              "fieldValue": "={{ $json.site_name }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        480,
+        128
+      ],
+      "id": "d94219d6-4a95-4824-b409-3a68ab8d470f",
+      "name": "Create a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 0.3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        928,
+        224
+      ],
+      "id": "cbf812de-75a5-4cc5-8cf4-4c39f01d7bc6",
+      "name": "Wait",
+      "webhookId": "86651c06-a6e1-4fe2-b084-697da0b7fac4"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"Success\",\n  \"message\": \"Captured S-Tags\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        80,
+        0
+      ],
+      "id": "b4e391a7-dbff-4ce6-98c9-3290d39ac314",
+      "name": "Success Webhook"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1984,
+        -368
+      ],
+      "id": "8c2eb26b-ddae-4893-aef0-3b390da9444a",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1760,
+        -368
+      ],
+      "id": "6b3307de-3f62-4cd5-a76a-eab8b8129542",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "url": "https://ogzxpnwoxakynexyfvad.supabase.co/rest/v1/s_tags_table?select=s_tag_id&order=s_tag_id.desc&limit=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1312,
+        272
+      ],
+      "id": "41ec1a87-eb4e-44a4-9060-d648e940cb6b",
+      "name": "HTTP Request1",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "JCKadasIFFd6No3l",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.first().json;\nconst items = inputData.body.items;\n\nreturn items.map(item => ({ json: item }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1088,
+        -128
+      ],
+      "id": "1f5f2c3a-67ed-4897-afdf-bfb95269a4f5",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -864,
+        96
+      ],
+      "id": "5eebf557-f6c5-4639-8cdb-616a3320e627",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// Each item's .json is one object from the original array\nconst allObjects = items.map(item => item.json);\n\n// Find the new_s_tag_id value\nconst batchObj = allObjects.find(obj => obj.new_s_tag_id !== undefined);\nconst new_s_tag_id = batchObj?.new_s_tag_id;\n\n// Filter out the new_s_tag_id object and inject new_s_tag_id into the rest\nconst result = allObjects\n  .filter(obj => obj.new_s_tag_id === undefined)\n  .map(obj => ({ json: { ...obj, new_s_tag_id } }));\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        96
+      ],
+      "id": "6059f562-8a94-4d43-ba30-756b886f1351",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1d2da67-a1a0-43a5-a0e7-cbaf69897921",
+              "name": "new_s_tag_id",
+              "value": "={{ ($json.s_tag_id + 1) || 1 }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1088,
+        272
+      ],
+      "id": "95ddcc88-a1a1-4ce5-89ef-78adbaddc8b6",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cb7f9b71-c9fd-48a4-b888-183c2f47e64b",
+              "name": "has_s_tag",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        704,
+        128
+      ],
+      "id": "7d78d7dd-7c03-4238-9b32-5fc21628c8ae",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "add-stags-to-database",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1984,
+        32
+      ],
+      "id": "7235471a-632f-4f59-9d93-d1aca62f8bcd",
+      "name": "Webhook",
+      "webhookId": "b166aa52-b779-407c-896b-8e1434aa2a93",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "8df2a943-3c94-462e-8fac-8937a2636916",
+              "leftValue": "={{ $input.first().json.s_tag }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "6512c330-b9d4-4642-99c9-d110d2934326",
+              "leftValue": "={{ $input.first().json.site_name }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -416,
+        96
+      ],
+      "id": "4ca0dc82-7de5-4c82-90a0-d860da6641d9",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.source_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "s_tag_id",
+              "fieldValue": "={{ $json.new_s_tag_id }}"
+            },
+            {
+              "fieldId": "has_s_tags",
+              "fieldValue": "={{ true }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -192,
+        -48
+      ],
+      "id": "e7faed2a-dda1-4192-acd6-cac440322bbe",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://ogzxpnwoxakynexyfvad.supabase.co/rest/v1/google_lead_gen_table?select=s_tag_id&id=eq.{{ $json.body.items[0].source_id }}&limit=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1760,
+        128
+      ],
+      "id": "33ab0cee-c7ca-4b79-baa6-f89f9535ef26",
+      "name": "HTTP Request",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "JCKadasIFFd6No3l",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "8df2a943-3c94-462e-8fac-8937a2636916",
+              "leftValue": "={{ $json.s_tag_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1536,
+        128
+      ],
+      "id": "d000f9d4-0ca7-4f14-a13f-de374284b80f",
+      "name": "If2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1d2da67-a1a0-43a5-a0e7-cbaf69897921",
+              "name": "new_s_tag_id",
+              "value": "={{ ($json.s_tag_id) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1088,
+        80
+      ],
+      "id": "17721dfc-5aeb-463c-9455-f5b83819279f",
+      "name": "Edit Fields2"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "automateoptinet.app.n8n.cloud",
+            "user-agent": "axios/1.12.0",
+            "content-length": "729",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "accept-encoding": "gzip, br",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "20.218.238.127",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "DE",
+            "cf-ray": "9d2ef4553ddd9750-FRA",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "x-forwarded-for": "20.218.238.127, 172.69.150.210",
+            "x-forwarded-host": "automateoptinet.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-31-674f44b4c9-tqtxk",
+            "x-is-trusted": "yes",
+            "x-real-ip": "20.218.238.127"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "items": [
+              {
+                "s_tag": "148060",
+                "site_name": "joinvegasnow",
+                "source_id": 194
+              },
+              {
+                "s_tag": "163176",
+                "site_name": "goldexcasino",
+                "source_id": 194
+              },
+              {
+                "s_tag": "4362",
+                "site_name": "luckywinsnow",
+                "source_id": 194
+              },
+              {
+                "s_tag": "242890",
+                "site_name": "winsane",
+                "source_id": 194
+              },
+              {
+                "s_tag": "222057",
+                "site_name": "pwrpcsn100",
+                "source_id": 194
+              },
+              {
+                "s_tag": "184501",
+                "site_name": "3ohmyspn",
+                "source_id": 194
+              },
+              {
+                "s_tag": "232186",
+                "site_name": "levelupcasino",
+                "source_id": 194
+              },
+              {
+                "s_tag": "173310",
+                "site_name": "rollero",
+                "source_id": 194
+              },
+              {
+                "s_tag": "26818",
+                "site_name": "24casino",
+                "source_id": 194
+              },
+              {
+                "s_tag": "135125",
+                "site_name": "cleobetra100",
+                "source_id": 194
+              },
+              {
+                "s_tag": "655234",
+                "site_name": "granawin",
+                "source_id": 194
+              },
+              {
+                "s_tag": "8769",
+                "site_name": "rollingslots75",
+                "source_id": 194
+              }
+            ]
+          },
+          "webhookUrl": "https://automateoptinet.app.n8n.cloud/webhook-test/add-stags-to-database",
+          "executionMode": "test"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Success Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a row": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "If2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "3dac879d-5ea6-4c41-8caa-0c6ed293ac64",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "NL3_sIXjl7e3Hku0Jwe-n",
+  "tags": []
+}

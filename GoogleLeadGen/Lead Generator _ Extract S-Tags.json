@@ -1,0 +1,803 @@
+{
+  "name": "Lead Generator | Extract S-Tags",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "=https://s-tag-captor.vercel.app/trace",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.href }}"
+            },
+            {
+              "name": "proxy",
+              "value": "={{ $json.proxy }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        144,
+        656
+      ],
+      "id": "3c5681d4-6a9d-452b-9e68-dd1c0977c36b",
+      "name": "HTTP Request",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -304,
+        864
+      ],
+      "id": "8ae93b1e-8c21-4f4c-aaf8-0a17f79a3315",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst paramKeys = ['btag', 'stag', 'cxd', 'mid', 'affid'];\n\nreturn items.map(item => {\n  const finalUrl = item.json.final_url || '';\n  let sTag = '';\n  let siteName = '';\n\n  try {\n    // Extract site name manually\n    const withoutProtocol = finalUrl.replace(/^https?:\\/\\//, '');\n    const hostname = withoutProtocol.split('/')[0].replace(/^www\\./, '');\n    siteName = hostname.split('.')[0];\n\n    // Parse query string manually\n    const rawQuery = finalUrl.split('?')[1] || '';\n    const params = {};\n\n    rawQuery.split('&').forEach(pair => {\n      const eqIndex = pair.indexOf('=');\n      if (eqIndex > -1) {\n        const key = pair.substring(0, eqIndex);\n        const value = pair.substring(eqIndex + 1);\n        params[key] = value;\n      }\n    });\n\n    for (const key of paramKeys) {\n      if (params[key]) {\n        sTag = params[key].split('_')[0];\n        break;\n      }\n    }\n  } catch (e) {\n    // stays empty\n  }\n\n  return {\n    json: {\n      ...item.json,\n      s_tag: sTag,\n      site_name: siteName,\n      source_id: $('Loop Over Items').first().json.source_id\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        656
+      ],
+      "id": "999cd046-2395-41f1-8ecb-0a5051f1a621",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ee76d63e-d6e5-49c4-91b6-e87c30710bb6",
+              "leftValue": "={{ $json.s_tag }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1040,
+        720
+      ],
+      "id": "7fa1dd5f-5dfc-4f3a-86ac-6cf638b94787",
+      "name": "If1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -976,
+        -176
+      ],
+      "id": "230fb8da-bb77-4cee-b293-bd07ca09a6ce",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -752,
+        -176
+      ],
+      "id": "39971466-aa9b-4cdb-abb2-139c383d9ebd",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const MAX_LINKS = 10;\n\nconst input = $input.first().json;\nconst { linksToExtract, source_id, country } = input;\n\n// Parse the stringified JSON into an actual array\nconst parsedLinks = JSON.parse(linksToExtract);\n\n// Now you can safely slice and map the array\nreturn parsedLinks.slice(0, MAX_LINKS).map(link => ({\n  json: { ...link, source_id, country }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        864
+      ],
+      "id": "9f520d2a-6b7e-4412-acb8-d3f559d8e5f8",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"sTagsHolder\": []\n}\n",
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -528,
+        864
+      ],
+      "id": "5f9e15b2-145e-4dae-9649-8deab750b21b",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\n// Initialize on first iteration\nif (!staticData.sTagsHolder) {\n  staticData.sTagsHolder = [];\n}\n\n// Get current item from the previous node\nconst currentItem = $input.item.json;\n\n// Append to array — replace these fields with your actual keys\nstaticData.sTagsHolder.push({\n  s_tag: currentItem.s_tag,\n  site_name: currentItem.site_name,\n  source_id: $input.first().json.source_id\n});\n\n// Pass the item through so the loop can continue\nreturn [{ json: currentItem }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        800
+      ],
+      "id": "29eba996-302b-4c34-811a-1982560cebed",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\n// Grab the final accumulated array\nconst finalArray = staticData.sTagsHolder || [];\n\n// Clear it so the next execution starts fresh\nstaticData.sTagsHolder = null;\n\n// Group by s_tag\nconst tagMap = {};\n\nfor (const item of finalArray) {\n  if (!item.s_tag) continue;\n\n  if (!tagMap[item.s_tag]) {\n    tagMap[item.s_tag] = {\n      s_tag: item.s_tag,\n      site_names: new Set(),\n      source_id: item.source_id\n    };\n  }\n\n  if (item.site_name) {\n    tagMap[item.s_tag].site_names.add(item.site_name);\n  }\n}\n\n// Convert to final array\nconst deduped = Object.values(tagMap).map(entry => ({\n  s_tag: entry.s_tag,\n  site_name: Array.from(entry.site_names).join(', '),\n  source_id: entry.source_id\n}));\n\nreturn [{ json: { sTagsHolder: deduped } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        240
+      ],
+      "id": "90c2b39d-e96a-499a-a423-5f12366c4aef",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://automateoptinet.app.n8n.cloud/webhook/add-stags-to-database",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "items",
+              "value": "={{ $json.sTagsHolder }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        368,
+        48
+      ],
+      "id": "768d5bde-3826-4c96-bae8-afc75e8f3473",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d345169e-6e72-4b99-b56c-00e16dde6713",
+              "leftValue": "={{ $json.sTagsHolder }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        144,
+        240
+      ],
+      "id": "62c033a0-6e30-484c-99e4-b88e8ba02583",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "tableId": "rooster_partner_url_temp_holder_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.sTagsHolder[0].source_id }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        368,
+        240
+      ],
+      "id": "ed6a77a8-4ccb-407c-9639-ed472acd57cd",
+      "name": "Delete a row",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://s-tag-captor.vercel.app/trace",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.href }}"
+            },
+            {
+              "name": "proxy",
+              "value": "={{ $json.proxy }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        592,
+        720
+      ],
+      "id": "9d292e78-d499-4fee-9eff-aad0cc19af4b",
+      "name": "HTTP Request2",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://automateoptinet.app.n8n.cloud/webhook/add-proxy-proxyLite",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"href\": {{ JSON.stringify($json.href) }},\n  \"anchorText\": {{ JSON.stringify($json.anchorText) }},\n  \"brand\": {{ JSON.stringify($json.brand) }},\n  \"category\": {{ JSON.stringify($json.category) }},\n  \"cssClasses\": {{ JSON.stringify($json.cssClasses) }},\n  \"source\": {{ JSON.stringify($json.source) }},\n  \"source_id\": {{ JSON.stringify($json.source_id) }},\n  \"country\": {{ JSON.stringify($json.country) }},\n  \"sTagsHolder\": {{ JSON.stringify($json.sTagsHolder) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -80,
+        656
+      ],
+      "id": "c0771322-7745-477b-94fa-5f39a95b162c",
+      "name": "Set Proxy (ProxyLite)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://automateoptinet.app.n8n.cloud/webhook/add-proxy-enigma",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"href\": {{ JSON.stringify($json.href) }},\n  \"anchorText\": {{ JSON.stringify($json.anchorText) }},\n  \"brand\": {{ JSON.stringify($json.brand) }},\n  \"category\": {{ JSON.stringify($json.category) }},\n  \"cssClasses\": {{ JSON.stringify($json.cssClasses) }},\n  \"source\": {{ JSON.stringify($json.source) }},\n  \"source_id\": {{ JSON.stringify($json.source_id) }},\n  \"country\": {{ JSON.stringify($json.country) }},\n  \"sTagsHolder\": {{ JSON.stringify($json.sTagsHolder) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        368,
+        720
+      ],
+      "id": "d98656a0-bdfc-4d94-ab36-413610543331",
+      "name": "Set Proxy (Enigma)"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.source_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "has_s_tags",
+              "fieldValue": "={{ false }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        608,
+        416
+      ],
+      "id": "085a7aa8-c396-4824-87a8-4732709479cc",
+      "name": "Update a row",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "de5e718e-7265-48a7-9cd7-95ae89338c4a",
+              "name": "extraction_result",
+              "value": "failed",
+              "type": "string"
+            },
+            {
+              "id": "65d3b0a3-0ff7-4313-bc64-52b8f615aa28",
+              "name": "reason",
+              "value": "No S-Tag Found",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        848,
+        416
+      ],
+      "id": "99d32579-97e1-43f5-8d28-5c2acb309dc3",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "de5e718e-7265-48a7-9cd7-95ae89338c4a",
+              "name": "extraction_result",
+              "value": "success",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        608,
+        48
+      ],
+      "id": "e78bdf54-3ad1-4df7-a70a-94cbc7c15b7c",
+      "name": "Edit Fields2"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -992,
+        864
+      ],
+      "id": "16cfb890-c665-4227-b22f-eeaa9fb69ec4",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "de5e718e-7265-48a7-9cd7-95ae89338c4a",
+              "name": "extraction_result",
+              "value": "success",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        608,
+        240
+      ],
+      "id": "bfc069cb-4beb-4527-b787-b488e18e4472",
+      "name": "Edit Fields3"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1e73039b-03f1-4355-b3c4-08ca67f31280",
+              "name": "source_id",
+              "value": "={{ $json.source_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        64,
+        416
+      ],
+      "id": "45afde7f-2de3-45f0-a4ae-ac3c27517cba",
+      "name": "Edit Fields4"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "useDataOfInput": 2
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        368,
+        416
+      ],
+      "id": "bdb69e6d-8fe6-4c2a-9d32-34ece50ecf28",
+      "name": "Merge"
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "linksToExtract": "[{\"href\":\"https://www.bettingtop10.co.nz/power-play/\",\"anchorText\":\"Power Play Review\",\"brand\":null,\"category\":\"Internal CTA\",\"cssClasses\":\"header-nav_navLink__zFzyC\",\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/casina-all-pages/\",\"anchorText\":\"Casina\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/mafia-casino/\",\"anchorText\":\"MafiaCasino\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/vipluck-casino/\",\"anchorText\":\"VipLuck\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/lucky-circus-casino/\",\"anchorText\":\"Lucky Circus\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/ninlay-casino/\",\"anchorText\":\"\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/jokery-casino/\",\"anchorText\":\"Jokery\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/juliebet-casino/\",\"anchorText\":\"\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/boomerang-bet-casino/\",\"anchorText\":\"\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/dragonslots-casino-1/\",\"anchorText\":\"dragonslots\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/alfcasino-casino/\",\"anchorText\":\"AlfCasino\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/spinbara-casino/\",\"anchorText\":\"Spinbara\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/trips-casino-casino/\",\"anchorText\":\"TripsCasino\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/bet-and-play-casino/\",\"anchorText\":\"Bet and Play\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/frumzi-casino/\",\"anchorText\":\"Frumzi\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/slotsgem-casino/\",\"anchorText\":\"Slotsgem\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/vegashero-casino/\",\"anchorText\":\"Vegas Hero\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/wyns-casino/\",\"anchorText\":\"Wyns\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/sportaza-casino/\",\"anchorText\":\"Sportaza Betting Sites\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/allyspin-casino/\",\"anchorText\":\"\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/millioner-casino/\",\"anchorText\":\"Millioner\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/quickwin-casino/\",\"anchorText\":\"QuickWin\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/vegasino-casino/\",\"anchorText\":\"vegasino\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/cashed-casino/\",\"anchorText\":\"\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/vincispin-casino/\",\"anchorText\":\"vincispin\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/1red-casino-casino/\",\"anchorText\":\"1Red Casino\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/malina-casino-casino/\",\"anchorText\":\"malina-casino\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/neospin-casino-casino/\",\"anchorText\":\"neospin\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/fortuneplay-casino/\",\"anchorText\":\"\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/jackpot-city-casino/\",\"anchorText\":\"\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/kiwi-s-treasure-casino/\",\"anchorText\":\"\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"},{\"href\":\"https://www.bettingtop10.co.nz/go/20bet-casino/\",\"anchorText\":\"20bet\",\"brand\":null,\"category\":\"Internal Redirect\",\"cssClasses\":null,\"source\":\"html\"}]",
+          "source_id": "1059",
+          "country": "New Zealand"
+        }
+      }
+    ],
+    "Code in JavaScript2": [
+      {
+        "json": {
+          "href": "https://www.thespike.gg/online-casinos/minimum-deposit-casinos",
+          "anchorText": "Play In Minimum Deposit Casinos",
+          "brand": null,
+          "category": "Internal CTA",
+          "cssClasses": null,
+          "source": "html",
+          "source_id": "1149",
+          "country": "United Arab Emirates",
+          "sTagsHolder": []
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields4",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Proxy (ProxyLite)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Proxy (Enigma)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Delete a row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request2": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Proxy (ProxyLite)": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Proxy (Enigma)": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        []
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete a row": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields4": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "5183df96-3e97-42fc-a4a1-ee5b5507d04f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "1Kc1TMuXP87uKx3i",
+  "tags": []
+}

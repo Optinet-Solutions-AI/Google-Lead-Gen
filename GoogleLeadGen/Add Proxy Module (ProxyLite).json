@@ -1,0 +1,1044 @@
+{
+  "name": "Add Proxy Module (ProxyLite)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "add-proxy-proxyLite",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -416,
+        -64
+      ],
+      "id": "81f93b50-1934-4767-89bd-ba309bb1707c",
+      "name": "Webhook",
+      "webhookId": "ed8ca0ef-dd7a-4376-b3ea-05935e718bca"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "Austria",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "cf43bb61-1bd3-4fb6-998e-0ee3df4c8c24"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Austria"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "d2a0012c-8f49-45b8-a1b8-61b2711f5d0e",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "Canada",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Canada"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "2dc30670-cc38-4775-8c50-9f9abf321e35",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "Germany",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Germany"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c883b379-254b-45bb-9956-cc7d078bc3b6",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "New Zealand",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "New Zealand"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "5c94e65c-2c06-443c-8204-3aec74bb9f03",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "Norway",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Norway"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "01291163-ab7f-4de0-a177-585d27dc14fa",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "United Arab Emirates",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "United Arab Emirates"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "76eb698f-ae6f-4921-a7af-4929e39b2d60",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "Saudi Arabia",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Saudi Arabia"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "f2e3a6c1-3bd3-44d9-99f6-9e617488ef75",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "Qatar",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Qatar"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "3b1075d2-1dae-4fa8-8944-872cc8fdb445",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "Bahrain",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Bahrain"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "a3c86441-f7f1-4412-880f-7902618dcf3f",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "Kuwait",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Kuwait"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "0474397a-a3f0-4fbd-899d-280e5959b38b",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "Oman",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Oman"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c09c1ac0-29c8-4fe1-b039-29ca463ead2a",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "Australia",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Australia"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "2bebd27d-096f-456c-b9dc-034d8b5bd38a",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "Italy",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Italy"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "9a916e3e-37ac-4520-9701-5230c69d2489",
+                    "leftValue": "={{ $json.country }}",
+                    "rightValue": "Denmark",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Denmark"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        32,
+        -224
+      ],
+      "id": "022120d6-89d8-45ce-b6a7-ace746b88ed6",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-CA:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        -1088
+      ],
+      "id": "cb2455b8-708e-4a92-930a-8e43afc63a6b",
+      "name": "Canada Proxy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-AT:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        -1280
+      ],
+      "id": "852518ed-5d84-4737-802c-437e5b2c7680",
+      "name": "Austria Proxy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-DE:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        -896
+      ],
+      "id": "ebd0602b-b2bc-40be-bc64-e6c2402b9f6b",
+      "name": "Germany Proxy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-NZ:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        -704
+      ],
+      "id": "77d71919-f58f-495e-b73b-2d294352988a",
+      "name": "New Zealand Proxy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-NO:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        -512
+      ],
+      "id": "3191453d-b91d-4c65-9840-617633f54770",
+      "name": "Norway Proxy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-AE:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        -320
+      ],
+      "id": "bd2b072e-9206-4c24-b246-958addd9265a",
+      "name": "United Arab Emirates Proxy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-SA:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        -128
+      ],
+      "id": "911d3e87-d270-445c-ab94-4a3ddc6f2fa2",
+      "name": "Saudi Arabia Proxy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-QA:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        64
+      ],
+      "id": "7ee2e8fd-faa4-45f4-a2e1-87c99e6dd47d",
+      "name": "Qatar Proxy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-BH:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        256
+      ],
+      "id": "f615ae72-47d0-49e2-9a0a-032a636c6e5e",
+      "name": "Bahrain Proxy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-KW:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        448
+      ],
+      "id": "f84ee471-5011-4a4a-9989-84d6ed386363",
+      "name": "Kuwait Proxy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-OM:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        640
+      ],
+      "id": "e4431fbd-2d02-4be1-95c0-9be3cb39464e",
+      "name": "Oman Proxy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-AU:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        832
+      ],
+      "id": "d9e0f768-d1d4-451d-b31f-68ab877c5abd",
+      "name": "Australia Proxy"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        496,
+        -16
+      ],
+      "id": "85cdb119-dcb1-4903-88f8-a91f6c4a0070",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\nreturn { json: body };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        -64
+      ],
+      "id": "0dc9092d-6023-4212-bbe3-62291ed3899a",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-IT:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        1024
+      ],
+      "id": "a022e288-13ab-4de6-87b5-1aa3a982a9f5",
+      "name": "Italy Proxy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6db38e6e-2394-4a0d-a5f7-f0f7f6ad732e",
+              "name": "proxy",
+              "value": "http://pl-nskojcm40ezt_area-DK:Z2OKKfRT3O1uxQbv@gate-us.proxylite.com:9595",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        256,
+        1216
+      ],
+      "id": "677ec92e-efb6-43a6-a9db-c5d2fd0c7c83",
+      "name": "Denmark Proxy"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Austria Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Canada Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Germany Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "New Zealand Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Norway Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "United Arab Emirates Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Saudi Arabia Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Qatar Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Bahrain Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Kuwait Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Oman Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Australia Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Italy Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Denmark Proxy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Austria Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Canada Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Germany Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Zealand Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Norway Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "United Arab Emirates Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Saudi Arabia Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qatar Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bahrain Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kuwait Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Oman Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Australia Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Italy Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Denmark Proxy": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "466111e6-f6fd-4c04-8870-28522a9ec44e",
+  "meta": {
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "WUYJHnDQyDst3ojj",
+  "tags": []
+}

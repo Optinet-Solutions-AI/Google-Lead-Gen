@@ -1,0 +1,491 @@
+{
+  "name": "Lead Generator | Check Domain Duplicates from Monday.com replica",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -112,
+        848
+      ],
+      "id": "5342557d-abf9-42a2-ab96-656896cf07ff",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ee76d63e-d6e5-49c4-91b6-e87c30710bb6",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        336,
+        848
+      ],
+      "id": "1af15e94-7259-488b-b41e-5a4202720d8b",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Loop Over Items').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "is_on_monday",
+              "fieldValue": "={{ true }}"
+            },
+            {
+              "fieldId": "affiliate_name",
+              "fieldValue": "={{ $json.affiliate_name }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        560,
+        752
+      ],
+      "id": "c671a3f0-d5a4-42c3-a6d7-012e7deedb80",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        784,
+        928
+      ],
+      "id": "5e906901-009f-45c6-a9f1-0b7ab4c4166a",
+      "name": "Wait",
+      "webhookId": "53be9090-0416-4833-9bb6-87f74f21d3bb"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        432
+      ],
+      "id": "9549f5d8-8c44-4c47-b7db-9b93b458a1b7",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -336,
+        432
+      ],
+      "id": "bc79e926-d8f4-42f1-b5a8-cf144ed7a62f",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"Success\",\n  \"message\": \"Checked all duplicate values from Monday.com\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        112,
+        656
+      ],
+      "id": "2624c2ca-18fe-4444-84bc-c1a76a8f4f8e",
+      "name": "Success Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\n\nreturn body.map(item => ({\n  json: {\n    ...item,\n    domain_for_searching: item.domain.replace(/^https?:\\/\\/(www\\.)?/, '')\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        848
+      ],
+      "id": "5eedd13a-f2c2-4c21-82bb-3418a92bdf10",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "check-domain-duplicates-on-monday-replica",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -560,
+        848
+      ],
+      "id": "306fa53a-4927-4709-9d62-68ee74a99e61",
+      "name": "Webhook",
+      "webhookId": "19803228-e12d-445b-9acf-f79fc1bd98e2"
+    },
+    {
+      "parameters": {
+        "url": "=https://ogzxpnwoxakynexyfvad.supabase.co/rest/v1/rpc/search_website_across_all_boards_and_updates?search_url={{ $json.domain_for_searching }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        112,
+        848
+      ],
+      "id": "1a983475-d64c-4776-9828-71278836018c",
+      "name": "HTTP Request",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "JCKadasIFFd6No3l",
+          "name": "Supabase Credentials"
+        }
+      },
+      "notes": "Please check the query function on Supabase \"search_website_across_all_boards_and_updates\""
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Loop Over Items').item.json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "is_on_monday",
+              "fieldValue": "={{ false }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        560,
+        944
+      ],
+      "id": "64c37a37-b587-4eac-b2c6-6ff650870dd1",
+      "name": "Update a row1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "automateoptinet.app.n8n.cloud",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 OPR/127.0.0.0",
+            "content-length": "1398",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "accept-language": "en-US,en;q=0.9",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "136.158.31.12",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "PH",
+            "cf-ray": "9d06ff61969fff83-SIN",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "origin": "https://lead-gen-ui-v3.vercel.app",
+            "priority": "u=1, i",
+            "referer": "https://lead-gen-ui-v3.vercel.app/",
+            "sec-ch-ua": "\"Opera GX\";v=\"127\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "cross-site",
+            "x-forwarded-for": "136.158.31.12, 162.158.88.18",
+            "x-forwarded-host": "automateoptinet.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-31-674f44b4c9-tqtxk",
+            "x-is-trusted": "yes",
+            "x-real-ip": "136.158.31.12"
+          },
+          "params": {},
+          "query": {},
+          "body": [
+            {
+              "id": 19,
+              "url": "https://nbhrf.com/#:~:text=If%20you're%20new%20to,sole%20government%2Drun%20platform%20only.",
+              "domain": "https://nbhrf.com"
+            },
+            {
+              "id": 17,
+              "url": "https://globalnews.ca/content/11654441/best-online-casinos-in-canada/",
+              "domain": "https://globalnews.ca"
+            },
+            {
+              "id": 18,
+              "url": "https://sandiegobeer.news/i-tested-15-real-money-online-casinos-in-2026-only-these-5-online-casinos-paid-fast-before-my-beer-went-warm/",
+              "domain": "https://sandiegobeer.news"
+            },
+            {
+              "id": 20,
+              "url": "https://www.mindepcasinos.com/",
+              "domain": "https://www.mindepcasinos.com"
+            },
+            {
+              "id": 24,
+              "url": "https://www.wintips.com",
+              "domain": "https://www.wintips.com"
+            },
+            {
+              "id": 21,
+              "url": "https://www.betvictor.com/en-ca/casino",
+              "domain": "https://www.betvictor.com"
+            },
+            {
+              "id": 22,
+              "url": "https://ca.888casino.com/",
+              "domain": "https://ca.888casino.com"
+            },
+            {
+              "id": 23,
+              "url": "https://www.ephpp.ca/best-online-casinos/",
+              "domain": "https://www.ephpp.ca"
+            },
+            {
+              "id": 28,
+              "url": "https://www.casino.org/canada/",
+              "domain": "https://www.casino.org"
+            },
+            {
+              "id": 25,
+              "url": "http://igamingontario.ca/",
+              "domain": "http://igamingontario.ca"
+            },
+            {
+              "id": 26,
+              "url": "https://www.olg.ca/en/online-casino.html",
+              "domain": "https://www.olg.ca"
+            },
+            {
+              "id": 27,
+              "url": "https://www.powerplay.com/casino/",
+              "domain": "https://www.powerplay.com"
+            },
+            {
+              "id": 29,
+              "url": "https://www.casumo.com/en-ca/",
+              "domain": "https://www.casumo.com"
+            },
+            {
+              "id": 16,
+              "url": "https://www.on.betmgm.ca/en/casino",
+              "domain": "https://www.on.betmgm.ca"
+            }
+          ],
+          "webhookUrl": "https://automateoptinet.app.n8n.cloud/webhook/51c2e033-c4c5-49c9-9456-30d414e500bf",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Success Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update a row1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row1": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "b167b51b-8fe7-4d75-a13b-fe612337b398",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "rSS6VJv0XFtyi4vZ",
+  "tags": []
+}

@@ -1,0 +1,341 @@
+{
+  "name": "Lead Generator | Launch GoLogin (Trigger)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "google-lead-gen",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -144,
+        224
+      ],
+      "id": "1d1b7e33-e68e-48ea-b3b5-ac7a6201c304",
+      "name": "Webhook",
+      "webhookId": "1324a429-cc93-4e20-a25d-d0640abdea06"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -144,
+        -288
+      ],
+      "id": "01fcfa1f-58d0-454a-8b71-0849b994e0d3",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        80,
+        -288
+      ],
+      "id": "8cbe4696-2591-45e9-98bc-a4ad8cb610d5",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"Error Web Scraping.\",\n  \"failed_node\": \"Launch GoLoginProfile and WebScraper Script\", \n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        752,
+        128
+      ],
+      "id": "7f2956b0-e442-4f0e-89e8-a7ce7e070d33",
+      "name": "Error Webhook1"
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "DISPLAY=:1 python3 ~/kill_gologin.py"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        752,
+        320
+      ],
+      "id": "e59111a4-010c-45ad-9c16-08f499fc1a59",
+      "name": "Close all Gologin Sessions",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "3Ovath7RL1KFFNLB",
+          "name": "SSH Password account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nreturn [{\n  json: item.body\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        224
+      ],
+      "id": "6a23f36c-c0c6-487a-87ee-b504730e6df2",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {
+        "authentication": "privateKey",
+        "command": "=env DISPLAY=:1 python3 ~/gologin_start_profile_api_and_webscrape.py {{ $json.countryValue }} -k \"{{ $json.keyword }}\" -c \"{{ $json.countryText }}\" --pages {{ $json.pages }}"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        304,
+        224
+      ],
+      "id": "aa2191c6-0d7b-47bb-a653-3fff4848868e",
+      "name": "Launch GoLoginProfile and WebScraper Script",
+      "credentials": {
+        "sshPrivateKey": {
+          "id": "3Ovath7RL1KFFNLB",
+          "name": "SSH Password account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "70534763-d1c1-4b9d-94c6-c84e9d6262b8",
+                    "leftValue": "={{ $json.stdout }}",
+                    "rightValue": "[RESULT] SUCCESS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "[RESULT] SUCCESS"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.stdout }}",
+                    "rightValue": "[RESULT] FAILED",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    },
+                    "id": "ae3e909c-018c-48b9-bc93-305481ac4276"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "[RESULT] FAILED"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "2b7d2467-0b93-40c6-92b8-18071288c512",
+                    "leftValue": "={{ $json.stdout }}",
+                    "rightValue": "[RESULT] CAPTCHA",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "[RESULT] CAPTCHA"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        528,
+        208
+      ],
+      "id": "8d974210-316b-43e0-b44c-6c52aa2a497a",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"Please Solve the Captcha.\",\n  \"failed_node\": \"Launch GoLoginProfile and WebScraper Script\", \n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        752,
+        512
+      ],
+      "id": "b769661a-50c3-4864-b77b-50fcd36c6874",
+      "name": "Error Webhook2"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        752,
+        -64
+      ],
+      "id": "fbc792b4-a9a5-4641-b550-6deb47e42ff9",
+      "name": "The Webhook has been sent to the Subflow"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Webhook1": {
+      "main": [
+        []
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "Launch GoLoginProfile and WebScraper Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Launch GoLoginProfile and WebScraper Script": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "The Webhook has been sent to the Subflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Close all Gologin Sessions",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Error Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Close all Gologin Sessions",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Error Webhook2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "11e16e3e-584f-4fdb-acf4-d595c10c4fed",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "-gngcStj759hts4_5Bv-2",
+  "tags": []
+}

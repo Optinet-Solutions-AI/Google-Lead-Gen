@@ -1,0 +1,1497 @@
+{
+  "name": "Lead Generator | Check If Rooster Partner",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "check-if-domains-are-rooster-partners",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -16,
+        -144
+      ],
+      "id": "ef259f6e-f748-427b-b99e-bbe0987cb736",
+      "name": "Webhook",
+      "webhookId": "ae9baf27-af41-4806-8a9e-7ba4633a4556"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nreturn item.body.map(entry => ({ json: entry }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        -144
+      ],
+      "id": "7c5f9625-b9e6-4eed-be0b-da578dd33d06",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code Node 1: Build Serper.dev search queries\n// Input: affiliateUrl (from previous node)\n\nconst id = $input.first().json.id\nconst country = $input.first().json.country\n\nconst affiliateUrl = $input.first().json.domain\n  .replace(/^https?:\\/\\//, '')  // strip http/https\n  .replace(/\\/$/, '');           // strip trailing slash\n\nconst partnerDomains = $vars.ROOSTER_PARTNER_DOMAINS.split(',').map(d => d.trim().toLowerCase());\nconst SERPER_API_KEY = '651c304547f848273de8a3874767c2677e8457fa';\n\nreturn partnerDomains.map(domain => ({\n  json: {\n    id,\n    country,\n    affiliateUrl,\n    partnerDomain: domain,\n    serperApiKey: SERPER_API_KEY,\n    query: `site:${affiliateUrl} \"${domain}\"`\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        656,
+        -288
+      ],
+      "id": "a7446a4d-54f5-49d5-9a62-cb9a8227aa21",
+      "name": "Build Serper.dev queries"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://google.serper.dev/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.query }}"
+            },
+            {
+              "name": "num",
+              "value": "5"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        880,
+        -288
+      ],
+      "id": "96058fe5-a424-413b-a171-e405d2e247da",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "v6ESxQ7cdv4uoFbK",
+          "name": "Serpdev Credentials"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code Node 2: Parse Serper.dev results\n// Checks if any results were found for each partner domain\n\nconst sourceId = $('Build Serper.dev queries').first().json.id;\nconst country = $('Build Serper.dev queries').first().json.country;\nconst results = $input.all();\nconst summary = [];\n\nfor (const item of results) {\n  const query = item.json.searchParameters?.q || '';\n  \n  // Extract partnerDomain from query string (between quotes)\n  const domainMatch = query.match(/\"([^\"]+)\"/);\n  const partnerDomain = domainMatch ? domainMatch[1] : null;\n\n  // Extract affiliateUrl from query string (after \"site:\" and before space)\n  const siteMatch = query.match(/site:([^\\s]+)/);\n  const affiliateUrl = siteMatch ? siteMatch[1] : null;\n\n  const organicResults = item.json.organic || [];\n\n  const found = organicResults.length > 0;\n  const firstResultUrl = found ? organicResults[0].link : null;\n  const firstResultTitle = found ? organicResults[0].title : null;\n\n  summary.push({\n    json: {\n      sourceId,\n      country,\n      affiliateUrl,\n      partnerDomain,\n      query,\n      isPartner: found,\n      totalResults: organicResults.length,\n      firstResultUrl,\n      firstResultTitle,\n    }\n  });\n}\n\nreturn summary;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        -288
+      ],
+      "id": "8a89f77b-96b3-4671-bf2c-50cab8d48d2f",
+      "name": "Parse Serper.dev results"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all()\n  .filter(item => item.json.isPartner === true)\n  .map(item => ({\n    json: {\n      sourceId: item.json.sourceId,\n      country: item.json.country,\n      affiliateUrl: item.json.affiliateUrl,\n      partnerDomain: item.json.partnerDomain,\n      query: item.json.query,\n      firstResultUrl: item.json.firstResultUrl\n    }\n  }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1536,
+        -288
+      ],
+      "id": "d04c39b1-865b-4917-b180-4354e64cc4c2",
+      "name": "Filter and Clean Results",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "70ee80fa-0585-49c8-a6c7-e7b6bc946db4",
+              "leftValue": "={{ $json.firstResultUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "77ee3467-112e-4eaf-8e0f-59e20c1a3a2a",
+              "leftValue": "={{ $json.firstResultUrl }}\n",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1760,
+        -288
+      ],
+      "id": "c48564f4-ed27-4ee4-b74f-c7a4b5cdfd2a",
+      "name": "Is Rooster Partner"
+    },
+    {
+      "parameters": {
+        "tableId": "rooster_partner_url_temp_holder_table",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "id",
+              "fieldValue": "={{ $json.sourceId }}"
+            },
+            {
+              "fieldId": "url_json",
+              "fieldValue": "={{ $('Merge1').all() }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2928,
+        -320
+      ],
+      "id": "824d0f02-8fe0-4fb2-840d-4fc22837ec49",
+      "name": "Create a row",
+      "executeOnce": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 0.3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3680,
+        -528
+      ],
+      "id": "d9ad7a9e-eab1-4448-9406-c0cd4ae8c8e5",
+      "name": "Wait",
+      "webhookId": "2fed5539-3da9-4196-ad0c-a91b513d9aa2"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.sourceId }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "is_rooster_partner",
+              "fieldValue": "={{ true }}"
+            },
+            {
+              "fieldId": "brand",
+              "fieldValue": "={{ $json.partner_domains }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3904,
+        -528
+      ],
+      "id": "122a425b-ff8d-42c3-b157-f75a0277c631",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Parse Serper.dev results').first().json.sourceId }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "is_rooster_partner",
+              "fieldValue": "={{ false }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1984,
+        -48
+      ],
+      "id": "d71cb044-68e3-4ce5-9984-365b369e3438",
+      "name": "Update a row1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        -704
+      ],
+      "id": "81a0cd11-47e2-44ce-84a2-575ca02d707d",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        208,
+        -704
+      ],
+      "id": "86d987e2-fd58-45a4-ac31-2204451d99bb",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        432,
+        -144
+      ],
+      "id": "9a13927b-ffa7-4307-8839-8ba97bae0dc7",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"Success\",\n  \"message\": \"Checked if website(s) are Rooster Partners.\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        656,
+        -480
+      ],
+      "id": "f7ff5bf8-946d-44b4-a78c-527b34100c30",
+      "name": "Success Webhook"
+    },
+    {
+      "parameters": {
+        "amount": 0.3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4176,
+        -528
+      ],
+      "id": "f13b3acd-2622-4d9f-91e1-929bbe16f8a4",
+      "name": "Wait1",
+      "webhookId": "200659bc-8232-41e4-854d-3b92ddf6652d"
+    },
+    {
+      "parameters": {
+        "amount": 0.3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2208,
+        -48
+      ],
+      "id": "8647e91f-0cf0-4d65-877d-c8fe298788d2",
+      "name": "Wait2",
+      "webhookId": "200659bc-8232-41e4-854d-3b92ddf6652d"
+    },
+    {
+      "parameters": {
+        "url": "=https://ogzxpnwoxakynexyfvad.supabase.co/rest/v1/rooster_partner_url_temp_holder_table?select=id&id=eq.{{ $json.sourceId }}&limit=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1952,
+        -608
+      ],
+      "id": "853a0dd4-9c7a-4ce7-8e3a-4385536b964a",
+      "name": "HTTP Request2",
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "JCKadasIFFd6No3l",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "155740ea-5189-42ba-a48f-580c285e3e5c",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2176,
+        -656
+      ],
+      "id": "77018dee-edf0-4c65-ba76-0f6f93ea9df0",
+      "name": "If",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "rooster_partner_url_temp_holder_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.sourceId }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "url_json",
+              "fieldValue": "={{ $('Merge').all() }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2928,
+        -624
+      ],
+      "id": "93cc1317-9a30-4774-ae04-027753e3e517",
+      "name": "Update a row2",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "useDataOfInput": 2
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2576,
+        -624
+      ],
+      "id": "49ba0540-82e7-4b0a-b66a-f6af367a2313",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "useDataOfInput": 2
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2576,
+        -320
+      ],
+      "id": "860c5fdf-c135-484d-9fc3-65e7e4ded7ce",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "6f83181f-485d-4d6c-8942-53e98cd0bf22",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "object",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1088,
+        -288
+      ],
+      "id": "ff4d3a0c-87a4-4b47-a660-7954b13cfcbb",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"Error\",\n  \"message\": \"Serpdev: {{ $json.error.description }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1312,
+        -480
+      ],
+      "id": "02d03fae-243c-462c-b033-3a2e4e1a95c9",
+      "name": "Serpdev Error"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst grouped = {};\n\nfor (const item of items) {\n  const { sourceId, partnerDomain, query, firstResultUrl, ...rest } = item.json;\n\n  if (!grouped[sourceId]) {\n    grouped[sourceId] = { sourceId, ...rest, partner_domains: [] };\n  }\n\n  grouped[sourceId].partner_domains.push(partnerDomain);\n}\n\nreturn Object.values(grouped).map(({ partner_domains, ...rest }) => ({\n  json: { ...rest, partner_domains: partner_domains.join(\", \") }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3424,
+        -528
+      ],
+      "id": "081280c1-bae8-460b-a323-a32861e51576",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "useDataOfInput": 2
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3152,
+        -160
+      ],
+      "id": "2d154379-227c-4779-862b-b3f7d235003b",
+      "name": "Merge2"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3152,
+        -768
+      ],
+      "id": "ebea6e60-00f5-4a68-a6d7-5fdbf5fbdfb6",
+      "name": "Merge3"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "automateoptinet.app.n8n.cloud",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "content-length": "1665",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "accept-language": "en-US,en;q=0.9",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "92.251.123.2",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "MT",
+            "cf-ray": "9e37ac6359f8ed23-MXP",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "origin": "https://lead-gen-ui-v3.vercel.app",
+            "priority": "u=1, i",
+            "referer": "https://lead-gen-ui-v3.vercel.app/",
+            "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "cross-site",
+            "x-forwarded-for": "92.251.123.2, 172.70.216.159",
+            "x-forwarded-host": "automateoptinet.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-31-55446f5479-psx8w",
+            "x-is-trusted": "yes",
+            "x-real-ip": "92.251.123.2"
+          },
+          "params": {},
+          "query": {},
+          "body": [
+            {
+              "id": 1451,
+              "url": "https://www.reddit.com/r/LonesomeDove/comments/1s4orse/best_online_casino_australia_for_pokies_and_real/",
+              "domain": "https://www.reddit.com",
+              "country": "Australia"
+            }
+          ],
+          "webhookUrl": "https://automateoptinet.app.n8n.cloud/webhook/check-if-domains-are-rooster-partners",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Filter and Clean Results": [
+      {
+        "json": {
+          "sourceId": 1451,
+          "country": "Australia",
+          "affiliateUrl": "www.reddit.com",
+          "partnerDomain": "rocketspin.com",
+          "query": "site:www.reddit.com \"rocketspin.com\"",
+          "firstResultUrl": "https://www.reddit.com/r/space/comments/rjwgpi/starship_superheavy_engine_gimbal_testing/"
+        }
+      },
+      {
+        "json": {
+          "sourceId": 1451,
+          "country": "Australia",
+          "affiliateUrl": "www.reddit.com",
+          "partnerDomain": "rooster.bet",
+          "query": "site:www.reddit.com \"rooster.bet\"",
+          "firstResultUrl": "https://www.reddit.com/r/gambling/comments/1aild0m/dont_gamble_on_rooster_bet/"
+        }
+      },
+      {
+        "json": {
+          "sourceId": 1451,
+          "country": "Australia",
+          "affiliateUrl": "www.reddit.com",
+          "partnerDomain": "playmojo.com",
+          "query": "site:www.reddit.com \"playmojo.com\"",
+          "firstResultUrl": "https://www.reddit.com/r/FlyFF/comments/p6ys47/flyff_links/"
+        }
+      }
+    ],
+    "HTTP Request": [
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"lucky7even.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"spinjo.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 1
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"rocketspin.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [
+            {
+              "title": "Starship Superheavy engine gimbal testing : r/space",
+              "link": "https://www.reddit.com/r/space/comments/rjwgpi/starship_superheavy_engine_gimbal_testing/",
+              "snippet": "... /oddlyarousing · letslaughmore. • 4y ago. They should have a site of just this looping, rocketspin.com or something. 1 more reply. JMills221.",
+              "date": "4 years ago",
+              "position": 1
+            },
+            {
+              "title": "u/letslaughmore",
+              "link": "https://www.reddit.com/user/letslaughmore/",
+              "snippet": "... engine gimbal testing · letslaughmore commented 4 yr. ago. They should have a site of just this looping, rocketspin.com or something. Upvote 6. Downvote Share ...",
+              "position": 2
+            }
+          ],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 2
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"luckyvibe.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 3
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"rollero.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 4
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"rooster.bet\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [
+            {
+              "title": "Don't gamble on rooster. Bet",
+              "link": "https://www.reddit.com/r/gambling/comments/1aild0m/dont_gamble_on_rooster_bet/",
+              "snippet": "Don't gamble on rooster. Bet. Just voided my 300$ win and said I was playing with free bonus funds despite a 100$ deposit.",
+              "date": "2 years ago",
+              "position": 1
+            },
+            {
+              "title": "Casino voided 300 dollars of my win stating terms ...",
+              "link": "https://www.reddit.com/r/gambling/comments/1aikqwo/casino_voided_300_dollars_of_my_win_stating_terms/",
+              "snippet": "Don't gamble on rooster. Bet · r/gambling. • 2y ago. Don't gamble on rooster. Bet. 2. 3. I have 200 and need the best way to gamble it online.",
+              "date": "2 years ago",
+              "position": 2
+            },
+            {
+              "title": "I bet the whole farm on Speed Rooster : r/StardewValley",
+              "link": "https://www.reddit.com/r/StardewValley/comments/1rwbv1y/i_bet_the_whole_farm_on_speed_rooster/",
+              "snippet": "I don't think speed rooster bet on speed rooster. Kratos5300.",
+              "date": "1 week ago",
+              "position": 3
+            },
+            {
+              "title": "Best Sportsbook Options and Reviews on Reddit in 2025?",
+              "link": "https://www.reddit.com/r/VPN_Question/comments/1og3ugx/best_sportsbook_options_and_reviews_on_reddit_in/",
+              "snippet": "Tried Rooster bet too for their free bets it paid out smooth without hassles worth testin if ya careful. More posts you may like. Crunchyroll ...",
+              "date": "5 months ago",
+              "sitelinks": [
+                {
+                  "title": "6 answers",
+                  "link": "https://www.reddit.com/r/VPN_Question/comments/1og3ugx/comment/nlg14n6/"
+                }
+              ],
+              "position": 4
+            },
+            {
+              "title": "What sports betting apps do you use in Nova Scotia?",
+              "link": "https://www.reddit.com/r/NovaScotia/comments/1f47fo2/what_sports_betting_apps_do_you_use_in_nova_scotia/",
+              "snippet": "Tried Rooster bet myself for their 450 free bets n cashback it paid out quick without issues worth tryin if ya want variety. [deleted]. • 3mo ...",
+              "date": "1 year ago",
+              "position": 5
+            }
+          ],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 5
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"fortuneplay.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 6
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"spinsup.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 7
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"playmojo.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [
+            {
+              "title": "Flyff Links : r/FlyFF",
+              "link": "https://www.reddit.com/r/FlyFF/comments/p6ys47/flyff_links/",
+              "snippet": "http://flyff.playmojo.com. South America+Spain. http://flyff.es.gpotato.com. Flyff SEA. https://flyff.playpark.com/. Current Official EU+NA.",
+              "date": "4 years ago",
+              "position": 1
+            }
+          ],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 8
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"novadreams.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 9
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"roosterpartner.media\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 10
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"roosterspartners.media\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 11
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"mediaroosters.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 12
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"lucky7even.org\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 13
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"lucky7even21.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 14
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"roosterbet.live\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 15
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"fortuneplay.co\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 16
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"spinjo.live\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 17
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"spinsup.live\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 18
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"rocketspin.live\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 19
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"playmojo.live\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 20
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"novadreams.live\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 21
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"luckyvibe.live\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 22
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"rollero.live\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 23
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"rooster-partner.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 24
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"roosters-partner.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 25
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"roosterpartners.media\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 26
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"roosterspartners.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 27
+        }
+      },
+      {
+        "json": {
+          "searchParameters": {
+            "q": "site:www.reddit.com \"rooster-partners.com\"",
+            "type": "search",
+            "num": 5,
+            "engine": "google"
+          },
+          "organic": [],
+          "credits": 1
+        },
+        "pairedItem": {
+          "item": 28
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Serper.dev queries": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Serper.dev results": {
+      "main": [
+        [
+          {
+            "node": "Filter and Clean Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter and Clean Results": {
+      "main": [
+        [
+          {
+            "node": "Is Rooster Partner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Rooster Partner": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Update a row1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a row": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row": {
+      "main": [
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row1": {
+      "main": [
+        [
+          {
+            "node": "Wait2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Success Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Serper.dev queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request2": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Update a row2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Update a row2": {
+      "main": [
+        [
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Serpdev Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse Serper.dev results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge3": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "e43c8773-c547-4fd5-b82e-4aa16a671119",
+  "meta": {
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "iCPTPEkWYc3YZpVDpMmYU",
+  "tags": []
+}

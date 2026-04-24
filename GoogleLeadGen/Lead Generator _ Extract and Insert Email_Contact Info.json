@@ -1,0 +1,1122 @@
+{
+  "name": "Lead Generator | Extract and Insert Email/Contact Info",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Get the input data\nconst inputData = $input.all();\n\n// Extract the text from the nested structure\nconst text = inputData[0].json.output[0].content[0].text;\n\n// Remove the markdown code fence markers\nconst cleanedText = text.replace(/```json\\n/, '').replace(/\\n```$/, '');\n\n// Parse the JSON string into an object\nconst parsedData = JSON.parse(cleanedText);\n\n// Return the parsed data\nreturn parsedData.map(item => ({json: item}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1712,
+        -2032
+      ],
+      "id": "2e0e77d7-837f-42c6-8e50-5152e47beb20",
+      "name": "Code in JavaScript10",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  return {\n    json: {\n      unique_key: item.json.unique_key,\n      url: item.json.url,\n      full_url: item.json.full_url,\n      affiliate_type: item.json.affiliate_type\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1712,
+        -1840
+      ],
+      "id": "8ae1766b-00f6-4c59-b594-019fc9ad0b3c",
+      "name": "Code in JavaScript11",
+      "disabled": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1488,
+        -1936
+      ],
+      "id": "f3db1ce7-8930-4de3-a2ab-4a0f7dba9659",
+      "name": "Merge2",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n      emailAddresses: items[0].json.emailAddresses,\n      contactUsURL: items[0].json.contactUsURL,\n      unique_key: items[1].json.unique_key,\n      url: items[1].json.url,\n      full_url: items[1].json.full_url,\n      affiliate_type: items[1].json.affiliate_type\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1264,
+        -1936
+      ],
+      "id": "8dd2e52e-e6c0-40a8-874a-319b93b0c0d5",
+      "name": "Code in JavaScript12",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "content": "## Apollo",
+        "height": 480,
+        "width": 1744
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2304,
+        -2160
+      ],
+      "id": "a3502c5c-3c79-4b3c-b763-4ba851748e94",
+      "name": "Sticky Note6",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/api/v1/people/match?id=65b648bed769fe0001fb1725",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1936,
+        -2032
+      ],
+      "id": "7685ee07-1f85-44a3-b920-fe8b15dc094f",
+      "name": "HTTP Request2",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3bf70446-953a-4700-8b6a-1e3be00d6de2",
+              "leftValue": "={{ $json.emailAddresses.length > 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1040,
+        -1936
+      ],
+      "id": "23950e6e-9088-4235-afed-6b3d76e62ba0",
+      "name": "If Apollo has email address returned",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1q3brc26tGSBMCTS9fqA3Pkl1vF0v59R5f0Vg0xtiyz8",
+          "mode": "list",
+          "cachedResultName": "Lead Gen Test",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1q3brc26tGSBMCTS9fqA3Pkl1vF0v59R5f0Vg0xtiyz8/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1q3brc26tGSBMCTS9fqA3Pkl1vF0v59R5f0Vg0xtiyz8/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": 0,
+            "unique_key": "={{ $json.unique_key }}",
+            "contact_email - hunter": "={{ $json.jsonData }}",
+            "affiliate": "="
+          },
+          "matchingColumns": [
+            "unique_key"
+          ],
+          "schema": [
+            {
+              "id": "unique_key",
+              "displayName": "unique_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "keyword",
+              "displayName": "keyword",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "url",
+              "displayName": "url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "full_url",
+              "displayName": "full_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "position_on_page",
+              "displayName": "position_on_page",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "page_number",
+              "displayName": "page_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "overall_position",
+              "displayName": "overall_position",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "type",
+              "displayName": "type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "affiliate",
+              "displayName": "affiliate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contact_email - hunter",
+              "displayName": "contact_email - hunter",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contact_email - apollo",
+              "displayName": "contact_email - apollo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contact_email - snov",
+              "displayName": "contact_email - snov",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contact_email - scrapegraph ai",
+              "displayName": "contact_email - scrapegraph ai",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contact_email - ChatGPT",
+              "displayName": "contact_email - ChatGPT",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contact_number - apollo",
+              "displayName": "contact_number - apollo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contact_number - clearbit",
+              "displayName": "contact_number - clearbit",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contact_number - rocketreach",
+              "displayName": "contact_number - rocketreach",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contact_us",
+              "displayName": "contact_us",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -816,
+        -1936
+      ],
+      "id": "39c4afd7-f1aa-4806-ba50-c2be7ac40dfd",
+      "name": "Update Apollo Email",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the input data\nconst items = $input.all();\n\n// Process each item\nreturn items.map(item => {\n  const fullUrl = item.json.full_url;\n  \n  // Extract domain from URL\n  let domain = '';\n  \n  if (fullUrl) {\n    try {\n      const url = new URL(fullUrl);\n      domain = url.hostname.replace('www.', '');\n    } catch (error) {\n      // If URL parsing fails, return empty string\n      domain = '';\n    }\n  }\n  \n  return {\n    json: {\n      ...item.json,\n      domain: domain\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2160,
+        -2032
+      ],
+      "id": "773d37fa-9829-40f6-86df-a83ef2230186",
+      "name": "Code in JavaScript13",
+      "disabled": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2896,
+        -1024
+      ],
+      "id": "f673514a-c263-409e-8a5b-d99706b5f7d4",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v2.vercel.app/api/webhook-receiver",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -2672,
+        -1024
+      ],
+      "id": "b4615568-e5ce-4e0b-929c-89969599bd3c",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "collect-contact-details",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -2896,
+        -400
+      ],
+      "id": "18f728e9-9bb7-4625-ab63-a92975ee8bf7",
+      "name": "Webhook",
+      "webhookId": "2012aba8-b84b-4967-8588-35dd84055174"
+    },
+    {
+      "parameters": {
+        "url": "https://ogzxpnwoxakynexyfvad.supabase.co/rest/v1/contact_table?select=contact_id&order=contact_id.desc&limit=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1776,
+        -512
+      ],
+      "id": "dc1fec77-e1a5-43c6-9fbd-c90c50261258",
+      "name": "HTTP Request1",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "JCKadasIFFd6No3l",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1d2da67-a1a0-43a5-a0e7-cbaf69897921",
+              "name": "new_contact_id",
+              "value": "={{ ($json.contact_id + 1) || 1 }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1552,
+        -512
+      ],
+      "id": "1f47d357-2d2a-4ac1-92c8-44e88b1e882c",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "url": "=https://ogzxpnwoxakynexyfvad.supabase.co/rest/v1/google_lead_gen_table?select=contact_id&id=eq.{{ $json.id }}&limit=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -2224,
+        -608
+      ],
+      "id": "e088b1ee-af11-4785-8f03-70032a501e13",
+      "name": "HTTP Request",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "JCKadasIFFd6No3l",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "8df2a943-3c94-462e-8fac-8937a2636916",
+              "leftValue": "={{ $json.contact_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2000,
+        -608
+      ],
+      "id": "64910402-eea7-427d-bcac-42fa689af622",
+      "name": "If2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1d2da67-a1a0-43a5-a0e7-cbaf69897921",
+              "name": "new_contact_id",
+              "value": "={{ ($json.contact_id) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1552,
+        -704
+      ],
+      "id": "4170cf2c-3097-4fb1-8a40-773667fe8763",
+      "name": "Edit Fields2"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -1328,
+        -560
+      ],
+      "id": "b22fb5cb-5ba3-46ba-9bdd-81cb47894809",
+      "name": "Merge4"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// Each item's .json is one object from the original array\nconst allObjects = items.map(item => item.json);\n\n// Find the new_contact_id value\nconst batchObj = allObjects.find(obj => obj.new_contact_id !== undefined);\nconst new_contact_id = batchObj?.new_contact_id;\n\n// Filter out the new_contact_id object and inject new_contact_id into the rest\nconst result = allObjects\n  .filter(obj => obj.new_contact_id === undefined)\n  .map(obj => ({ json: { ...obj, new_contact_id } }));\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1104,
+        -560
+      ],
+      "id": "a29e98ff-7441-4188-a721-d43462af1081",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"Success\",\n  \"message\": \"Extracted Contact Details. If empty, then no Contact Details extracted.\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -2224,
+        -800
+      ],
+      "id": "f22c5f5c-b4c7-470e-a30e-c6e9cb2b7984",
+      "name": "Success Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\n\nreturn body.map(item => ({\n  json: {\n    ...item,\n    domain_for_searching: item.domain.replace(/^https?:\\/\\/(www\\.)?/, '')\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2672,
+        -400
+      ],
+      "id": "03a137bf-2a17-40a0-8d64-914d005d12a2",
+      "name": "Tidy up the data1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -2448,
+        -400
+      ],
+      "id": "6efeab1d-9218-416a-a380-b76e3158eb16",
+      "name": "Loop Over Items3"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://automateoptinet.app.n8n.cloud/webhook/extract-contact-details-openai",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "=id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            },
+            {
+              "name": "domain",
+              "value": "={{ $json.domain }}"
+            },
+            {
+              "name": "country",
+              "value": "={{ $json.country }}"
+            },
+            {
+              "name": "is_rooster_partner",
+              "value": "={{ $json.is_rooster_partner }}"
+            },
+            {
+              "name": "domain_for_searching",
+              "value": "={{ $json.domain_for_searching }}"
+            },
+            {
+              "name": "new_contact_id",
+              "value": "={{ $json.new_contact_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -880,
+        -560
+      ],
+      "id": "38dc7cc7-268e-4632-9f40-dc4f97b7aa13",
+      "name": "Get Contact Details - OpenAI"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2f552361-a3e5-4954-8057-b79eda027cd3",
+              "leftValue": "={{ $json.extraction_result }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -656,
+        -400
+      ],
+      "id": "2c134ec0-5a28-43a9-ab6e-61e8edb9c7d4",
+      "name": "If Success"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://automateoptinet.app.n8n.cloud/webhook/extract-contact-details-hunterio",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "=source_id",
+              "value": "={{ $json.source_id }}"
+            },
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            },
+            {
+              "name": "domain",
+              "value": "={{ $json.domain }}"
+            },
+            {
+              "name": "country",
+              "value": "={{ $json.country }}"
+            },
+            {
+              "name": "is_rooster_partner",
+              "value": "={{ $json.is_rooster_partner }}"
+            },
+            {
+              "name": "domain_for_searching",
+              "value": "={{ $json.domain_for_searching }}"
+            },
+            {
+              "name": "new_contact_id",
+              "value": "={{ $json.new_contact_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -208,
+        -320
+      ],
+      "id": "2b398693-9fce-4b30-988c-8b40c804c003",
+      "name": "Get Contact Details - Hunter.io"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const data = item.json;\n\n  return {\n    json: {\n      ...data,\n      domain_for_searching: data.domain.replace(/^https?:\\/\\/(www\\.)?/, '')\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        -400
+      ],
+      "id": "07977e20-4bf6-4c6a-9499-069d6cd5fa37",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "automateoptinet.app.n8n.cloud",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 OPR/128.0.0.0",
+            "content-length": "297",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "accept-language": "en-US,en;q=0.9",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "124.104.210.177",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "PH",
+            "cf-ray": "9e15be996a46dd9d-HKG",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "origin": "http://localhost:5173",
+            "priority": "u=1, i",
+            "referer": "http://localhost:5173/",
+            "sec-ch-ua": "\"Not(A:Brand\";v=\"8\", \"Chromium\";v=\"144\", \"Opera GX\";v=\"128\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "cross-site",
+            "x-forwarded-for": "124.104.210.177, 162.158.178.219",
+            "x-forwarded-host": "automateoptinet.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-31-55446f5479-p5vzm",
+            "x-is-trusted": "yes",
+            "x-real-ip": "124.104.210.177"
+          },
+          "params": {},
+          "query": {},
+          "body": [
+            {
+              "id": 902,
+              "url": "https://www.quitter.no/",
+              "domain": "https://www.quitter.no",
+              "country": "Norway",
+              "is_rooster_partner": false
+            },
+            {
+              "id": 901,
+              "url": "https://www.gambling.com/no/strategi/6-casinoer-med-hoyeste-utbetalinger",
+              "domain": "https://www.gambling.com",
+              "country": "Norway",
+              "is_rooster_partner": true
+            }
+          ],
+          "webhookUrl": "https://automateoptinet.app.n8n.cloud/webhook/collect-contact-details",
+          "executionMode": "production"
+        }
+      }
+    ],
+    "Get Contact Details - OpenAI": [
+      {
+        "json": {
+          "source_id": 902,
+          "url": "https://www.quitter.no/",
+          "domain": "https://www.quitter.no",
+          "country": "Norway",
+          "is_rooster_partner": false,
+          "new_contact_id": "21",
+          "extraction_result": "failed"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Code in JavaScript10": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript11": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript12",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript12": {
+      "main": [
+        [
+          {
+            "node": "If Apollo has email address returned",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request2": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Apollo has email address returned": {
+      "main": [
+        [
+          {
+            "node": "Update Apollo Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Code in JavaScript13": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "If2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Merge4",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "Merge4",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge4": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Get Contact Details - OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items3": {
+      "main": [
+        [
+          {
+            "node": "Success Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contact Details - OpenAI": {
+      "main": [
+        [
+          {
+            "node": "If Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Success": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Contact Details - Hunter.io": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Get Contact Details - Hunter.io",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "db5b438c-741d-41c1-9de3-5ada1c84fdc4",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "QC7TuY2w3gyNAqqs",
+  "tags": []
+}

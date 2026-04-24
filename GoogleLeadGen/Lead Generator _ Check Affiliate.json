@@ -1,0 +1,666 @@
+{
+  "name": "Lead Generator | Check Affiliate",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "check-affiliate-websites",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1216,
+        -560
+      ],
+      "id": "79f5e116-2f3f-4425-8d56-7265165c3721",
+      "name": "Webhook",
+      "webhookId": "44a49e4e-6d30-465a-a428-6fc0d8d4395e"
+    },
+    {
+      "parameters": {
+        "jsCode": "const url = $input.item.json.url || '';\nconst urlLower = url.toLowerCase();\n\n// List of domains to skip\nconst skipDomains = [\n  'youtube.com',\n  'youtu.be',\n  'vimeo.com',\n  'twitch.tv',\n  'facebook.com',\n  'twitter.com',\n  'instagram.com'\n];\n\n// Check if URL contains any skip domain\nconst shouldSkip = skipDomains.some(domain => urlLower.includes(domain));\n\nreturn {\n  json: {\n    id: $input.item.json.id,\n    url: url,\n    country: $input.item.json.country,\n    domain: $input.item.json.domain,\n    domain_for_searching: $input.item.json.domain_for_searching,\n    shouldSkip: shouldSkip,\n    skipReason: shouldSkip ? 'Video/social media platform' : null\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        -928
+      ],
+      "id": "a25fbda0-8b17-4334-ac0c-4ffb5a1d1df4",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7ff665da-e527-4e43-8650-d64be808680c",
+              "leftValue": "={{ $json.shouldSkip }}",
+              "rightValue": "false",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -32,
+        -928
+      ],
+      "id": "697ead5e-1119-4ac4-8c90-f78e98e25e73",
+      "name": "Should Proceed to Check Affiliation?"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Function node to classify if a website is an affiliate site\n// Get data directly from the HTTP Request node output\n\nconst inputUrl = $input.first().json.url || '';\nconst html = $input.first().json.rendered_html_tags || '';\n\nconst text = html ? html.toLowerCase() : '';\n\n// Debug output if something is wrong\nif (!html || html.length < 100) {\n  return {\n    json: {\n      url: inputUrl,\n      classification: 'ERROR',\n      error: 'No HTML content received or content too short',\n      debug: {\n        htmlLength: html ? html.length : 0,\n        sampleData: html ? html.substring(0, 200) : 'No HTML'\n      }\n    }\n  };\n}\n\n// Helper function to count occurrences\nfunction countOccurrences(str, patterns) {\n  let count = 0;\n  patterns.forEach(pattern => {\n    const regex = new RegExp(pattern, 'gi');\n    const matches = str.match(regex);\n    if (matches) count += matches.length;\n  });\n  return count;\n}\n\n// Helper function to get domain\nfunction getDomain(urlString) {\n  try {\n    if (!urlString.startsWith('http')) {\n      return null;\n    }\n    const urlObj = new URL(urlString);\n    return urlObj.hostname;\n  } catch (e) {\n    return null;\n  }\n}\n\n// IMPROVED: Helper function to count casino outbound links (including redirects/tracking links)\nfunction countCasinoOutboundLinks(html, currentUrl) {\n  let currentDomain;\n  try {\n    currentDomain = new URL(currentUrl).hostname;\n  } catch (e) {\n    currentDomain = '';\n  }\n  \n  const hrefPattern = /href=[\"']([^\"']+)[\"']/gi;\n  const matches = html.matchAll(hrefPattern);\n  \n  const externalCasinoDomains = new Set();\n  const casinoTrackingLinks = new Set();\n  const casinoKeywords = ['casino', 'bet', 'gaming', 'slots', 'poker', 'blackjack', 'spin'];\n  \n  for (const match of matches) {\n    let link = match[1];\n    \n    // Skip anchors, javascript, mailto, tel\n    if (link.startsWith('#') || link.startsWith('javascript:') || \n        link.startsWith('mailto:') || link.startsWith('tel:')) {\n      continue;\n    }\n    \n    // Normalize link for checking\n    const linkLower = link.toLowerCase();\n    \n    // Check for tracking/redirect links (common in affiliate sites)\n    // Patterns: /track/, /click/, /go/, /visit/, /out/, /redirect/, /creat/, /aff/, /ref/, /link/\n    // Also check for query parameters like ?ref=, ?aff=, ?campaign=\n    const isTrackingLink = link.match(/\\/(track|click|go|visit|out|redirect|creat|aff|ref|link|offer|bonus|promo)\\//i) ||\n                          link.match(/[?&](ref|aff|affiliate|campaign|source|tracking|click)=/i);\n    \n    if (isTrackingLink) {\n      casinoTrackingLinks.add(link);\n      continue;\n    }\n    \n    // Check for direct external casino links\n    if (link.startsWith('http')) {\n      const linkDomain = getDomain(link);\n      if (linkDomain && linkDomain !== currentDomain) {\n        if (casinoKeywords.some(kw => linkDomain.includes(kw) || linkLower.includes(kw))) {\n          externalCasinoDomains.add(linkDomain);\n        }\n      }\n    }\n  }\n  \n  // Return the larger count (either direct links or tracking links)\n  return Math.max(externalCasinoDomains.size, casinoTrackingLinks.size);\n}\n\n// Initialize scores and indicators\nlet affiliateScore = 0;\nlet casinoScore = 0;\nconst indicators = [];\n\n// Count external casino links first (critical for classification)\nconst externalCasinoCount = countCasinoOutboundLinks(html, inputUrl);\n\n// === PRIMARY DECISION FACTOR: External Casino Links ===\n\nif (externalCasinoCount >= 5) {\n  affiliateScore += 15;\n  indicators.push(`✓✓ Multiple outbound casino links (${externalCasinoCount}) - STRONG AFFILIATE SIGNAL`);\n} else if (externalCasinoCount >= 3) {\n  affiliateScore += 10;\n  indicators.push(`✓ Several outbound casino links (${externalCasinoCount})`);\n} else if (externalCasinoCount >= 1) {\n  affiliateScore += 3;\n  indicators.push(`○ Some outbound casino links (${externalCasinoCount})`);\n}\n\n// === AFFILIATE INDICATORS ===\n\n// 1. Check for affiliate disclosure\nconst affiliateDisclosures = [\n  'we may earn', 'earn commission', 'affiliate commission', \n  'compensated for referring', 'advertising disclosure', 'affiliate disclaimer'\n];\nconst affiliateDisclosureFound = affiliateDisclosures.some(phrase => text.includes(phrase));\nif (affiliateDisclosureFound) {\n  affiliateScore += 8;\n  indicators.push('✓✓ Affiliate disclosure found');\n}\n\n// 2. Check for comparison/review language\nconst reviewKeywords = [\n  'best online casino', 'top casino', 'casino review', 'compare casino',\n  'casino ranking', 'casino comparison', 'casino list', \n  'recommended casino', 'top 10', 'top 25', 'top 20'\n];\nconst reviewCount = countOccurrences(text, reviewKeywords);\nif (reviewCount >= 5) {\n  affiliateScore += 7;\n  indicators.push(`✓✓ Heavy review/comparison language (${reviewCount})`);\n} else if (reviewCount >= 2) {\n  affiliateScore += 4;\n  indicators.push(`✓ Review/comparison language (${reviewCount})`);\n}\n\n// 3. Multiple CTAs to OTHER casinos\nconst ctaPatterns = ['visit casino', 'visit site', 'go to casino', 'claim at', 'play at', 'get bonus', 'claim bonus'];\nconst ctaCount = countOccurrences(text, ctaPatterns);\nif (ctaCount >= 10) {\n  affiliateScore += 6;\n  indicators.push(`✓ Many external CTAs (${ctaCount})`);\n} else if (ctaCount >= 5) {\n  affiliateScore += 3;\n  indicators.push(`○ Several CTAs (${ctaCount})`);\n}\n\n// 4. Bonus comparison content\nconst bonusComparisonKeywords = ['welcome bonus', 'bonus offer', 'free spins', 'match bonus', 'deposit bonus'];\nconst bonusCompCount = countOccurrences(text, bonusComparisonKeywords);\nif (bonusCompCount >= 10) {\n  affiliateScore += 5;\n  indicators.push(`✓ Heavy bonus comparison content (${bonusCompCount})`);\n} else if (bonusCompCount >= 5) {\n  affiliateScore += 2;\n  indicators.push(`○ Bonus content (${bonusCompCount})`);\n}\n\n// 5. Pros/cons structure (common in affiliate reviews)\nconst hasProsConsStructure = (text.includes('pros:') || text.includes('pros') || text.includes('advantages:')) && \n                              (text.includes('cons:') || text.includes('cons') || text.includes('disadvantages:'));\nif (hasProsConsStructure) {\n  affiliateScore += 5;\n  indicators.push('✓ Pros/cons review structure');\n}\n\n// 6. Rating system\nconst hasRatings = /\\d+(\\.\\d+)?\\s*(\\/|out of)\\s*\\d+|★{2,}|⭐{2,}|rating/i.test(html);\nif (hasRatings) {\n  affiliateScore += 3;\n  indicators.push('✓ Rating system detected');\n}\n\n// 7. Comparison table\nconst hasTable = /<table/i.test(html);\nif (hasTable && (text.includes('casino') || text.includes('bonus'))) {\n  affiliateScore += 4;\n  indicators.push('✓ Comparison table structure');\n}\n\n// 8. \"Play Now\" buttons with rel=\"nofollow\" or \"noopener\"\nconst hasNoFollowPlayButtons = /rel=[\"'][^\"']*nofollow[^\"']*[\"']/i.test(html) || \n                                 /rel=[\"'][^\"']*noopener[^\"']*[\"']/i.test(html);\nif (hasNoFollowPlayButtons) {\n  affiliateScore += 5;\n  indicators.push('✓ Affiliate-style link markers detected');\n}\n\n// === CASINO INDICATORS ===\n\n// 1. Login/Registration forms - ONLY if no outbound casino links\nconst hasLoginKeywords = text.includes('log in') || text.includes('sign in') || text.includes('login');\nconst hasRegisterKeywords = text.includes('register') || text.includes('sign up') || text.includes('join now');\nconst hasPasswordField = html.includes('type=\"password\"') || html.includes(\"type='password'\");\n\nif ((hasLoginKeywords || hasRegisterKeywords) && hasPasswordField && externalCasinoCount === 0) {\n  casinoScore += 12;\n  indicators.push('✓✓ Login/registration system (CASINO)');\n}\n\n// 2. Deposit/withdrawal - reduce weight if high affiliate score\nconst depositWithdrawKeywords = ['deposit now', 'make a deposit', 'withdraw funds', 'cashier', 'my wallet'];\nconst depositCount = countOccurrences(text, depositWithdrawKeywords);\n\n// If affiliate score is already high, don't give much weight to deposit mentions\nif (depositCount >= 5 && externalCasinoCount === 0 && affiliateScore < 15) {\n  casinoScore += 10;\n  indicators.push(`✓✓ Deposit/withdrawal system (${depositCount}) (CASINO)`);\n} else if (depositCount >= 3 && externalCasinoCount === 0 && affiliateScore < 20) {\n  casinoScore += 5;\n  indicators.push(`○ Payment mentions (${depositCount})`);\n}\n\n// 3. Account/Balance\nconst accountKeywords = ['my account', 'account balance', 'my balance', 'player account', 'account settings'];\nconst accountCount = countOccurrences(text, accountKeywords);\nif (accountCount >= 3 && externalCasinoCount === 0) {\n  casinoScore += 8;\n  indicators.push(`✓ Player account system (${accountCount}) (CASINO)`);\n}\n\n// 4. Responsible gambling tools\nconst responsibleGamblingKeywords = ['responsible gambling', 'self-exclusion', 'gambling awareness', 'play responsibly', 'gamcare', 'gambleaware'];\nconst rgCount = responsibleGamblingKeywords.filter(kw => text.includes(kw)).length;\nif (rgCount >= 3 && externalCasinoCount === 0) {\n  casinoScore += 7;\n  indicators.push(`✓ Responsible gambling tools (${rgCount}) (CASINO)`);\n}\n\n// 5. Gaming license for THIS casino\nconst licenseKeywords = ['licensed and regulated by', 'our gaming license', 'license number', 'regulated by mga', 'regulated by ukgc'];\nconst licenseCount = countOccurrences(text, licenseKeywords);\nif (licenseCount >= 1 && externalCasinoCount === 0) {\n  casinoScore += 6;\n  indicators.push(`✓ Gaming license info (${licenseCount}) (CASINO)`);\n}\n\n// === CLASSIFICATION LOGIC ===\n\nlet classification = 'NOT_AFFILIATE';\nlet confidenceLevel = 'LOW';\n\n// UPDATED LOGIC: If affiliate score is significantly higher than casino score, classify as affiliate\n// even without detecting external links (in case tracking detection fails)\n\nconst scoreDifference = affiliateScore - casinoScore;\n\n// Case 1: High affiliate score regardless of links detected\nif (affiliateScore >= 25 && scoreDifference >= 10) {\n  classification = 'AFFILIATE';\n  confidenceLevel = affiliateScore >= 35 ? 'VERY_HIGH' : 'HIGH';\n}\n// Case 2: Medium-high affiliate score with positive difference\nelse if (affiliateScore >= 18 && scoreDifference >= 5) {\n  classification = 'AFFILIATE';\n  confidenceLevel = 'HIGH';\n}\n// Case 3: 5+ outbound casino links detected\nelse if (externalCasinoCount >= 5) {\n  classification = 'AFFILIATE';\n  confidenceLevel = affiliateScore >= 20 ? 'VERY_HIGH' : 'HIGH';\n}\n// Case 4: 3-4 outbound casino links\nelse if (externalCasinoCount >= 3) {\n  classification = 'AFFILIATE';\n  confidenceLevel = affiliateScore >= 15 ? 'HIGH' : 'MEDIUM';\n}\n// Case 5: Some affiliate signals with positive score difference\nelse if (affiliateScore >= 12 && scoreDifference > 0) {\n  classification = 'AFFILIATE';\n  confidenceLevel = 'MEDIUM';\n}\n// Case 6: Strong casino signals\nelse if (casinoScore >= 15 && casinoScore > affiliateScore) {\n  classification = 'NOT_AFFILIATE';\n  confidenceLevel = 'VERY_HIGH';\n}\n// Case 7: Medium casino signals\nelse if (casinoScore >= 10 && casinoScore > affiliateScore) {\n  classification = 'NOT_AFFILIATE';\n  confidenceLevel = 'HIGH';\n}\n// Case 8: Casino score higher\nelse if (casinoScore > affiliateScore) {\n  classification = 'NOT_AFFILIATE';\n  confidenceLevel = 'MEDIUM';\n}\n// Default: Not affiliate (low confidence)\nelse {\n  classification = 'NOT_AFFILIATE';\n  confidenceLevel = 'LOW';\n}\n\n// Output result\nreturn {\n  json: {\n    id: $input.first().json.id || '',\n    url: inputUrl,\n    country: $input.first().json.country || '',\n    domain: $input.first().json.domain || '',\n    domain_for_searching: $input.first().json.domain_for_searching || '',\n    classification: classification,\n    confidence: confidenceLevel,\n    affiliateScore: affiliateScore,\n    casinoScore: casinoScore,\n    scoreDifference: scoreDifference,\n    indicatorsFound: indicators.length,\n    indicators: indicators,\n    externalCasinoLinks: externalCasinoCount,\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        -1088
+      ],
+      "id": "50f2e6d4-ab22-44de-b2fa-c4dbacd93a48",
+      "name": "Casino Affiliate Detector Code",
+      "notes": "Casino Affiliate Detector - Code Documentation\nPurpose\nAnalyzes a website and determines if it's an affiliate site (reviews/compares casinos) or not an affiliate (actual casino or other type of site).\n-------------------------------------------------------------------------------------------------\nHow It Works:\nInput\n- Website URL\n- Website HTML content (from HTTP Request node)\n\nOutput\n- Classification: AFFILIATE or NOT_AFFILIATE\n- Confidence Level: LOW, MEDIUM, HIGH, or VERY_HIGH\n- Scores: Affiliate score, Casino score, and the difference\n- Indicators: List of signals found (e.g., \"Multiple external casino links\", \"Login system detected\")\n-------------------------------------------------------------------------------------------------\nMain Detection Logic\n1. External Casino Links (Most Important Signal)\n- Counts how many links point to OTHER casino websites\n- Includes tracking links like /click/, /go/, /visit/\n- Why it matters: Affiliate sites link to many casinos; real casinos don't\n\nScoring:\n- 5+ links = Strong affiliate signal\n- 3-4 links = Moderate affiliate signal\n- 0 links = Possible real casino\n\n2. Affiliate Indicators\nWhat we look for:\n- Affiliate disclosures (\"we may earn commission\")\n- Review language (\"best casino\", \"top 10\", \"compare\")\n- Multiple \"Visit Casino\" or \"Claim Bonus\" buttons\n- Bonus comparison content\n- Pros/cons lists\n- Rating systems (stars, scores)\n- Comparison tables\n- Affiliate link markers (rel=\"nofollow\")\n\n3. Casino Indicators\nWhat we look for:\n- Login/registration forms\n- Deposit/withdrawal features\n- Player account systems\n- Responsible gambling tools\n- Gaming license information\n\nImportant: These only count if there are NO external casino links\n\n4. Final Decision\nThe system calculates:\n- Affiliate Score (total points from affiliate indicators)\n- Casino Score (total points from casino indicators)\n- Score Difference (Affiliate minus Casino)\n\nClassification Rules:\n- High affiliate score + many external links = AFFILIATE\n- High casino score + zero external links = NOT_AFFILIATE\n- Mixed signals = Lower confidence rating\n-------------------------------------------------------------------------------------------------\nExample Results:\n1. Affiliate Site\n- 8 external casino links found\n- Review language detected\n- Comparison tables present\n- Result: AFFILIATE (VERY_HIGH confidence)\n\n2. Real Casino\n- 0 external casino links\n- Login form detected\n- Deposit system present\n- Result: NOT_AFFILIATE (VERY_HIGH confidence)\n\n3. Uncertain Case\n- Few indicators found\n- Mixed signals\n- Result: NOT_AFFILIATE (LOW confidence)\n-------------------------------------------------------------------------------------------------\nKey Takeaway\nMost reliable indicator: Number of external casino links\n- Many links = Affiliate site\n- No links = Likely real casino (if it has login/payment features)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "60b93b0e-7aea-4396-96bb-cc0b59688e28",
+              "leftValue": "={{ $json.classification }}",
+              "rightValue": "AFFILIATE",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1312,
+        -976
+      ],
+      "id": "dafad4de-e4ea-46fb-9c5d-821e4a53b50f",
+      "name": "If Affiliate"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\n\nreturn body.map(item => ({\n  json: {\n    ...item,\n    domain_for_searching: item.domain.replace(/^https?:\\/\\/(www\\.)?/, '')\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -992,
+        -560
+      ],
+      "id": "a5d05402-533b-4af4-a075-2cf86d725487",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "is_affiliate",
+              "fieldValue": "={{ false }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        192,
+        -784
+      ],
+      "id": "941d334d-ae6c-4014-bca7-4bfda06f572f",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "nTg8uX9P5pxzG5SR",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://automateoptinet.app.n8n.cloud/webhook/get-html-tags-scrapingBee",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"id\": {{ $json.id }},\n  \"url\": {{ JSON.stringify($json.url) }},\n  \"country\": {{ JSON.stringify($json.country) }},\n  \"domain\": {{ JSON.stringify($json.domain) }},\n  \"domain_for_searching\": {{ JSON.stringify($json.domain_for_searching) }},\n  \"shouldSkip\": {{ $json.shouldSkip }},\n  \"skipReason\": {{ JSON.stringify($json.skipReason) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        192,
+        -1120
+      ],
+      "id": "e5382c8e-74f2-47b2-bd3f-4fcc61957838",
+      "name": "Get HTML Tags (Scraping Bee)",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f35138dc-42d4-4097-acd5-2ea24c70e22e",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        640,
+        -1136
+      ],
+      "id": "7a76c19b-4193-4ba0-8a54-a9e5c9a28906",
+      "name": "If Error"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1216,
+        -1456
+      ],
+      "id": "6bd56d0b-befa-496f-87c6-c1ddfcec1d1b",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -992,
+        -1456
+      ],
+      "id": "883bab63-3add-4375-bf9c-b89e7e09c653",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "is_affiliate",
+              "fieldValue": "={{ true }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1712,
+        -464
+      ],
+      "id": "e67d9096-97b0-4352-ac3b-005c40fb69e0",
+      "name": "Update a row1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        416,
+        -960
+      ],
+      "id": "e5ea1f68-0282-4584-a5b7-add8969fb93d",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9ab2a7ca-5ff2-4e47-8436-419121bd0c51",
+              "name": "classification",
+              "value": "={{ $json.classification }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1088,
+        -1088
+      ],
+      "id": "404898bb-3134-4ff1-9d82-13191f6196a2",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "is_affiliate",
+              "fieldValue": "={{ false }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1712,
+        -160
+      ],
+      "id": "b679dec6-c163-40c2-b40b-0d497d678422",
+      "name": "Update a row2",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -768,
+        -560
+      ],
+      "id": "c286df49-5519-4516-887e-4f2add1b1aab",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"Success\",\n  \"message\": \"Successfully Checked for Affiliate Websites.\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -336,
+        -576
+      ],
+      "id": "cd62c1c4-5b39-45ff-9907-dd5acc7d9c44",
+      "name": "Success Webhook"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "automateoptinet.app.n8n.cloud",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+            "content-length": "6129",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "accept-language": "en-US,en;q=0.9",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "92.251.123.2",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "MT",
+            "cf-ray": "9e3995296a074c74-MXP",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "origin": "https://lead-gen-ui-v3.vercel.app",
+            "priority": "u=1, i",
+            "referer": "https://lead-gen-ui-v3.vercel.app/",
+            "sec-ch-ua": "\"Chromium\";v=\"146\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"146\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "cross-site",
+            "x-forwarded-for": "92.251.123.2, 188.114.102.174",
+            "x-forwarded-host": "automateoptinet.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-31-55446f5479-p5vzm",
+            "x-is-trusted": "yes",
+            "x-real-ip": "92.251.123.2"
+          },
+          "params": {},
+          "query": {},
+          "body": [
+            {
+              "id": 1379,
+              "url": "https://www.metropolitancasinos.com/assets/images/Metropolitan%20Casinos/2024/10/Files/mg-golden-ball-roulette-ar.pdf",
+              "domain": "https://www.metropolitancasinos.com",
+              "country": "Saudi Arabia"
+            }
+          ],
+          "webhookUrl": "https://automateoptinet.app.n8n.cloud/webhook/check-affiliate-websites",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Should Proceed to Check Affiliation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Proceed to Check Affiliation?": {
+      "main": [
+        [
+          {
+            "node": "Get HTML Tags (Scraping Bee)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Casino Affiliate Detector Code": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Affiliate": {
+      "main": [
+        [
+          {
+            "node": "Update a row1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update a row2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get HTML Tags (Scraping Bee)": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Error": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Casino Affiliate Detector Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "If Affiliate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "If Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Success Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "9136b143-7e35-4690-abc9-6066409579a6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "Q8D6ctwwlpuNkdMz",
+  "tags": []
+}

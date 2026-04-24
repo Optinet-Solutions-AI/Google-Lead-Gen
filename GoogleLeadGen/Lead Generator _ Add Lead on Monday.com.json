@@ -1,0 +1,899 @@
+{
+  "name": "Lead Generator | Add Lead on Monday.com",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        320
+      ],
+      "id": "a8d5caaf-2d16-4049-93fd-f04983e3b447",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -336,
+        320
+      ],
+      "id": "5ca47bfb-338a-4c77-9bee-eacad47b0d8e",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"Success\",\n  \"message\": \"Added the Lead on Monday.com\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2384,
+        768
+      ],
+      "id": "3a07bb8a-54c1-4a53-ac17-01d4a44e9217",
+      "name": "Success Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\nreturn { json: body };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        1056
+      ],
+      "id": "9bd0b41b-461f-4633-ab09-cf77a41c0304",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "add-lead-on-monday",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -560,
+        1056
+      ],
+      "id": "51c58aa5-4491-4a49-a01d-eb199f8470f9",
+      "name": "Webhook",
+      "webhookId": "14b2d351-134a-4767-a9a7-3535b8d7380a"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cleaned_domain = $input.first().json.domain\n  .replace(/^https?:\\/\\//, '')  // strip http/https\n  .replace(/^www\\./, '')         // strip www.\n  .replace(/\\/$/, '');           // strip trailing slash\nreturn { ...$input.first().json, cleaned_domain };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -112,
+        1056
+      ],
+      "id": "89fc2ea3-0e80-4b73-a0f7-513f615a33b2",
+      "name": "Clean up the domain"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ca771d63-fd9c-4a6d-a152-8ca6e9846745",
+              "name": "source_id",
+              "value": "={{ $json.id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1904,
+        1120
+      ],
+      "id": "53a85956-207d-4213-89e2-ec904c2b66ed",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1232,
+        784
+      ],
+      "id": "0e511ad2-5c39-4565-8d9b-a92d7f20a08e",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7344638c-527c-4961-a8b6-856eb49a49b2",
+              "name": "cleaned_domain",
+              "value": "={{ $json.cleaned_domain }}",
+              "type": "string"
+            },
+            {
+              "id": "0ab26788-29f6-4f7e-820f-facc7ff65598",
+              "name": "affiliate_name",
+              "value": "={{ $json.affiliate_name }}",
+              "type": "string"
+            },
+            {
+              "id": "29a020a9-6de0-41ba-b9ef-a16310fafc92",
+              "name": "keyword",
+              "value": "={{ $json.keyword }}",
+              "type": "string"
+            },
+            {
+              "id": "42c6a759-a7de-4925-9c1c-44aa80ae1183",
+              "name": "contact_detail",
+              "value": "={{ $json.contact[0].contact_detail }}",
+              "type": "string"
+            },
+            {
+              "id": "291d9aa2-65b2-43a7-92b4-883199d144f3",
+              "name": "url",
+              "value": "={{ $json.url }}",
+              "type": "string"
+            },
+            {
+              "id": "1b970631-8b04-4dea-99c2-70c6bd7f8af1",
+              "name": "traffic_size",
+              "value": "={{ null }}",
+              "type": "string"
+            },
+            {
+              "id": "9734dfd0-114d-4e8f-842f-f90085b8b267",
+              "name": "screenshot_content_link",
+              "value": "={{ $json.screenshot_content_link }}",
+              "type": "string"
+            },
+            {
+              "id": "90ab53fa-4967-4846-aec7-1e35972ae237",
+              "name": "s_tags",
+              "value": "={{ $json.s_tags }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        112,
+        784
+      ],
+      "id": "8d31eb62-906d-423d-8a2d-ad02cfa897b1",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Country Code Extractor - n8n Code Node\n// Input: [{\"country\": \"Canada\"}]\n// Output: [{\"country\": \"Canada\", \"country_code\": \"CA\"}]\n\nconst regionNames = new Intl.DisplayNames(['en'], { type: 'region' });\n\n// Build a reverse lookup: display name -> region code\nfunction getCountryCode(countryName) {\n  if (!countryName) return null;\n\n  const searchName = countryName.trim().toLowerCase();\n\n  // Iterate through all possible 2-letter region codes (AA-ZZ)\n  for (let i = 65; i <= 90; i++) {\n    for (let j = 65; j <= 90; j++) {\n      const code = String.fromCharCode(i) + String.fromCharCode(j);\n      try {\n        const displayName = regionNames.of(code);\n        if (displayName && displayName.toLowerCase() === searchName) {\n          return code;\n        }\n      } catch (e) {\n        // Invalid region code, skip\n      }\n    }\n  }\n\n  return null;\n}\n\nconst items = $input.all();\n\nreturn items.map(item => {\n  const country = item.json.country || null;\n  const countryCode = getCountryCode(country);\n\n  return {\n    json: {\n      country_code: countryCode\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        976
+      ],
+      "id": "16b9bd2d-67de-405f-aab8-d5722db4f3eb",
+      "name": "Get Country Code"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        336,
+        880
+      ],
+      "id": "409ccf47-a2e6-4474-93a5-fb55952ed517",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e982f3c7-7dae-4f51-ac2e-5b4a8ad86199",
+              "name": "source",
+              "value": "PPC",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        336,
+        1264
+      ],
+      "id": "19d748f0-3d9f-4438-9102-91cb34672e76",
+      "name": "Edit Fields2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e28557c0-5182-4e8d-bda5-88513e8a37fb",
+              "name": "source",
+              "value": "SEO",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        336,
+        1456
+      ],
+      "id": "54b5429b-65f4-4c26-9e78-fb263a751463",
+      "name": "Edit Fields3"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        560,
+        784
+      ],
+      "id": "e6165596-9766-461c-be37-25daf582de13",
+      "name": "Merge2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "8f63b43a-5469-426b-93e2-20f4c1ec6aef",
+              "leftValue": "={{ $json.result_type }}",
+              "rightValue": "PPC",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        112,
+        1360
+      ],
+      "id": "a5643690-1680-4dba-a6dc-944463eddb51",
+      "name": "If PPC"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sanitize = (val) => (val ?? '').toString().replace(/\"/g, '').replace(/\\n/g, ' ').replace(/\\\\/g, '');\n\nreturn [{\n  json: {\n    ...$input.first().json,\n    cleaned_domain: sanitize($input.first().json.cleaned_domain),\n    affiliate_name: sanitize($input.first().json.affiliate_name),\n    keyword: sanitize($input.first().json.keyword),\n    contact_detail: sanitize($input.first().json.contact_detail),\n    traffic_size: sanitize($input.first().json.traffic_size),\n    source: sanitize($input.first().json.source),\n    country_code: sanitize($input.first().json.country_code),\n    url: sanitize($input.first().json.url),\n    screenshot_content_link: sanitize($input.first().json.screenshot_content_link)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        784
+      ],
+      "id": "aa7b6cd7-4589-4d51-8ffc-e83c758b04b9",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "=mutation { create_item (board_id: 1236073873, item_name: \"{{ $json.cleaned_domain ?? '' }}\", column_values: \"{\\\"text86\\\": \\\"{{ $json.affiliate_name ?? '' }}\\\", \\\"text54\\\": \\\"{{ $json.keyword ?? '' }}\\\", \\\"status\\\": {\\\"label\\\": \\\"New Lead\\\"}, \\\"text82\\\": \\\"\\\", \\\"email\\\": {\\\"email\\\": \\\"{{ $json.contact_detail ?? '' }}\\\", \\\"text\\\": \\\"{{ $json.contact_detail ?? '' }}\\\"}, \\\"status_12\\\": {\\\"label\\\": \\\"{{ $json.traffic_size ?? '' }}\\\"}, \\\"status_1\\\": {\\\"label\\\": \\\"{{ $json.source ?? '' }}\\\"}, \\\"text0\\\": \\\"{{ $json.country_code ?? '' }}\\\", \\\"date\\\": {\\\"date\\\": \\\"{{ $now.toFormat('yyyy-MM-dd') }}\\\"}, \\\"text1\\\": \\\"{{ $json.url ?? '' }}\\\", \\\"project_owner\\\": {\\\"personsAndTeams\\\": [{\\\"id\\\": 46169036, \\\"kind\\\": \\\"person\\\"}]}}\") { id } }"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1008,
+        720
+      ],
+      "id": "4c572464-af9c-4c48-9c12-6c9074ee846c",
+      "name": "Add Lead to Monday.com",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "Rzofxc55twsSzLrK",
+          "name": "Monday.com Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.monday.com/v2/file",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "=mutation ($file: File!) { add_file_to_column (item_id: {{ $json.data.create_item.id }}, column_id: \"files\", file: $file) { id } }"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "variables[file]",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1904,
+        544
+      ],
+      "id": "a58182fe-c621-4540-8690-82a179688e9a",
+      "name": "Add Screenshot on Monday.com",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "Rzofxc55twsSzLrK",
+          "name": "Monday.com Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ad74ab5c-3ee6-4f0f-b78b-970104dbf7da",
+              "leftValue": "={{ $json.screenshot_content_link }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1456,
+        688
+      ],
+      "id": "21434ae4-0e3d-4094-8d82-0f510279bb55",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.screenshot_content_link }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1680,
+        624
+      ],
+      "id": "93ade958-5b6e-482e-9b9a-0e1f55286a33",
+      "name": "Get Image From GDrive",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2128,
+        768
+      ],
+      "id": "d7d0a473-5c4b-4a2c-b245-81cae62d374a",
+      "name": "Merge3"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.monday.com/v2",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "=mutation { create_update (item_id: {{ $json.data.create_item.id }}, body: \"{{ $json.output }}\") { id } }"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1680,
+        976
+      ],
+      "id": "2f350a96-ceb9-48bc-951a-46cbd93335f6",
+      "name": "Add S-Tags as Updates",
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "Rzofxc55twsSzLrK",
+          "name": "Monday.com Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\nfor (const item of $input.all()) {\n  const json = item.json;\n  const domain = json.cleaned_domain || '';\n  const createItemId = json.data?.create_item?.id || '';\n  const lines = (json.s_tags || []).map(tag =>\n    `${tag.brand} ${tag.s_tag}`\n  );\n  results.push({\n    json: {\n      data: { create_item: { id: createItemId } },\n      output: lines.join('\\n').replace(/\\n/g, '\\\\n').replace(/\"/g, '\\\\\"')\n    }\n  });\n}\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        976
+      ],
+      "id": "dab115c0-b133-41fe-b7b8-0a573d6e6a4c",
+      "name": "Tidy Up Data"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "automateoptinet.app.n8n.cloud",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 OPR/127.0.0.0",
+            "content-length": "1010",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "accept-language": "en-US,en;q=0.9",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "2001:fd8:19c5:a69a:fc34:b330:a4d6:af5a",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "PH",
+            "cf-ray": "9da31fefeca1abcb-HKG",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "origin": "http://localhost:5173",
+            "priority": "u=1, i",
+            "referer": "http://localhost:5173/",
+            "sec-ch-ua": "\"Opera GX\";v=\"127\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "cross-site",
+            "x-forwarded-for": "2001:fd8:19c5:a69a:fc34:b330:a4d6:af5a, 162.159.98.186",
+            "x-forwarded-host": "automateoptinet.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-31-55446f5479-p5vzm",
+            "x-is-trusted": "yes",
+            "x-real-ip": "2001:fd8:19c5:a69a:fc34:b330:a4d6:af5a"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "id": 429,
+            "batch_id": 30,
+            "keyword": "instant win casino in canada",
+            "country": "Canada",
+            "url": "https://www.baseballamerica.com/stories/safe-online-casinos-canada/",
+            "domain": "https://www.baseballamerica.com",
+            "result_type": "Organic",
+            "is_rooster_partner": false,
+            "affiliate_name": null,
+            "screenshot_view_link": "https://drive.google.com/file/d/13UUmlFcmL0vWZrdmY0pOF4CiubfnBZWI/view?usp=drivesdk",
+            "screenshot_content_link": "https://drive.google.com/uc?id=13UUmlFcmL0vWZrdmY0pOF4CiubfnBZWI&export=download",
+            "s_tags": [
+              {
+                "s_tag_autoinc_id": 235,
+                "s_tag_id": 15,
+                "s_tag": "98305",
+                "brand": "kingmaker-promo",
+                "status": "Not Found on Monday.com",
+                "source_link": "N/A",
+                "board_id": null,
+                "item_id": null
+              },
+              {
+                "s_tag_autoinc_id": 237,
+                "s_tag_id": 15,
+                "s_tag": "336402",
+                "brand": "crownplay",
+                "status": "Not Found on Monday.com",
+                "source_link": "N/A",
+                "board_id": null,
+                "item_id": null
+              }
+            ],
+            "contact": [
+              {
+                "contact_autoinc_id": 90,
+                "contact_id": 5,
+                "full_name": null,
+                "contact_detail": "jjcooper@baseballamerica.com",
+                "contact_type": "Email",
+                "source": "OpenAI",
+                "is_chosen": true
+              }
+            ]
+          },
+          "webhookUrl": "https://automateoptinet.app.n8n.cloud/webhook-test/add-lead-on-monday",
+          "executionMode": "test"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "Clean up the domain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean up the domain": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Country Code",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If PPC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Tidy Up Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Country Code": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Edit Fields3": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If PPC": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Add Lead to Monday.com",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Add Lead to Monday.com": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Get Image From GDrive",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Image From GDrive": {
+      "main": [
+        [
+          {
+            "node": "Add Screenshot on Monday.com",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Screenshot on Monday.com": {
+      "main": [
+        [
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge3": {
+      "main": [
+        [
+          {
+            "node": "Success Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy Up Data": {
+      "main": [
+        [
+          {
+            "node": "Add S-Tags as Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "2ddea15a-19c6-434e-aba2-6b2791d2b242",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "I1YPVGJnHTOstecm",
+  "tags": []
+}

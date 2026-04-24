@@ -1,0 +1,833 @@
+{
+  "name": "Lead Generator | Get HTML Tags (Scraping Bee)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "get-html-tags-scrapingBee",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -736,
+        576
+      ],
+      "id": "2dd6dfc3-a65d-4e30-9b1a-19dcfada928e",
+      "name": "Webhook",
+      "webhookId": "c085ca5d-02a2-498b-9bc1-c7f8517e0467"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "additionalFields": {
+          "ownProxy": "={{ $json.proxy }}",
+          "renderJs": true
+        }
+      },
+      "type": "n8n-nodes-scrapingbee.ScrapingBee",
+      "typeVersion": 1,
+      "position": [
+        608,
+        592
+      ],
+      "id": "97dad2b7-9eda-46f3-a15d-5507092dc5a3",
+      "name": "Scrape using HTML API",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "ScrapingBeeApi": {
+          "id": "KZtP45aKGiF6YSuA",
+          "name": "ScrapingBee account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "additionalFields": {
+          "ownProxy": "={{ $json.proxy }}",
+          "renderJs": true
+        }
+      },
+      "type": "n8n-nodes-scrapingbee.ScrapingBee",
+      "typeVersion": 1,
+      "position": [
+        1056,
+        592
+      ],
+      "id": "9cc03e99-34f7-4498-9844-1c8a6ae7207f",
+      "name": "Scrape using HTML API1",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "ScrapingBeeApi": {
+          "id": "KZtP45aKGiF6YSuA",
+          "name": "ScrapingBee account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2176,
+        768
+      ],
+      "id": "2df3be60-1db8-4c1a-99f9-28991b24a72f",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://automateoptinet.app.n8n.cloud/webhook/add-proxy-proxyLite",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"id\": {{ JSON.stringify($json.id) }},\n  \"url\": {{ JSON.stringify($json.url) }},\n  \"country\": {{ JSON.stringify($json.country) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        384,
+        592
+      ],
+      "id": "c6d409f0-f4ff-4100-b594-18287d6fea68",
+      "name": "Set Proxy (ProxyLite)"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f87a5cea-e293-463d-b44d-288ed6428033",
+              "name": "rendered_html_tags",
+              "value": "={{ $json.data }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1952,
+        912
+      ],
+      "id": "313e9be2-5329-4cc8-b7ca-dafc14aca5bf",
+      "name": "Rename the Key"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\nreturn { json: body };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -512,
+        576
+      ],
+      "id": "8b95563d-e8e7-4857-a815-f8727212d4cf",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {
+        "url": "https://app.scrapingbee.com/api/v1/",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "28EOCIV4WPSKYXDS8GKC7Q5Y66RCFTDRWDN5PS7F6AUZQAWSHAJPTD9EH881YYFH0S8D1I1TP8523U4S"
+            },
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            },
+            {
+              "name": "render_js",
+              "value": "true"
+            },
+            {
+              "name": "premium_proxy",
+              "value": "true"
+            },
+            {
+              "name": "country_code",
+              "value": "={{ $json.country_code }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1728,
+        448
+      ],
+      "id": "ae0d7ca6-869b-4a9f-a638-43a186a8f0b6",
+      "name": "Scraping Bee Premium Proxy API",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -736,
+        -160
+      ],
+      "id": "d0d9119f-bd13-4010-8eb3-592bf05e1c56",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -512,
+        -160
+      ],
+      "id": "5cf057a4-8446-4f92-9740-99796f9521fd",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "url": "=https://ogzxpnwoxakynexyfvad.supabase.co/rest/v1/google_lead_gen_table?select=html_tags&url=eq.{{ $json.url }}&limit=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -288,
+        1056
+      ],
+      "id": "02381156-e5fd-412c-ac9e-2bc7a7d3ddad",
+      "name": "HTTP Request",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "JCKadasIFFd6No3l",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1d2da67-a1a0-43a5-a0e7-cbaf69897921",
+              "name": "data",
+              "value": "={{ $json.html_tags }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1728,
+        1104
+      ],
+      "id": "04ba37df-85e2-4a0a-9318-3feb10cfe249",
+      "name": "Edit Fields2"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        160,
+        384
+      ],
+      "id": "c67881e1-1207-42e5-ba48-7e8dc225cb5b",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "8df2a943-3c94-462e-8fac-8937a2636916",
+              "leftValue": "={{ $json.html_tags }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -64,
+        1056
+      ],
+      "id": "03f0bf41-1133-49ef-844f-7f76a1bc732d",
+      "name": "If html_tags exists"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "html_tags",
+              "fieldValue": "={{ $json.data }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        208
+      ],
+      "id": "6596ce42-5f8a-4d3a-af1f-409dbf54f543",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1952,
+        208
+      ],
+      "id": "b6c710e2-3d7e-46b5-907e-8f6b54f6f5c5",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9a777756-fea9-42ef-83df-65740e9cad66",
+              "name": "id",
+              "value": "={{ $json.id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1728,
+        64
+      ],
+      "id": "47259e47-dd5d-4965-a858-f2ee2f7799ea",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c4d1b80c-94b4-49fb-9e5d-a30d69bf01c5",
+              "leftValue": "={{ $json.data }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "522a0486-16c4-4f03-83c0-88bac9d114fc",
+              "leftValue": "={{ $json.data }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2176,
+        208
+      ],
+      "id": "975101a5-7a8e-4ed6-89d1-92c3b59f5058",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Country Code Extractor - n8n Code Node\n// Input: [{\"country\": \"Canada\"}]\n// Output: [{\"country\": \"Canada\", \"country_code\": \"CA\"}]\n\nconst regionNames = new Intl.DisplayNames(['en'], { type: 'region' });\n\n// Build a reverse lookup: display name -> region code\nfunction getCountryCode(countryName) {\n  if (!countryName) return null;\n\n  const searchName = countryName.trim().toLowerCase();\n\n  // Iterate through all possible 2-letter region codes (AA-ZZ)\n  for (let i = 65; i <= 90; i++) {\n    for (let j = 65; j <= 90; j++) {\n      const code = String.fromCharCode(i) + String.fromCharCode(j);\n      try {\n        const displayName = regionNames.of(code);\n        if (displayName && displayName.toLowerCase() === searchName) {\n          return code;\n        }\n      } catch (e) {\n        // Invalid region code, skip\n      }\n    }\n  }\n\n  return null;\n}\n\nconst items = $input.all();\n\nreturn items.map(item => {\n  const country = item.json.country || null;\n  const countryCode = getCountryCode(country);\n\n  return {\n    json: {\n      country_code: countryCode\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        720
+      ],
+      "id": "b6e2f44e-b66b-48bd-8336-7fddd37c0020",
+      "name": "Get Country Code"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1504,
+        576
+      ],
+      "id": "55876ece-d81d-45f0-8819-0c51700c507d",
+      "name": "Merge2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0135c4ad-679d-4394-af28-062f088dd9a2",
+              "name": "=error",
+              "value": "=Error on Scraping Bee",
+              "type": "string"
+            },
+            {
+              "id": "88da93da-3847-4203-a312-f83115bb7e1d",
+              "name": "id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1952,
+        624
+      ],
+      "id": "186243c6-6d7b-4cc1-b55c-0da72390a8d8",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://automateoptinet.app.n8n.cloud/webhook/add-proxy-enigma",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"id\": {{ JSON.stringify($json.id) }},\n  \"url\": {{ JSON.stringify($json.url) }},\n  \"country\": {{ JSON.stringify($json.country) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        832,
+        592
+      ],
+      "id": "f29cb110-9ee5-4b1e-affa-9c477d904fd9",
+      "name": "Set Proxy (Enigma)"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "automateoptinet.app.n8n.cloud",
+            "user-agent": "axios/1.13.5",
+            "content-length": "253",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "accept-encoding": "gzip, br",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "20.218.238.127",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "DE",
+            "cf-ray": "9db2fddc5de2dbde-FRA",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "x-forwarded-for": "20.218.238.127, 172.71.144.86",
+            "x-forwarded-host": "automateoptinet.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-31-55446f5479-p5vzm",
+            "x-is-trusted": "yes",
+            "x-real-ip": "20.218.238.127"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "id": 611,
+            "url": "https://aussie-pokies.parramattapreschool.com.au/",
+            "country": "Australia",
+            "domain": "https://aussie-pokies.parramattapreschool.com.au",
+            "domain_for_searching": "aussie-pokies.parramattapreschool.com.au",
+            "shouldSkip": false,
+            "skipReason": null
+          },
+          "webhookUrl": "https://automateoptinet.app.n8n.cloud/webhook/get-html-tags-scrapingBee",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Scrape using HTML API": {
+      "main": [
+        [
+          {
+            "node": "Rename the Key",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Set Proxy (Enigma)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape using HTML API1": {
+      "main": [
+        [
+          {
+            "node": "Rename the Key",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Country Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Proxy (ProxyLite)": {
+      "main": [
+        [
+          {
+            "node": "Scrape using HTML API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rename the Key": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scraping Bee Premium Proxy API": {
+      "main": [
+        [
+          {
+            "node": "Rename the Key",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "If html_tags exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Set Proxy (ProxyLite)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "Rename the Key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If html_tags exists": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Country Code": {
+      "main": [
+        [
+          {
+            "node": "Merge2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge2": {
+      "main": [
+        [
+          {
+            "node": "Scraping Bee Premium Proxy API",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Proxy (Enigma)": {
+      "main": [
+        [
+          {
+            "node": "Scrape using HTML API1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "769f87a8-8470-4d69-a3f5-c7964389ab28",
+  "meta": {
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "Kz0JRtETKMtV5eS1",
+  "tags": []
+}

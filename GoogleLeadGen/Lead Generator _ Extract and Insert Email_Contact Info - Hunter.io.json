@@ -1,0 +1,1150 @@
+{
+  "name": "Lead Generator | Extract and Insert Email/Contact Info - Hunter.io",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "extract-contact-details-hunterio",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -352,
+        304
+      ],
+      "id": "28c3dd5b-4324-40c2-86f7-e247f1e4ed89",
+      "name": "Webhook",
+      "webhookId": "94a3e60b-7f15-415a-9bda-b055f8dffeb1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -336,
+        -544
+      ],
+      "id": "3edb4068-781e-4194-a408-67a14d53ae5e",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v2.vercel.app/api/webhook-receiver",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -112,
+        -544
+      ],
+      "id": "46ba2053-49f4-4fb7-9408-a81b3a60aa43",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nreturn [{\n  json: item.body\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        304
+      ],
+      "id": "9e20b92c-cdd2-4029-aff0-fca7db03c60a",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {
+        "domain": "={{ $json.domain }}",
+        "limit": 10,
+        "filters": {}
+      },
+      "type": "n8n-nodes-base.hunter",
+      "typeVersion": 1,
+      "position": [
+        64,
+        112
+      ],
+      "id": "b02ed120-11e0-48d8-9d84-a5afe31b153b",
+      "name": "Hunter",
+      "alwaysOutputData": true,
+      "credentials": {
+        "hunterApi": {
+          "id": "KRzOHzsApQMzVXQE",
+          "name": "Hunter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the input data\nconst rawData = $input.all();\n\n// Transform each item\nconst parsed_data = rawData.map(item => {\n  const data = item.json;\n\n  const full_name = [data.first_name, data.last_name]\n    .filter(Boolean)\n    .join(' ') || null;\n\n  return {\n    email: data.value || null,\n    full_name,\n    linkedin: data.linkedin || null,\n    twitter: data.twitter || null,\n    phone_number: data.phone_number || null\n  };\n});\n\n// Return wrapped in parsed_data key\nreturn [{ json: { parsed_data } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        112
+      ],
+      "id": "0db3f638-435f-4069-a01a-96a11d7414ca",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        768,
+        240
+      ],
+      "id": "7a7ca624-8743-4cbd-adac-9694c546034a",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3bf70446-953a-4700-8b6a-1e3be00d6de2",
+              "leftValue": "={{ $json.parsed_data }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "array",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        512,
+        112
+      ],
+      "id": "8dc41ec9-18c3-4341-90d2-70dfc198e965",
+      "name": "If Hunter has email address returned"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst parsedData = items[0].json.parsed_data;\nconst sourceData = items[1].json;\n\nconst { source_id, url, domain, country, is_rooster_partner, new_contact_id } = sourceData;\n\nconst merged = parsedData.map(entry => ({\n  ...entry,\n  source_id,\n  url,\n  domain,\n  country,\n  is_rooster_partner,\n  new_contact_id\n}));\n\nreturn merged.map(item => ({ json: item }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        992,
+        240
+      ],
+      "id": "6ebae3b2-7385-4438-8405-3a7d9f2c1520",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "amount": 0.3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2112,
+        496
+      ],
+      "id": "2d20fd64-2121-461f-8bd3-9f9cc5e7184d",
+      "name": "Wait2",
+      "webhookId": "f5e49dff-280d-43bd-881e-aaba0c71aac8"
+    },
+    {
+      "parameters": {
+        "tableId": "contact_table",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "contact_id",
+              "fieldValue": "={{ $json.new_contact_id }}"
+            },
+            {
+              "fieldId": "contact_detail",
+              "fieldValue": "={{ $json.email }}"
+            },
+            {
+              "fieldId": "contact_type",
+              "fieldValue": "Email"
+            },
+            {
+              "fieldId": "source",
+              "fieldValue": "Hunter.io"
+            },
+            {
+              "fieldId": "full_name",
+              "fieldValue": "={{ $json.full_name }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2336,
+        -272
+      ],
+      "id": "6f4a6391-af34-46e6-b176-f8b3990856c0",
+      "name": "Create a row2",
+      "executeOnce": false,
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1216,
+        240
+      ],
+      "id": "c9cf5712-a753-4edf-9302-bdf69e7db52a",
+      "name": "Loop Over Items2"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.source_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "contact_id",
+              "fieldValue": "={{ $json.new_contact_id }}"
+            },
+            {
+              "fieldId": "has_contact_details",
+              "fieldValue": "={{ true }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1664,
+        -224
+      ],
+      "id": "dc8300fa-d0a1-4637-b5d5-5a382ef12348",
+      "name": "Update a row2",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "useDataOfInput": 2
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1888,
+        112
+      ],
+      "id": "60e9c7b0-30da-4928-a5c9-a64803dd2006",
+      "name": "Merge7",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2be1cadc-51d2-4afe-b2fc-0e88d52e76c0",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2112,
+        -272
+      ],
+      "id": "e24e42f5-a10d-472c-ada0-eb3f2a5ce31b",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "tableId": "contact_table",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "contact_id",
+              "fieldValue": "={{ $json.new_contact_id }}"
+            },
+            {
+              "fieldId": "contact_detail",
+              "fieldValue": "={{ $json.linkedin }}"
+            },
+            {
+              "fieldId": "contact_type",
+              "fieldValue": "LinkedIn"
+            },
+            {
+              "fieldId": "source",
+              "fieldValue": "Hunter.io"
+            },
+            {
+              "fieldId": "full_name",
+              "fieldValue": "={{ $json.full_name }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2336,
+        -80
+      ],
+      "id": "89550808-f1e7-4e9e-809c-443c49223480",
+      "name": "Create a row3",
+      "executeOnce": false,
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2be1cadc-51d2-4afe-b2fc-0e88d52e76c0",
+              "leftValue": "={{ $json.linkedin }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2112,
+        -80
+      ],
+      "id": "bad2cc33-4c8b-43bb-8aef-5c4690c612ec",
+      "name": "If3"
+    },
+    {
+      "parameters": {
+        "tableId": "contact_table",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "contact_id",
+              "fieldValue": "={{ $json.new_contact_id }}"
+            },
+            {
+              "fieldId": "contact_detail",
+              "fieldValue": "={{ $json.twitter }}"
+            },
+            {
+              "fieldId": "contact_type",
+              "fieldValue": "Twitter"
+            },
+            {
+              "fieldId": "source",
+              "fieldValue": "Hunter.io"
+            },
+            {
+              "fieldId": "full_name",
+              "fieldValue": "={{ $json.full_name }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2336,
+        112
+      ],
+      "id": "39e63ebf-0293-42cf-9fa5-bbe8df15172f",
+      "name": "Create a row4",
+      "executeOnce": false,
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2be1cadc-51d2-4afe-b2fc-0e88d52e76c0",
+              "leftValue": "={{ $json.twitter }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2112,
+        112
+      ],
+      "id": "4823f942-ec74-44cd-a2c1-54e6b071d495",
+      "name": "If4"
+    },
+    {
+      "parameters": {
+        "tableId": "contact_table",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "contact_id",
+              "fieldValue": "={{ $json.new_contact_id }}"
+            },
+            {
+              "fieldId": "contact_detail",
+              "fieldValue": "={{ $json.phone_number }}"
+            },
+            {
+              "fieldId": "contact_type",
+              "fieldValue": "Phone"
+            },
+            {
+              "fieldId": "source",
+              "fieldValue": "Hunter.io"
+            },
+            {
+              "fieldId": "full_name",
+              "fieldValue": "={{ $json.full_name }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2336,
+        304
+      ],
+      "id": "08f1b071-2ece-4fe3-bd3e-7b98f844b5d9",
+      "name": "Create a row5",
+      "executeOnce": false,
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "2be1cadc-51d2-4afe-b2fc-0e88d52e76c0",
+              "leftValue": "={{ $json.phone_number }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2112,
+        304
+      ],
+      "id": "554c5bc3-64fc-433a-94db-4953d9209deb",
+      "name": "If5"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.source_id }}"
+            },
+            {
+              "keyName": "has_contact_details",
+              "condition": "is",
+              "keyValue": "={{ null }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "has_contact_details",
+              "fieldValue": "={{ false }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        -560
+      ],
+      "id": "2ca28d92-aa43-4f63-aa71-d1103f32ac43",
+      "name": "Update a row3",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3aab679a-42d4-468a-b3da-4629245cebd4",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "8c4f9224-3405-42c9-afef-71add6da0b2c",
+              "leftValue": "={{ $json.linkedin }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "02be6049-a2a9-441b-a14c-5c4445e67bbe",
+              "leftValue": "={{ $json.twitter }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "fbfdb85a-def1-4d95-bf0e-6aa4ba975d97",
+              "leftValue": "={{ $json.phone_number }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1440,
+        112
+      ],
+      "id": "1e8b4fbc-a63e-4963-9d83-d406a7846de7",
+      "name": "If7"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        992,
+        432
+      ],
+      "id": "4e70af66-b1b4-4a5d-8f0b-b6fbfe0e9034",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "de5e718e-7265-48a7-9cd7-95ae89338c4a",
+              "name": "extraction_result",
+              "value": "failed",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        768,
+        432
+      ],
+      "id": "13bacdac-1f11-42e7-9189-8712b5a26748",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2112,
+        -560
+      ],
+      "id": "4ca9ad93-660d-4555-a195-7302bfa1796a",
+      "name": "Respond to Webhook1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "de5e718e-7265-48a7-9cd7-95ae89338c4a",
+              "name": "extraction_result",
+              "value": "success",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1888,
+        -608
+      ],
+      "id": "138d0052-7e41-49fa-a16e-3e9d3d2f162f",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3afaf6eb-27d0-4ca8-b278-cf5487847a62",
+              "leftValue": "={{ $json.source_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1664,
+        -560
+      ],
+      "id": "bb436411-35b1-4623-9d14-e7edaeddae03",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "de5e718e-7265-48a7-9cd7-95ae89338c4a",
+              "name": "extraction_result",
+              "value": "failed",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1888,
+        -416
+      ],
+      "id": "6aec5e4a-5f0a-4718-a7f4-06b2b4a5b681",
+      "name": "Edit Fields2"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "automateoptinet.app.n8n.cloud",
+            "user-agent": "axios/1.13.5",
+            "content-length": "225",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "accept-encoding": "gzip, br",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "20.218.238.127",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "DE",
+            "cf-ray": "9e156ba41f389b71-FRA",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "x-forwarded-for": "20.218.238.127, 172.70.251.69",
+            "x-forwarded-host": "automateoptinet.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-31-55446f5479-jlv6n",
+            "x-is-trusted": "yes",
+            "x-real-ip": "20.218.238.127"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "id": 1059,
+            "url": "https://www.bettingtop10.co.nz/online-casinos/",
+            "domain": "https://www.bettingtop10.co.nz",
+            "country": "New Zealand",
+            "is_rooster_partner": false,
+            "domain_for_searching": "bettingtop10.co.nz",
+            "new_contact_id": "17"
+          },
+          "webhookUrl": "https://automateoptinet.app.n8n.cloud/webhook-test/extract-contact-details-openai",
+          "executionMode": "test"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "Hunter",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Hunter": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "If Hunter has email address returned",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Hunter has email address returned": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items2": {
+      "main": [
+        [
+          {
+            "node": "Update a row3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row2": {
+      "main": [
+        [
+          {
+            "node": "Merge7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge7": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If3",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If4",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If5",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Wait2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Create a row2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If3": {
+      "main": [
+        [
+          {
+            "node": "Create a row3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If4": {
+      "main": [
+        [
+          {
+            "node": "Create a row4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If5": {
+      "main": [
+        [
+          {
+            "node": "Create a row5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If7": {
+      "main": [
+        [
+          {
+            "node": "Update a row2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge7",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row3": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "4c31d552-60d1-4583-bacb-2a68ccb5aebd",
+  "meta": {
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "8ckO8idtuUe6ceZs",
+  "tags": []
+}

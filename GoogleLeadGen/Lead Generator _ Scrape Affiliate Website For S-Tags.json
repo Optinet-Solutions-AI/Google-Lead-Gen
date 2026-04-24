@@ -1,0 +1,1334 @@
+{
+  "name": "Lead Generator | Scrape Affiliate Website For S-Tags",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "scrape-site-for-s-tags",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -560,
+        480
+      ],
+      "id": "4aae7759-a19c-4183-9203-77345238df3a",
+      "name": "Webhook",
+      "webhookId": "df6b519a-6c15-4deb-82a6-a703ce4710e0"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "658e373d-8bc1-423b-b71b-652d74804b54",
+              "name": "html",
+              "value": "={{ $json.rendered_html_tags }}",
+              "type": "string"
+            },
+            {
+              "id": "e9c59713-52f1-4a3e-a41f-ce0e8f621cca",
+              "name": "url",
+              "value": "={{ $('Is Rooster Partner').item.json.url }}",
+              "type": "string"
+            },
+            {
+              "id": "fff302b9-6a29-4381-bccd-ca2e6b683f7f",
+              "name": "source_id",
+              "value": "={{ $('Is Rooster Partner').item.json.id }}",
+              "type": "number"
+            },
+            {
+              "id": "7fdbe89b-3402-4ccd-8ade-f46838eeef29",
+              "name": "country",
+              "value": "={{ $('Is Rooster Partner').item.json.country }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1344,
+        608
+      ],
+      "id": "04757e47-021f-44a5-8f87-a5540983d767",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -528,
+        -512
+      ],
+      "id": "f062a010-5692-439f-afa2-8cb79f5f3455",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -304,
+        -512
+      ],
+      "id": "b89069ff-b7fd-45e3-a246-5a3e025cd0c8",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"Error On Scraping Bee.\",\n  \"failed_node\": \"Get HTML Tags (Scraping Bee)\", \n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1344,
+        816
+      ],
+      "id": "5ba10650-d079-443c-8fcc-b41122556904",
+      "name": "Error Webhook1"
+    },
+    {
+      "parameters": {
+        "url": "=https://ogzxpnwoxakynexyfvad.supabase.co/rest/v1/rooster_partner_url_temp_holder_table?select=url_json&id=eq.{{ $json.id }}&limit=1",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpMultipleHeadersAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        672,
+        192
+      ],
+      "id": "5949e23b-e4df-4d68-b09e-748607f5d48e",
+      "name": "HTTP Request2",
+      "alwaysOutputData": true,
+      "credentials": {
+        "httpMultipleHeadersAuth": {
+          "id": "JCKadasIFFd6No3l",
+          "name": "Supabase Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "75de8bf4-5a9b-4c3e-aec4-8d14d97800c6",
+              "leftValue": "={{ $json.is_rooster_partner }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        448,
+        480
+      ],
+      "id": "7355df44-b0e2-42fe-8553-8ceb0750c8ec",
+      "name": "Is Rooster Partner"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"affiliateLinksHolder\": []\n}",
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1344,
+        96
+      ],
+      "id": "cf7ca6f4-01cb-4e6b-9a7b-ab30b146035e",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1696,
+        96
+      ],
+      "id": "784be2bd-c032-4c8c-a9df-c1e219eedc57",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "658e373d-8bc1-423b-b71b-652d74804b54",
+              "name": "html",
+              "value": "={{ $json.rendered_html_tags }}",
+              "type": "string"
+            },
+            {
+              "id": "e9c59713-52f1-4a3e-a41f-ce0e8f621cca",
+              "name": "url",
+              "value": "={{ $('Loop Over Items').item.json.firstResultUrl }}",
+              "type": "string"
+            },
+            {
+              "id": "fff302b9-6a29-4381-bccd-ca2e6b683f7f",
+              "name": "source_id",
+              "value": "={{ $('Loop Over Items').item.json.sourceId }}",
+              "type": "number"
+            },
+            {
+              "id": "b592bebb-0fa0-43d2-9474-3c233c77a460",
+              "name": "country",
+              "value": "={{ $('Loop Over Items').item.json.country }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2896,
+        176
+      ],
+      "id": "bc9f9558-224e-4d3f-9663-6b3d177a5c3c",
+      "name": "Edit Fields2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// n8n Code Node: Casino Affiliate Link Extractor\n//\n// REQUIRED INPUT FIELDS (pass via Set node):\n//   - html (string) : full raw HTML of the page\n//   - url  (string) : the full URL of the page, e.g. https://www.gambling.com/ca/online-casinos/new\n// ─────────────────────────────────────────────────────────────────────────────\n\nconst results = [];\n\nfor (const item of $input.all()) {\n\n  const html      = item.json.html ?? '';\n  const sourceUrl = item.json.url  ?? '';\n  const source_id = item.json.source_id  ?? '';\n  const country   = item.json.country  ?? '';\n\n  if (!html) {\n    results.push({ json: { error: 'No HTML provided. Pass full page HTML as the \"html\" field.' } });\n    continue;\n  }\n\n  // ── Extract base domain from sourceUrl (regex-based, no URL parser) ────────\n  let baseUrl    = '';\n  let baseDomain = '';\n  let rootDomain = '';\n  const cleanUrl  = sourceUrl.replace(/[\\s\\uFEFF\\u200B\\u00A0]/g, '');\n  const baseMatch = cleanUrl.match(/^(https?:\\/\\/[^\\/]+)/i);\n  if (baseMatch) {\n    baseUrl    = baseMatch[1];\n    baseDomain = baseUrl.replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n    const parts = baseDomain.split('.');\n    rootDomain  = parts.length >= 2 ? parts.slice(-2).join('.') : baseDomain;\n  }\n\n  // Detect if source page is on an affiliate portal subdomain\n  // e.g. udenlandske.day-home.dk (non-www, non-root subdomain)\n  const isAffiliatPortalSubdomain = rootDomain && baseDomain !== rootDomain && !baseDomain.startsWith('www.');\n\n  // ── Helper: resolve relative hrefs to absolute URLs ───────────────────────\n  function resolveHref(href) {\n    if (!href) return null;\n    href = href.trim();\n    if (href.startsWith('http://') || href.startsWith('https://')) return href;\n    if (href.startsWith('//'))  return 'https:' + href;\n    if (href.startsWith('/'))   return baseUrl + href;\n    if (href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) return null;\n    // Bare domain — must contain a dot to be a valid domain (avoids single words)\n    if (href.includes('.') && !href.includes(' ')) return 'https://' + href;\n    return null;\n  }\n\n  // ── Helper: extract domain from a full URL ─────────────────────────────────\n  function getDomain(href) {\n    const m = href.match(/^https?:\\/\\/(www\\.)?([^\\/]+)/i);\n    return m ? m[2].toLowerCase() : '';\n  }\n\n  // ─────────────────────────────────────────────────────────────────────────\n  // EXTRACTION PATH A: Standard <a href=\"...\"> tags\n  // ─────────────────────────────────────────────────────────────────────────\n  const anchorRegex = /<a\\s([^>]*)>([\\s\\S]*?)<\\/a>/gi;\n  const hrefRegex   = /href=[\"']([^\"']+)[\"']/i;\n  const dataRegex   = /data-(?:casino|brand|name|label|operator)=[\"']([^\"']+)[\"']/i;\n  const imgAltRegex = /<img[^>]+alt=[\"']([^\"']+)[\"']/i;\n  const titleRegex  = /title=[\"']([^\"']+)[\"']/i;\n\n  const allLinks = [];\n  let m;\n\n  while ((m = anchorRegex.exec(html)) !== null) {\n    const attrs = m[1];\n    const inner = m[2];\n\n    const hrefMatch = hrefRegex.exec(attrs);\n    if (!hrefMatch) continue;\n\n    const href = resolveHref(hrefMatch[1].trim());\n    if (!href) continue;\n\n    const rawText    = inner.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim();\n    const altMatch   = imgAltRegex.exec(inner);\n    const anchorText = rawText || (altMatch ? altMatch[1] : '');\n    const dataMatch  = dataRegex.exec(attrs);\n    const titleMatch = titleRegex.exec(attrs);\n    const brand      = dataMatch?.[1] || titleMatch?.[1] || null;\n    const classMatch = /class=[\"']([^\"']+)[\"']/i.exec(attrs);\n    const classes    = classMatch ? classMatch[1] : '';\n\n    allLinks.push({ href, anchorText, brand, classes });\n  }\n\n  // ── Affiliate link detection ───────────────────────────────────────────────\n  const redirectPaths = [\n    '/go/', '/visit/', '/out/', '/track/', '/click/', '/redirect/',\n    '/aff/', '/refer/', '/forward/', '/creat/', '/play/',\n  ];\n\n  const trackingParams = [\n    'ref', 'aff', 'affid', 'affiliate', 'tracker', 'btag', 'aid',\n    'pid', 'sid', 'click_id', 'clickid', 'subid', 'sub1', 'sub2', 'subid3', 'subid4', 'subid5',\n    'token', 'irclickid', 'stag', 'cxd', 'mid', 'promo', 'promocode',\n    'referral', 'referrer', 'listid', 'listtype', 'listlocation',\n    'listversion', 'list_position', 'ct', 'ctalocation', 'operator_item_id',\n    'cta_id', 'seen_item_id', 'pageview_id', 'funnel',\n    'creative_id', 'ad_campaign_id',\n  ];\n\n  const excludedDomains = [\n    'facebook.com', 'twitter.com', 'x.com', 'instagram.com',\n    'linkedin.com', 'youtube.com', 'tiktok.com',\n    'responsiblegambling.org', 'connexontario.ca', 'camh.ca',\n    'gpwa.org', 'mga.org.mt', 'gdcgroup.com', 'certify.gpwa.org',\n    'agco.ca', 'kahnawake.com',\n  ];\n\n  const ctaKeywords = [\n    'play now', 'visit casino', 'visit site', 'visit now', 'claim bonus',\n    'get bonus', 'claim offer', 'play here', 'join now', 'register now',\n    'get deal', 'claim free spins', 'start playing', 'play for free',\n    'get started', 'collect bonus', 'grab bonus', 'try now',\n    'play at', 'play',\n  ];\n\n  function matchesCta(text) {\n    if (!text) return false;\n    const cleaned = text.replace(/[^\\w\\s]/g, '').replace(/\\s+/g, ' ').trim().toLowerCase();\n    return ctaKeywords.some(k => new RegExp('\\\\b' + k + '\\\\b').test(cleaned));\n  }\n\n  // CSS class patterns that indicate a CTA button on affiliate portal pages\n  const ctaClassPatterns = /\\b(btn|button|cta|play|visit|claim|join|register|signup|sign-up)\\b/i;\n\n  function isAffiliateLink({ href, anchorText, classes }) {\n    if (!href) return false;\n    const lhref = href.toLowerCase();\n    if (!lhref.startsWith('http')) return false;\n\n    const domain = getDomain(href);\n    if (excludedDomains.some(d => domain === d || domain.endsWith('.' + d))) return false;\n\n    const isInternal = rootDomain && (domain === rootDomain || domain.endsWith('.' + rootDomain));\n    const isAffiliateSubdomain = isInternal && domain !== baseDomain && !domain.startsWith('www.');\n    if (isAffiliateSubdomain) return true;\n    if (redirectPaths.some(p => lhref.includes(p))) return true;\n\n    // Decode &amp; before parsing query params\n    const qIndex = href.indexOf('?');\n    if (qIndex !== -1) {\n      const qs = href.slice(qIndex + 1).toLowerCase().replace(/&amp;/gi, '&');\n      const paramNames = qs.split('&').map(p => p.split('=')[0]);\n      if (trackingParams.some(t => paramNames.includes(t))) return true;\n    }\n\n    if (matchesCta(anchorText)) return true;\n\n    // On affiliate portal subdomains, internal links with CTA button classes are affiliate links\n    if (isAffiliatPortalSubdomain && isInternal && classes && ctaClassPatterns.test(classes)) return true;\n\n    return false;\n  }\n\n  const htmlAffiliateLinks = allLinks.filter(link => isAffiliateLink(link)).map(link => {\n    const lhref      = link.href.toLowerCase();\n    const domain     = getDomain(link.href);\n    const isInternal = rootDomain && (domain === rootDomain || domain.endsWith('.' + rootDomain));\n    let category     = 'External + Tracking Param';\n\n    if (redirectPaths.some(p => lhref.includes(p))) {\n      category = isInternal ? 'Internal Redirect' : 'External Redirect';\n    } else if (isAffiliatPortalSubdomain && isInternal && link.classes && ctaClassPatterns.test(link.classes)) {\n      category = 'Portal CTA';\n    } else {\n      if (matchesCta(link.anchorText || '')) category = isInternal ? 'Internal CTA' : 'External CTA';\n    }\n\n    return {\n      href:       link.href,\n      anchorText: link.anchorText,\n      brand:      link.brand,\n      category,\n      cssClasses: link.classes || null,\n      source:     'html',\n    };\n  });\n\n  // ─────────────────────────────────────────────────────────────────────────\n  // EXTRACTION PATH B: Any data attribute on any element\n  // Scans ALL attribute values for affiliate URLs regardless of attribute name\n  // (data-casino-url, data-href, data-link, data-url, etc.)\n  // Handles: https://, //, bare domain (rooster-partner.com/xyz)\n  // ─────────────────────────────────────────────────────────────────────────\n  const dataAttrLinks = [];\n\n  const tagRegex  = /<([a-z][a-z0-9-]*)\\s([^>]+)>/gi;\n  const attrRegex = /([\\w-]+)=[\"']([^\"']{4,})[\"']/gi;\n\n  while ((m = tagRegex.exec(html)) !== null) {\n    const tagName   = m[1].toLowerCase();\n    const attrBlock = m[2];\n\n    // Skip <a> tags — already handled in Path A\n    if (tagName === 'a') continue;\n    // Skip tags that won't contain affiliate links\n    if (['script', 'style', 'link', 'meta', 'img'].includes(tagName)) continue;\n\n    let attrMatch;\n    attrRegex.lastIndex = 0;\n\n    const foundUrls = [];\n    let brandName   = null;\n    let cssClasses  = null;\n\n    while ((attrMatch = attrRegex.exec(attrBlock)) !== null) {\n      const attrName = attrMatch[1].toLowerCase();\n      const attrVal  = attrMatch[2].trim();\n\n      if (attrName === 'class') { cssClasses = attrVal; continue; }\n\n      // Collect brand/name hints from common data attributes\n      if (['data-casino-name', 'data-name', 'data-brand', 'data-label', 'data-operator'].includes(attrName)) {\n        brandName = attrVal;\n      }\n\n      // Resolve value as URL and check if it's an affiliate link\n      const resolved = resolveHref(attrVal);\n      if (resolved && isAffiliateLink({ href: resolved, anchorText: brandName })) {\n        foundUrls.push({ attrName, href: resolved });\n      }\n    }\n\n    // Extract URLs from onclick=\"location.href='URL'\" / window.location patterns\n    const onclickMatch = /\\bonclick\\s*=\\s*[\"'](?:[^\"']*?)(?:window\\.)?location(?:\\.href)?\\s*=\\s*['\"]([^'\"]+)['\"]/i.exec(attrBlock);\n    if (onclickMatch) {\n      const resolved = resolveHref(onclickMatch[1]);\n      if (resolved && isAffiliateLink({ href: resolved, anchorText: brandName })) {\n        foundUrls.push({ attrName: 'onclick', href: resolved });\n      }\n    }\n\n    for (const { attrName, href } of foundUrls) {\n      dataAttrLinks.push({\n        href,\n        anchorText: brandName || null,\n        brand:      brandName || null,\n        category:   'Data Attribute',\n        cssClasses,\n        source:     'data_attr',\n        attrName,\n      });\n    }\n  }\n\n  // ─────────────────────────────────────────────────────────────────────────\n  // EXTRACTION PATH C: __NEXT_DATA__ JSON (Next.js sites)\n  // ─────────────────────────────────────────────────────────────────────────\n  const nextDataLinks = [];\n  let nextDataFound = false;\n  let nextDataError = null;\n  const nextDataMatch = html.match(/<script[^>]+id=[\"']__NEXT_DATA__[\"'][^>]*>([\\s\\S]*?)<\\/script>/i);\n\n  if (nextDataMatch) {\n    nextDataFound = true;\n    try {\n      const nextJson      = JSON.parse(nextDataMatch[1]);\n      const affiliateKeys = ['claimurl', 'affiliateurl', 'offerurl', 'trackingurl', 'clickurl', 'bonusurl', 'dealurl'];\n\n      function isAffiliateLinkFromJson(key, val) {\n        const lkey = key.toLowerCase();\n        if (affiliateKeys.some(k => lkey.includes(k))) return true;\n\n        const lval = val.toLowerCase();\n        if (redirectPaths.some(p => lval.includes(p))) return true;\n\n        const qIdx = val.indexOf('?');\n        if (qIdx !== -1) {\n          const qs = val.slice(qIdx + 1).toLowerCase().replace(/&amp;/gi, '&').replace(/\\\\u0026/gi, '&');\n          const paramNames = qs.split('&').map(p => p.split('=')[0]);\n          if (trackingParams.some(t => paramNames.includes(t))) return true;\n        }\n        const domain = getDomain(val);\n        if (excludedDomains.some(d => domain === d || domain.endsWith('.' + d))) return false;\n        return false;\n      }\n\n      function walkJson(obj) {\n        if (!obj || typeof obj !== 'object') return;\n        for (const [key, val] of Object.entries(obj)) {\n          if (typeof val === 'string') {\n            const resolved = resolveHref(val);\n            if (resolved && isAffiliateLinkFromJson(key, resolved)) {\n              const siblingText = obj.name || obj.claim || obj.label || obj.title || null;\n              nextDataLinks.push({\n                href:       resolved,\n                anchorText: siblingText,\n                brand:      obj.name || null,\n                category:   'Next.js Data',\n                cssClasses: null,\n                source:     'next_data',\n                jsonKey:    key,\n              });\n            }\n          } else if (typeof val === 'object') {\n            walkJson(val);\n          }\n        }\n      }\n\n      walkJson(nextJson);\n    } catch (e) {\n      nextDataError = e.message || String(e);\n    }\n  }\n\n  // ─────────────────────────────────────────────────────────────────────────\n  // Merge all paths, deduplicate by href, and output\n  // ─────────────────────────────────────────────────────────────────────────\n  const combined  = [...htmlAffiliateLinks, ...dataAttrLinks, ...nextDataLinks];\n  const seenHrefs = new Set();\n  const categorised = combined.filter(({ href }) => {\n    if (seenHrefs.has(href)) return false;\n    seenHrefs.add(href);\n    return true;\n  });\n\n  results.push({\n    json: {\n      source_id,\n      sourceUrl,\n      baseUrl,\n      country,\n      totalLinksScanned:   allLinks.length,\n      affiliateLinksFound: categorised.length,\n      affiliateLinks:      categorised,\n      nextDataFound,\n      nextDataError,\n    },\n  });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        608
+      ],
+      "id": "3fe4fe26-0a8e-495a-99a4-cc59f813c56a",
+      "name": "Casino Affiliate Link Extractor"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// n8n Code Node: Casino Affiliate Link Extractor based on Domain Partners\n//\n// REQUIRED INPUT FIELDS (pass via Set node):\n//   - html      (string) : full raw HTML of the page\n//   - url       (string) : the full URL of the page\n//   - source_id (number) : source identifier\n//   - country   (string) : country code\n// ─────────────────────────────────────────────────────────────────────────────\n\nconst staticData = $getWorkflowStaticData('global');\nif (!Array.isArray(staticData.affiliateLinksHolder)) {\n  staticData.affiliateLinksHolder = [];\n}\n\nconst results = [];\n\n// ── Partner domain whitelist (from n8n global variable) ───────────────────\nconst PARTNER_DOMAINS = $vars.ROOSTER_PARTNER_DOMAINS.split(',').map(d => d.trim().toLowerCase());\n\nfor (const item of $input.all()) {\n\n  const html      = item.json.html ?? '';\n  const sourceUrl = item.json.url  ?? '';\n  const source_id = item.json.source_id ?? '';\n  const country   = item.json.country ?? '';\n\n  if (!html) {\n    results.push({ json: { error: 'No HTML provided. Pass full page HTML as the \"html\" field.' } });\n    continue;\n  }\n\n  // ── Extract base domain ───────────────────────────────────────────────────\n  let baseUrl = '', baseDomain = '', rootDomain = '';\n  const cleanUrl  = sourceUrl.replace(/[\\s\\uFEFF\\u200B\\u00A0]/g, '');\n  const baseMatch = cleanUrl.match(/^(https?:\\/\\/[^\\/]+)/i);\n  if (baseMatch) {\n    baseUrl    = baseMatch[1];\n    baseDomain = baseUrl.replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n    const parts = baseDomain.split('.');\n    rootDomain  = parts.length >= 2 ? parts.slice(-2).join('.') : baseDomain;\n  }\n\n  // Detect if source page is on an affiliate portal subdomain\n  const isAffiliatPortalSubdomain = rootDomain && baseDomain !== rootDomain && !baseDomain.startsWith('www.');\n\n  // ── Helpers ───────────────────────────────────────────────────────────────\n  function resolveHref(href) {\n    if (!href) return null;\n    href = href.trim();\n    if (href.startsWith('http://') || href.startsWith('https://')) return href;\n    if (href.startsWith('//')) return 'https:' + href;\n    if (href.startsWith('/'))  return baseUrl + href;\n    if (href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) return null;\n    // Bare domain — check if it starts with a known partner domain\n    const lhref = href.toLowerCase();\n    if (PARTNER_DOMAINS.some(pd => lhref.startsWith(pd))) return 'https://' + href;\n    return null;\n  }\n\n  function getDomain(href) {\n    const m = href.match(/^https?:\\/\\/(www\\.)?([^\\/]+)/i);\n    return m ? m[2].toLowerCase() : '';\n  }\n\n  function containsPartnerDomain(href) {\n    const lhref = href.toLowerCase();\n    return PARTNER_DOMAINS.some(pd => {\n      const domain = getDomain(href);\n      if (domain === pd || domain.endsWith('.' + pd)) return true;\n      if (lhref.includes(pd)) return true;\n      return false;\n    });\n  }\n\n  function getMatchedPartner(href) {\n    return PARTNER_DOMAINS.find(pd => {\n      const d = getDomain(href);\n      if (d === pd || d.endsWith('.' + pd)) return true;\n      if (href.toLowerCase().includes(pd)) return true;\n      return false;\n    }) || null;\n  }\n\n  // ── Shared detection config ───────────────────────────────────────────────\n  const redirectPaths = [\n    '/go/', '/visit/', '/out/', '/track/', '/click/', '/redirect/',\n    '/aff/', '/refer/', '/forward/', '/creat/', '/play/',\n  ];\n\n  const trackingParams = [\n    'ref', 'aff', 'affid', 'affiliate', 'tracker', 'btag', 'aid',\n    'pid', 'sid', 'click_id', 'clickid', 'subid', 'sub1', 'sub2', 'subid3', 'subid4', 'subid5',\n    'token', 'irclickid', 'stag', 'cxd', 'mid', 'promo', 'promocode',\n    'referral', 'referrer', 'listid', 'listtype', 'listlocation',\n    'listversion', 'list_position', 'ct', 'ctalocation', 'operator_item_id',\n    'cta_id', 'seen_item_id', 'pageview_id', 'funnel',\n    'creative_id', 'ad_campaign_id',\n  ];\n\n  const excludedDomains = [\n    'facebook.com', 'twitter.com', 'x.com', 'instagram.com',\n    'linkedin.com', 'youtube.com', 'tiktok.com',\n    'responsiblegambling.org', 'connexontario.ca', 'camh.ca',\n    'gpwa.org', 'mga.org.mt', 'gdcgroup.com', 'certify.gpwa.org',\n    'agco.ca', 'kahnawake.com',\n  ];\n\n  const ctaKeywords = [\n    'play now', 'visit casino', 'visit site', 'visit now', 'claim bonus',\n    'get bonus', 'claim offer', 'play here', 'join now', 'register now',\n    'get deal', 'claim free spins', 'start playing', 'play for free',\n    'get started', 'collect bonus', 'grab bonus', 'try now',\n    'play at', 'play',\n  ];\n\n  function matchesCta(text) {\n    if (!text) return false;\n    const cleaned = text.replace(/[^\\w\\s]/g, '').replace(/\\s+/g, ' ').trim().toLowerCase();\n    return ctaKeywords.some(k => new RegExp('\\\\b' + k + '\\\\b').test(cleaned));\n  }\n\n  // CSS class patterns that indicate a CTA button on affiliate portal pages\n  const ctaClassPatterns = /\\b(btn|button|cta|play|visit|claim|join|register|signup|sign-up)\\b/i;\n\n  function isAffiliateLink({ href, anchorText, classes }) {\n    if (!href) return false;\n    const lhref = href.toLowerCase();\n    if (!lhref.startsWith('http')) return false;\n\n    const domain    = getDomain(href);\n    if (excludedDomains.some(d => domain === d || domain.endsWith('.' + d))) return false;\n\n    const isInternal = rootDomain && (domain === rootDomain || domain.endsWith('.' + rootDomain));\n    if (isInternal && domain !== baseDomain && !domain.startsWith('www.')) return true;\n    if (redirectPaths.some(p => lhref.includes(p))) return true;\n\n    const qIndex = href.indexOf('?');\n    if (qIndex !== -1) {\n      const qs = href.slice(qIndex + 1).toLowerCase().replace(/&amp;/gi, '&');\n      const paramNames = qs.split('&').map(p => p.split('=')[0]);\n      if (trackingParams.some(t => paramNames.includes(t))) return true;\n    }\n\n    if (matchesCta(anchorText)) return true;\n\n    // On affiliate portal subdomains, internal links with CTA button classes are affiliate links\n    if (isAffiliatPortalSubdomain && isInternal && classes && ctaClassPatterns.test(classes)) return true;\n\n    return false;\n  }\n\n  // ─────────────────────────────────────────────────────────────────────────\n  // EXTRACTION PATH A: Standard <a href=\"...\"> tags\n  // ─────────────────────────────────────────────────────────────────────────\n  const anchorRegex = /<a\\s([^>]*)>([\\s\\S]*?)<\\/a>/gi;\n  const hrefRegex   = /href=[\"']([^\"']+)[\"']/i;\n  const dataRegex   = /data-(?:casino|brand|name|label|operator)=[\"']([^\"']+)[\"']/i;\n  const imgAltRegex = /<img[^>]+alt=[\"']([^\"']+)[\"']/i;\n  const titleRegex  = /title=[\"']([^\"']+)[\"']/i;\n\n  const allLinks = [];\n  let m;\n\n  while ((m = anchorRegex.exec(html)) !== null) {\n    const attrs = m[1];\n    const inner = m[2];\n    const hrefMatch = hrefRegex.exec(attrs);\n    if (!hrefMatch) continue;\n\n    const href       = resolveHref(hrefMatch[1].trim());\n    if (!href) continue;\n\n    const rawText    = inner.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim();\n    const altMatch   = imgAltRegex.exec(inner);\n    const anchorText = rawText || (altMatch ? altMatch[1] : '');\n    const dataMatch  = dataRegex.exec(attrs);\n    const titleMatch = titleRegex.exec(attrs);\n    const brand      = dataMatch?.[1] || titleMatch?.[1] || null;\n    const classMatch = /class=[\"']([^\"']+)[\"']/i.exec(attrs);\n    const classes    = classMatch ? classMatch[1] : '';\n\n    allLinks.push({ href, anchorText, brand, classes });\n  }\n\n  const htmlAffiliateLinks = allLinks\n    .filter(link => isAffiliateLink(link) && containsPartnerDomain(link.href))\n    .map(link => {\n      const lhref      = link.href.toLowerCase();\n      const domain     = getDomain(link.href);\n      const isInternal = rootDomain && (domain === rootDomain || domain.endsWith('.' + rootDomain));\n      let category     = 'External + Tracking Param';\n      if (redirectPaths.some(p => lhref.includes(p))) {\n        category = isInternal ? 'Internal Redirect' : 'External Redirect';\n      } else if (isAffiliatPortalSubdomain && isInternal && link.classes && ctaClassPatterns.test(link.classes)) {\n        category = 'Portal CTA';\n      } else {\n        if (matchesCta(link.anchorText || '')) category = isInternal ? 'Internal CTA' : 'External CTA';\n      }\n      return {\n        href:          link.href,\n        anchorText:    link.anchorText,\n        brand:         link.brand,\n        partnerDomain: getMatchedPartner(link.href),\n        category,\n        cssClasses:    link.classes || null,\n        source:        'html',\n      };\n    });\n\n  // ─────────────────────────────────────────────────────────────────────────\n  // EXTRACTION PATH B: Any data attribute on any element\n  // Scans ALL attribute values for partner domain URLs regardless of\n  // attribute name (data-casino-url, data-href, data-link, data-url, etc.)\n  // Handles: https://, //, bare domain (rooster-partner.com/xyz)\n  // ─────────────────────────────────────────────────────────────────────────\n  const dataAttrLinks = [];\n\n  // Match any opening tag and capture all its attributes as a block\n  const tagRegex  = /<([a-z][a-z0-9-]*)\\s([^>]+)>/gi;\n  // Match individual attribute key=\"value\" pairs within a tag\n  const attrRegex = /([\\w-]+)=[\"']([^\"']{4,})[\"']/gi;\n\n  while ((m = tagRegex.exec(html)) !== null) {\n    const tagName  = m[1].toLowerCase();\n    const attrBlock = m[2];\n\n    // Skip <a> tags — already handled in Path A\n    if (tagName === 'a') continue;\n\n    // Skip <script>, <style>, <link>, <meta>, <img> — not affiliate links\n    if (['script', 'style', 'link', 'meta', 'img'].includes(tagName)) continue;\n\n    let attrMatch;\n    attrRegex.lastIndex = 0;\n\n    const foundUrls   = [];\n    let brandName     = null;\n    let cssClasses    = null;\n    const attrEntries = {};\n\n    while ((attrMatch = attrRegex.exec(attrBlock)) !== null) {\n      const attrName = attrMatch[1].toLowerCase();\n      const attrVal  = attrMatch[2].trim();\n\n      if (attrName === 'class') { cssClasses = attrVal; continue; }\n\n      // Collect brand/name hints\n      if (['data-casino-name', 'data-name', 'data-brand', 'data-label', 'data-operator'].includes(attrName)) {\n        brandName = attrVal;\n      }\n\n      attrEntries[attrName] = attrVal;\n\n      // Resolve the value as a URL\n      const resolved = resolveHref(attrVal);\n      if (resolved && containsPartnerDomain(resolved)) {\n        foundUrls.push({ attrName, href: resolved });\n      }\n    }\n\n    // Extract URLs from onclick=\"location.href='URL'\" / window.location patterns\n    const onclickMatch = /\\bonclick\\s*=\\s*[\"'](?:[^\"']*?)(?:window\\.)?location(?:\\.href)?\\s*=\\s*['\"]([^'\"]+)['\"]/i.exec(attrBlock);\n    if (onclickMatch) {\n      const resolved = resolveHref(onclickMatch[1]);\n      if (resolved && containsPartnerDomain(resolved)) {\n        foundUrls.push({ attrName: 'onclick', href: resolved });\n      }\n    }\n\n    for (const { attrName, href } of foundUrls) {\n      dataAttrLinks.push({\n        href,\n        anchorText:    brandName || null,\n        brand:         brandName || null,\n        partnerDomain: getMatchedPartner(href),\n        category:      'Data Attribute',\n        cssClasses,\n        source:        'data_attr',\n        attrName,\n      });\n    }\n  }\n\n  // ─────────────────────────────────────────────────────────────────────────\n  // EXTRACTION PATH C: __NEXT_DATA__ JSON (Next.js sites)\n  // ─────────────────────────────────────────────────────────────────────────\n  const nextDataLinks = [];\n  let nextDataFound = false;\n  let nextDataError = null;\n  const nextDataMatch = html.match(/<script[^>]+id=[\"']__NEXT_DATA__[\"'][^>]*>([\\s\\S]*?)<\\/script>/i);\n\n  if (nextDataMatch) {\n    nextDataFound = true;\n    try {\n      const nextJson      = JSON.parse(nextDataMatch[1]);\n      const affiliateKeys = ['claimurl', 'affiliateurl', 'offerurl', 'trackingurl', 'clickurl', 'bonusurl', 'dealurl'];\n\n      function isAffiliateLinkFromJson(key, val) {\n        const lkey = key.toLowerCase();\n        if (affiliateKeys.some(k => lkey.includes(k))) return true;\n\n        const lval = val.toLowerCase();\n        if (redirectPaths.some(p => lval.includes(p))) return true;\n\n        const qIdx = val.indexOf('?');\n        if (qIdx !== -1) {\n          const qs = val.slice(qIdx + 1).toLowerCase().replace(/&amp;/gi, '&').replace(/\\\\u0026/gi, '&');\n          const paramNames = qs.split('&').map(p => p.split('=')[0]);\n          if (trackingParams.some(t => paramNames.includes(t))) return true;\n        }\n        return false;\n      }\n\n      function walkJson(obj) {\n        if (!obj || typeof obj !== 'object') return;\n        for (const [key, val] of Object.entries(obj)) {\n          if (typeof val === 'string') {\n            const resolved = resolveHref(val);\n            if (resolved && containsPartnerDomain(resolved) && isAffiliateLinkFromJson(key, val)) {\n              const siblingText = obj.name || obj.claim || obj.label || obj.title || null;\n              nextDataLinks.push({\n                href:          resolved,\n                anchorText:    siblingText,\n                brand:         obj.name || null,\n                partnerDomain: getMatchedPartner(resolved),\n                category:      'Next.js Data',\n                cssClasses:    null,\n                source:        'next_data',\n                jsonKey:       key,\n              });\n            }\n          } else if (typeof val === 'object') {\n            walkJson(val);\n          }\n        }\n      }\n\n      walkJson(nextJson);\n    } catch (e) {\n      nextDataError = e.message || String(e);\n    }\n  }\n\n  // ─────────────────────────────────────────────────────────────────────────\n  // Merge all paths, deduplicate by href, output\n  // ─────────────────────────────────────────────────────────────────────────\n  const combined    = [...htmlAffiliateLinks, ...dataAttrLinks, ...nextDataLinks];\n  const seenHrefs   = new Set();\n  const categorised = combined.filter(({ href }) => {\n    if (seenHrefs.has(href)) return false;\n    seenHrefs.add(href);\n    return true;\n  });\n\n  const output = {\n    source_id,\n    sourceUrl,\n    baseUrl,\n    country,\n    totalLinksScanned:   allLinks.length,\n    affiliateLinksFound: categorised.length,\n    affiliateLinks:      categorised,\n    nextDataFound,\n    nextDataError,\n  };\n\n  staticData.affiliateLinksHolder.push(output);\n  results.push({ json: output });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        256
+      ],
+      "id": "776ee0ee-ca8c-4580-9452-3c81e482d118",
+      "name": "Casino Affiliate Link Extractor For Partners"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst result = [];\n\nfor (const item of items) {\n  const urlJson = item.json.url_json || [];\n  \n  for (const entry of urlJson) {\n    const { sourceId, affiliateUrl, firstResultUrl, country } = entry.json;\n    result.push({ sourceId, affiliateUrl, firstResultUrl, country });\n  }\n}\n\nreturn result.map(r => ({ json: r }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        96
+      ],
+      "id": "1fd78229-751c-444a-8cc9-b09ac7b68289",
+      "name": "Tidy up the data1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\n// Grab the final accumulated array\nconst finalArray = staticData.affiliateLinksHolder || [];\n\n// Clear it so the next execution starts fresh\nstaticData.affiliateLinksHolder = null;\n\n// Filter out items where affiliateLinks is empty\nconst filtered = finalArray.filter(item => \n  Array.isArray(item.affiliateLinks) && item.affiliateLinks.length > 0\n);\n\n// Get the ID from the first item of the current input\n// We use optional chaining (?.) just in case the input is empty\nconst id = $input.first()?.json?.id;\n\nreturn [{ \n  json: { \n    affiliateLinksHolder: filtered,\n    id: id \n  } \n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2128,
+        -368
+      ],
+      "id": "619e6cb7-634c-4114-b447-0cf3dabbf37a",
+      "name": "Format Statis Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json.affiliateLinksHolder || [];\n\n// Get source info from the first item (same source across all)\nconst { source_id, sourceUrl, baseUrl, country } = input[0];\n\n// Flatten all affiliateLinks into one array\nconst affiliateLinks = input.flatMap(item => item.affiliateLinks || []);\n\nreturn [{ json: { source_id, sourceUrl, baseUrl, country, affiliateLinks } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2576,
+        -464
+      ],
+      "id": "ec8c5b8b-ac6b-4b70-a891-6188278fe848",
+      "name": "Tidy up the data2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "155740ea-5189-42ba-a48f-580c285e3e5c",
+              "leftValue": "={{ $json.url_json }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        896,
+        192
+      ],
+      "id": "fc949e67-48e0-435f-9eb8-8056f7b3084e",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"No Data Found. Please run the Check If Rooster Partner function again.\",\n  \"failed_node\": \"HTTP Request2\",\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1120,
+        384
+      ],
+      "id": "5a0a0706-1cd4-4c04-b9d9-11d3916e3d39",
+      "name": "Error Webhook2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ba72c619-d5bd-4a60-8eff-8398f6eae0a8",
+              "leftValue": "={{ $json.affiliateLinksHolder }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2352,
+        -368
+      ],
+      "id": "267c1b20-0ed5-4174-9228-44820bf4b367",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a09b7abd-e5b0-4a0d-8a60-c054e03f3c2a",
+              "leftValue": "={{ $json.affiliateLinks }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1792,
+        608
+      ],
+      "id": "fd4968f5-b9a0-440e-83ad-230c0ae2a740",
+      "name": "If2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://automateoptinet.app.n8n.cloud/webhook/get-html-tags-scrapingBee",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"id\": {{ JSON.stringify($json.id) }},\n  \"url\": {{ JSON.stringify($json.url) }},\n  \"country\": {{ JSON.stringify($json.country) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        672,
+        816
+      ],
+      "id": "e6fc1390-46a9-4538-a423-4a480cd41d55",
+      "name": "Get HTML Tags (Scraping Bee)",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f35138dc-42d4-4097-acd5-2ea24c70e22e",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        656
+      ],
+      "id": "8f9ce95f-0594-4ee4-a48b-2115b11f6483",
+      "name": "If Error"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        896,
+        656
+      ],
+      "id": "461ddf71-df80-4c31-9379-37b263884457",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://automateoptinet.app.n8n.cloud/webhook/get-html-tags-scrapingBee",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"id\": {{ JSON.stringify($json.sourceId) }},\n  \"url\": {{ JSON.stringify($json.firstResultUrl) }},\n  \"country\": {{ JSON.stringify($json.country) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2208,
+        -144
+      ],
+      "id": "2ca2d4a1-06c4-4ad3-8032-43cd2c35117a",
+      "name": "Get HTML Tags (Scraping Bee)1",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f35138dc-42d4-4097-acd5-2ea24c70e22e",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2672,
+        176
+      ],
+      "id": "df1c8b9e-8827-4af6-bc4d-8bf6e7b908a2",
+      "name": "If Error1"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2448,
+        80
+      ],
+      "id": "305b8c55-b50f-4c92-9b0e-368ff92bc8fa",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.source_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "html_tags",
+              "fieldValue": "={{ null }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        3360,
+        304
+      ],
+      "id": "8be5c3fd-f5d4-4317-b39b-d133a57bc850",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.source_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "has_s_tags",
+              "fieldValue": "={{ false }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2240,
+        736
+      ],
+      "id": "3a8b23fc-fbf9-4622-9304-5fa0cd0cb5bb",
+      "name": "Update a row1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "has_s_tags",
+              "fieldValue": "={{ false }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2576,
+        -240
+      ],
+      "id": "d7ad0f9d-40ee-4a3f-97cf-5419a940738d",
+      "name": "Update a row2",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\n\nreturn body.map(item => ({\n  json: {\n    ...item,\n    domain_for_searching: item.domain.replace(/^https?:\\/\\/(www\\.)?/, '')\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        480
+      ],
+      "id": "d26a9356-3a2a-477d-b5cf-0d8ea42be019",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -48,
+        464
+      ],
+      "id": "80c7fba3-afde-42b5-aacc-7bd7a4116139",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v3.vercel.app/api/webhook/status",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"status\": \"Success\",\n  \"message\": \"Captured S-Tags. If empty, then no S-Tags captured.\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        160,
+        304
+      ],
+      "id": "b1f92e35-cdee-4ead-8194-40e4f3c9a485",
+      "name": "Success Webhook"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "1Kc1TMuXP87uKx3i",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/1Kc1TMuXP87uKx3i",
+          "cachedResultName": "Lead Generator | Extract S-Tags"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2240,
+        528
+      ],
+      "id": "a3751ce4-abd7-4cc6-a6c0-04ca94fe6934",
+      "name": "Call 'Lead Generator | Extract S-Tags'"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "1Kc1TMuXP87uKx3i",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/1Kc1TMuXP87uKx3i",
+          "cachedResultName": "Lead Generator | Extract S-Tags"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        2944,
+        -464
+      ],
+      "id": "194c245a-b838-4057-92fc-7283f6dcd211",
+      "name": "Call 'Lead Generator | Extract S-Tags'1"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "26c041ad-c85a-424f-bd67-38d0f6c60a57",
+              "name": "linksToExtract",
+              "value": "={{ $json.affiliateLinks }}",
+              "type": "string"
+            },
+            {
+              "id": "6c5d815c-7f1c-4d91-a3d6-d48fe6164817",
+              "name": "source_id",
+              "value": "={{ $json.source_id }}",
+              "type": "string"
+            },
+            {
+              "id": "ffafd863-7011-4867-8ad7-0f785d203192",
+              "name": "country",
+              "value": "={{ $json.country }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2016,
+        528
+      ],
+      "id": "7f0cf9bd-3b9e-444a-afdf-24246fa1e4ce",
+      "name": "Edit Fields3"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "26c041ad-c85a-424f-bd67-38d0f6c60a57",
+              "name": "linksToExtract",
+              "value": "={{ $json.affiliateLinks }}",
+              "type": "string"
+            },
+            {
+              "id": "6c5d815c-7f1c-4d91-a3d6-d48fe6164817",
+              "name": "source_id",
+              "value": "={{ $json.source_id }}",
+              "type": "string"
+            },
+            {
+              "id": "ffafd863-7011-4867-8ad7-0f785d203192",
+              "name": "country",
+              "value": "={{ $json.country }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2768,
+        -464
+      ],
+      "id": "907077aa-57a7-4769-9c12-7ed94ec0d23e",
+      "name": "Edit Fields4"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "automateoptinet.app.n8n.cloud",
+            "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+            "content-length": "172",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "accept-language": "en-US,en;q=0.9",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "213.217.236.111",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "MT",
+            "cf-ray": "9e8905178a5a5243-MXP",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "origin": "https://lead-gen-ui-v3.vercel.app",
+            "priority": "u=1, i",
+            "referer": "https://lead-gen-ui-v3.vercel.app/",
+            "sec-ch-ua": "\"Not:A-Brand\";v=\"99\", \"Google Chrome\";v=\"145\", \"Chromium\";v=\"145\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"macOS\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "cross-site",
+            "x-forwarded-for": "213.217.236.111, 188.114.102.174",
+            "x-forwarded-host": "automateoptinet.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-31-55446f5479-p5vzm",
+            "x-is-trusted": "yes",
+            "x-real-ip": "213.217.236.111"
+          },
+          "params": {},
+          "query": {},
+          "body": [
+            {
+              "id": 1724,
+              "url": "https://nuovecasinononaams.icestverona.it/it-casino/",
+              "domain": "https://nuovecasinononaams.icestverona.it",
+              "country": "Italy",
+              "is_rooster_partner": false
+            }
+          ],
+          "webhookUrl": "https://automateoptinet.app.n8n.cloud/webhook/scrape-site-for-s-tags",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Casino Affiliate Link Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Rooster Partner": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get HTML Tags (Scraping Bee)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HTTP Request2": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Format Statis Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get HTML Tags (Scraping Bee)1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "Casino Affiliate Link Extractor For Partners",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Casino Affiliate Link Extractor": {
+      "main": [
+        [
+          {
+            "node": "If2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Casino Affiliate Link Extractor For Partners": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Statis Data": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Webhook2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update a row2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If2": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update a row1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get HTML Tags (Scraping Bee)": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "If Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Error": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get HTML Tags (Scraping Bee)1": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "If Error1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Error1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [
+          {
+            "node": "Success Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Rooster Partner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Lead Generator | Extract S-Tags'": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Lead Generator | Extract S-Tags'1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields3": {
+      "main": [
+        [
+          {
+            "node": "Call 'Lead Generator | Extract S-Tags'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields4": {
+      "main": [
+        [
+          {
+            "node": "Call 'Lead Generator | Extract S-Tags'1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "45e99261-1a6a-4a5c-8e38-5e8d442df432",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "_xoqVsdi0OCll1OmnoR7B",
+  "tags": []
+}

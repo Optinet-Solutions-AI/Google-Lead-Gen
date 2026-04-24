@@ -1,0 +1,982 @@
+{
+  "name": "Lead Generator | Extract and Insert Email/Contact Info - OpenAI",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "extract-contact-details-openai",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -352,
+        -224
+      ],
+      "id": "4396a139-f025-4dbb-9d7f-a12e989f5efc",
+      "name": "Webhook",
+      "webhookId": "808294d6-1c53-487b-bd01-5ac214d043da"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  return {\n    json: {\n      source_id: item.json.source_id,\n      url: item.json.url,\n      domain: item.json.domain,\n      country: item.json.country,\n      is_rooster_partner: item.json.is_rooster_partner,\n      new_contact_id: item.json.new_contact_id,\n      extraction_result: \"failed\"\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        160
+      ],
+      "id": "fdfe69a5-2633-430c-85ba-78fb78f54fe9",
+      "name": "Code in JavaScript4"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the input data\nconst inputData = $input.all();\n\n// Extract the text from the nested structure\nconst text = inputData[0].json.output[0].content[0].text;\n\nlet parsedData;\n\n// 1) Try extracting JSON from ```json ... ``` code fences\nconst codeFenceMatch = text.match(/```json\\s*([\\s\\S]*?)\\s*```/);\n\nif (codeFenceMatch) {\n  try {\n    parsedData = JSON.parse(codeFenceMatch[1]);\n  } catch (e) {\n    // Code fence found but JSON inside is malformed\n    return [{\n      json: {\n        flag: \"parse_error\",\n        reason: \"Malformed JSON inside code fence\",\n        error: e.message,\n        rawText: text\n      }\n    }];\n  }\n} else {\n  // 2) No code fence found — try direct JSON.parse as fallback\n  try {\n    parsedData = JSON.parse(text);\n  } catch (e) {\n    // Not valid JSON either — return flagged output\n    return [{\n      json: {\n        flag: \"parse_error\",\n        reason: \"No JSON code fence found and raw text is not valid JSON\",\n        error: e.message,\n        rawText: text\n      }\n    }];\n  }\n}\n\n// 3) Success — return parsed data in expected format\nreturn parsedData.map(item => ({ json: item }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        -320
+      ],
+      "id": "8a308942-4246-47a9-b465-a11f29512791",
+      "name": "Code in JavaScript6",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "GPT-4O"
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=You are a web research specialist tasked with finding contact information for a given website.\n\nTASK: Search the website at the provided URL to find all email addresses and the contact page URL.\n\nINSTRUCTIONS:\n1. Use web search to visit and explore the provided domain\n2. Look for email addresses in common locations:\n   - Contact page\n   - Footer section\n   - About page\n   - Header/navigation\n   - mailto: links\n   - Plain text email patterns\n3. Identify the PRIMARY contact page URL by checking:\n   - Navigation menu links (header/footer)\n   - Links with exact text: \"Contact\", \"Contact Us\", \"Get in Touch\", \"Reach Us\"\n   - URL paths containing: /contact-us/, /contact/, /get-in-touch/, /reach-us/\n   - PRIORITY ORDER: Prefer /contact-us/ over /contact/ if both exist\n4. Extract ALL unique email addresses found\n\nCRITICAL RULES FOR contactUsURL:\n- Return the FULL, ABSOLUTE URL (including https://)\n- Only return URLs that actually exist on the website\n- If multiple contact pages exist, prioritize in this order:\n  1. /contact-us/\n  2. /contact/\n  3. /get-in-touch/\n  4. Other contact-related pages\n- If NO contact page can be found, return an empty string \"\"\n\nVALIDATION RULES:\n- Only include valid email format (username@domain.extension)\n- NEVER invent, guess, or hallucinate email addresses\n- Only return emails you directly observed in your search results\n- If you are not certain an email exists on this website, do NOT include it\n\nBEFORE RETURNING OUTPUT, VERIFY:\n- Did you directly observe each email address in your search results? If no, remove it\n- Is the contactUsURL a real page you found on the website? If not, return \"\"\n\nOUTPUT FORMAT: Return ONLY valid JSON, no additional text or explanation.\nRequired JSON structure:\n[\n  {\n    \"emailAddresses\": [\n      {\n        \"value\": \"email1@domain.com\"\n      },\n      {\n        \"value\": \"email2@domain.com\"\n      }\n    ],\n    \"contactUsURL\": \"https://example.com/contact-us\"\n  }\n]\n\nEDGE CASES:\n- If no emails are found after searching: you MUST return an empty array []. Do NOT substitute guessed or placeholder emails.\n- If no contact page is found: return \"\" for contactUsURL\n- Always return the JSON array structure\n\nEXAMPLES:\nEmails and contact page found:\n[\n  {\n    \"emailAddresses\": [{\"value\": \"info@example.com\"}],\n    \"contactUsURL\": \"https://example.com/contact-us\"\n  }\n]\n\nEmails found but no contact page:\n[\n  {\n    \"emailAddresses\": [{\"value\": \"info@example.com\"}],\n    \"contactUsURL\": \"\"\n  }\n]\n\nNothing found:\n[\n  {\n    \"emailAddresses\": [],\n    \"contactUsURL\": \"\"\n  }\n]\n\nWebsite to research: {{ $json.domain }}"
+            }
+          ]
+        },
+        "builtInTools": {
+          "webSearch": {
+            "searchContextSize": "high"
+          }
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        96,
+        -320
+      ],
+      "id": "c6294dbc-8d21-4a6e-b511-223f7747d2fb",
+      "name": "Message a model",
+      "alwaysOutputData": true,
+      "credentials": {
+        "openAiApi": {
+          "id": "1xnpZO5uMbdnPUFx",
+          "name": "OpenAi account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3bf70446-953a-4700-8b6a-1e3be00d6de2",
+              "leftValue": "={{ $json.emailAddresses.length > 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        64
+      ],
+      "id": "619dfd42-7774-49dc-bc0f-b1b728308876",
+      "name": "If GPT has email address returned"
+    },
+    {
+      "parameters": {
+        "amount": 0.3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2688,
+        64
+      ],
+      "id": "8d120f12-432f-449d-958e-6a096ef9c146",
+      "name": "Wait",
+      "webhookId": "f5e49dff-280d-43bd-881e-aaba0c71aac8"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        672,
+        -224
+      ],
+      "id": "7e4d1fe3-76dc-4996-af00-bc319198641d",
+      "name": "Merge3"
+    },
+    {
+      "parameters": {
+        "tableId": "contact_table",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "contact_id",
+              "fieldValue": "={{ $json.new_contact_id }}"
+            },
+            {
+              "fieldId": "contact_detail",
+              "fieldValue": "={{ $json.contactUsURL }}"
+            },
+            {
+              "fieldId": "contact_type",
+              "fieldValue": "Website"
+            },
+            {
+              "fieldId": "source",
+              "fieldValue": "OpenAI"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2016,
+        -544
+      ],
+      "id": "3a00795b-5a69-44c0-900e-2fec551d3e71",
+      "name": "Create a row",
+      "executeOnce": false,
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "75238104-18c9-4eb2-8f20-64dfd81abe67",
+              "leftValue": "={{ $json.contactUsURL }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        -544
+      ],
+      "id": "d52735a4-8d39-4149-807e-9ef9f307fa01",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "tableId": "contact_table",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "contact_id",
+              "fieldValue": "={{ $('If GPT has email address returned').item.json.new_contact_id }}"
+            },
+            {
+              "fieldId": "contact_detail",
+              "fieldValue": "={{ $json.value }}"
+            },
+            {
+              "fieldId": "contact_type",
+              "fieldValue": "Email"
+            },
+            {
+              "fieldId": "source",
+              "fieldValue": "OpenAI"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2464,
+        -32
+      ],
+      "id": "58d7f40a-8f44-4994-9f13-a0c21bd4301d",
+      "name": "Create a row1",
+      "executeOnce": false,
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1792,
+        -32
+      ],
+      "id": "af20a7bc-e475-425f-a6ce-11d80bb8a505",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\nconst emails = [];\n\nfor (const item of items) {\n  const emailAddresses = item.json.emailAddresses || [];\n  for (const entry of emailAddresses) {\n    emails.push(entry.value);\n  }\n}\n\nreturn emails.map(email => ({ json: { value: email } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        -32
+      ],
+      "id": "4a1eb95d-1b2a-4f2a-9cec-3ef956accd89",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.source_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "contact_id",
+              "fieldValue": "={{ $json.new_contact_id }}"
+            },
+            {
+              "fieldId": "has_contact_details",
+              "fieldValue": "={{ true }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        -608
+      ],
+      "id": "16780012-ee65-4f1d-a6c9-cf3d85db2980",
+      "name": "Update a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "useDataOfInput": 2
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1792,
+        -544
+      ],
+      "id": "fe080ac9-cccd-4cfd-8aca-a3824034673f",
+      "name": "Merge5"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "google_lead_gen_table",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('If GPT has email address returned').item.json.source_id }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "contact_id",
+              "fieldValue": "={{ $('If GPT has email address returned').item.json.new_contact_id }}"
+            },
+            {
+              "fieldId": "has_contact_details",
+              "fieldValue": "={{ true }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2016,
+        -112
+      ],
+      "id": "29177102-3de3-4069-bebd-a9c58d4bf870",
+      "name": "Update a row1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "3pZY0Hn00hvx9tLf",
+          "name": "Supabase account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "useDataOfInput": 2
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2240,
+        -32
+      ],
+      "id": "d62ad1de-994d-44f0-8943-c74c5f34fb99",
+      "name": "Merge6",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "99a87eea-a62f-4fc2-b2c3-24458efcb9f5",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "d90e9369-b87c-4850-9e23-7fc00ab06eca",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        -224
+      ],
+      "id": "b2e524b7-0d60-44aa-83db-7de73122b1a9",
+      "name": "If6",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// n8n Code Node: Dynamically merge all input items into a single object\n// Works with ANY keys — no hardcoding required.\n// Set the node to run \"Once for All Items\"\n\nconst merged = {};\n\nfor (const item of $input.all()) {\n  const data = item.json;\n  for (const key of Object.keys(data)) {\n    merged[key] = data[key];\n  }\n}\n\nreturn [{ json: merged }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        -224
+      ],
+      "id": "f257bb5f-b4f8-4066-bec8-138b689bc710",
+      "name": "Code in JavaScript5"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  return {\n    json: {\n      source_id: item.json.id,\n      url: item.json.url,\n      domain: item.json.domain,\n      country: item.json.country,\n      is_rooster_partner: item.json.is_rooster_partner,\n      new_contact_id: item.json.new_contact_id\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        -128
+      ],
+      "id": "413fc6ee-442b-4d09-9340-daffa9e8e696",
+      "name": "Code in JavaScript7"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -352,
+        -832
+      ],
+      "id": "07dd8c88-8c44-42d7-ba31-7e71fd746d58",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://lead-gen-ui-v2.vercel.app/api/webhook-receiver",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"error\",\n  \"message\": \"{{ $json.execution.error.message }}\",\n  \"failed_node\": \"{{ $json.execution.lastNodeExecuted }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -128,
+        -832
+      ],
+      "id": "c0362275-0e02-41c9-888a-eb9a156332fb",
+      "name": "Error Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nreturn [{\n  json: item.body\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        -224
+      ],
+      "id": "2c4c92aa-de7a-4dac-a85e-27177b508abb",
+      "name": "Tidy up the data"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1600,
+        -240
+      ],
+      "id": "1e8b3be3-7996-45be-92c9-2a065234d456",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1792,
+        160
+      ],
+      "id": "f9605724-3a98-4347-ab94-f07a8801e8f6",
+      "name": "Respond to Webhook1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2240,
+        -304
+      ],
+      "id": "2b2f0025-59c1-4e69-aecd-4b7c767539f3",
+      "name": "Respond to Webhook2"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "de5e718e-7265-48a7-9cd7-95ae89338c4a",
+              "name": "extraction_result",
+              "value": "success",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2016,
+        -304
+      ],
+      "id": "65fba163-7e89-4419-b275-373a7862ec1c",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  return {\n    json: {\n      source_id: item.json.source_id,\n      url: item.json.url,\n      domain: item.json.domain,\n      country: item.json.country,\n      is_rooster_partner: item.json.is_rooster_partner,\n      new_contact_id: item.json.new_contact_id,\n      extraction_result: \"failed\"\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1376,
+        -240
+      ],
+      "id": "9507c6c5-1443-4587-8f4f-ef50ed9e0de3",
+      "name": "Code in JavaScript8"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        736,
+        128
+      ],
+      "id": "c19b783a-236e-4247-b0af-5c6335d2a180",
+      "name": "Respond to Webhook3"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "de5e718e-7265-48a7-9cd7-95ae89338c4a",
+              "name": "extraction_result",
+              "value": "failed",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        512,
+        128
+      ],
+      "id": "ac563255-0284-4b2a-9bff-60adbe608507",
+      "name": "Edit Fields"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "automateoptinet.app.n8n.cloud",
+            "user-agent": "axios/1.13.5",
+            "content-length": "200",
+            "accept": "application/json,text/html,application/xhtml+xml,application/xml,text/*;q=0.9, image/*;q=0.8, */*;q=0.7",
+            "accept-encoding": "gzip, br",
+            "cdn-loop": "cloudflare; loops=1; subreqs=1",
+            "cf-connecting-ip": "20.218.238.127",
+            "cf-ew-via": "15",
+            "cf-ipcountry": "DE",
+            "cf-ray": "9e27954f0d4843d2-FRA",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "cf-worker": "n8n.cloud",
+            "content-type": "application/json",
+            "x-forwarded-for": "20.218.238.127, 172.70.240.43",
+            "x-forwarded-host": "automateoptinet.app.n8n.cloud",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "traefik-prod-users-gwc-31-55446f5479-p5vzm",
+            "x-is-trusted": "yes",
+            "x-real-ip": "20.218.238.127"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "id": 1284,
+            "url": "https://blackjackcanada.net/",
+            "domain": "https://blackjackcanada.net",
+            "country": "Canada",
+            "is_rooster_partner": false,
+            "domain_for_searching": "blackjackcanada.net",
+            "new_contact_id": "29"
+          },
+          "webhookUrl": "https://automateoptinet.app.n8n.cloud/webhook/extract-contact-details-openai",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Code in JavaScript6": {
+      "main": [
+        [
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript6",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If GPT has email address returned": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge3": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Update a row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge5",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Create a row1": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update a row1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge6",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row": {
+      "main": [
+        [
+          {
+            "node": "Merge5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge5": {
+      "main": [
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update a row1": {
+      "main": [
+        [
+          {
+            "node": "Merge6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge6": {
+      "main": [
+        [
+          {
+            "node": "Create a row1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If6": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript8",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If GPT has email address returned",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript5": {
+      "main": [
+        [
+          {
+            "node": "If6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Tidy up the data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript7": {
+      "main": [
+        [
+          {
+            "node": "Merge3",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tidy up the data": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code in JavaScript7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript4": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript8": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "0566cb77-0a0c-42d1-9d36-5fe603d04fc7",
+  "meta": {
+    "instanceId": "70ec52cbe8e7b6f9fc2236b6bc74924c4ee7ffd65416535bf96f67e9482b67d8"
+  },
+  "id": "rmdy4kcH38n9IZiR",
+  "tags": []
+}
