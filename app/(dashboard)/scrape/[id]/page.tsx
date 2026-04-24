@@ -125,7 +125,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         <SearchBar />
       </div>
 
-      <LeadsTable rows={rows} />
+      <LeadsTable rows={rows} jobContext />
 
       <Pagination page={page} size={size} total={total} pageSizeOptions={LEAD_PAGE_SIZES} />
     </div>

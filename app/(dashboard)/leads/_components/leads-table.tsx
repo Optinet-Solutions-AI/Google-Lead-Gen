@@ -13,9 +13,12 @@ import { MondayLabelEditor } from './monday-label-editor'
 
 type Props = {
   rows: LeadRow[]
+  /** When true, hides Keyword/Country/Batch columns and puts Domain first.
+   *  Use on /scrape/[id] where those values are shown in the page header. */
+  jobContext?: boolean
 }
 
-export function LeadsTable({ rows }: Props) {
+export function LeadsTable({ rows, jobContext = false }: Props) {
   if (rows.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-10 text-center text-[12px] text-[color:var(--color-text-secondary)]">
@@ -31,11 +34,21 @@ export function LeadsTable({ rows }: Props) {
         <table className="w-full border-collapse text-[11px]">
           <thead className="bg-[color:var(--color-bg-secondary)]">
             <tr>
-              <Th><SortHeader columnKey="keyword" label="Keyword" sortable /></Th>
-              <Th><SortHeader columnKey="country_code" label="Country" sortable /></Th>
-              <Th><SortHeader columnKey="result_type" label="Type" sortable /></Th>
-              <Th><SortHeader columnKey="overall_position" label="Pos" sortable /></Th>
-              <Th><SortHeader columnKey="domain" label="Domain" sortable /></Th>
+              {jobContext ? (
+                <>
+                  <Th><SortHeader columnKey="domain" label="Domain" sortable /></Th>
+                  <Th><SortHeader columnKey="result_type" label="Type" sortable /></Th>
+                  <Th><SortHeader columnKey="overall_position" label="Pos" sortable /></Th>
+                </>
+              ) : (
+                <>
+                  <Th><SortHeader columnKey="keyword" label="Keyword" sortable /></Th>
+                  <Th><SortHeader columnKey="country_code" label="Country" sortable /></Th>
+                  <Th><SortHeader columnKey="result_type" label="Type" sortable /></Th>
+                  <Th><SortHeader columnKey="overall_position" label="Pos" sortable /></Th>
+                  <Th><SortHeader columnKey="domain" label="Domain" sortable /></Th>
+                </>
+              )}
               <Th>URL</Th>
               <Th>Is on Monday?</Th>
               <Th>Is an affiliate?</Th>
@@ -43,7 +56,9 @@ export function LeadsTable({ rows }: Props) {
               <Th>Has contacts?</Th>
               <Th>S-tags</Th>
               <Th>Verified s-tags</Th>
-              <Th><SortHeader columnKey="batch_id" label="Batch" sortable /></Th>
+              {!jobContext && (
+                <Th><SortHeader columnKey="batch_id" label="Batch" sortable /></Th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -52,13 +67,25 @@ export function LeadsTable({ rows }: Props) {
                 key={row.id}
                 className="border-b border-[color:var(--color-border)] transition-colors last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]"
               >
-                <Td className="max-w-[220px] truncate" title={row.keyword ?? ''}>{row.keyword ?? '—'}</Td>
-                <Td>{row.country_code ?? '—'}</Td>
-                <Td>
-                  <TypeBadge type={row.result_type} />
-                </Td>
-                <Td>{row.overall_position ?? '—'}</Td>
-                <Td>{row.domain ?? '—'}</Td>
+                {jobContext ? (
+                  <>
+                    <Td className="max-w-[220px] truncate" title={row.domain ?? ''}>{row.domain ?? '—'}</Td>
+                    <Td>
+                      <TypeBadge type={row.result_type} />
+                    </Td>
+                    <Td>{row.overall_position ?? '—'}</Td>
+                  </>
+                ) : (
+                  <>
+                    <Td className="max-w-[220px] truncate" title={row.keyword ?? ''}>{row.keyword ?? '—'}</Td>
+                    <Td>{row.country_code ?? '—'}</Td>
+                    <Td>
+                      <TypeBadge type={row.result_type} />
+                    </Td>
+                    <Td>{row.overall_position ?? '—'}</Td>
+                    <Td>{row.domain ?? '—'}</Td>
+                  </>
+                )}
                 <Td className="max-w-[280px] truncate">
                   {row.url ? (
                     <a
@@ -123,18 +150,20 @@ export function LeadsTable({ rows }: Props) {
                     noLabel="Not yet"
                   />
                 </Td>
-                <Td>
-                  {row.scrape_job_id ? (
-                    <Link
-                      href={`/scrape/${row.scrape_job_id}`}
-                      className="underline underline-offset-2 decoration-[color:var(--color-text-secondary)] hover:decoration-[color:var(--color-text-primary)]"
-                    >
-                      {row.batch_id ?? '—'}
-                    </Link>
-                  ) : (
-                    row.batch_id ?? '—'
-                  )}
-                </Td>
+                {!jobContext && (
+                  <Td>
+                    {row.scrape_job_id ? (
+                      <Link
+                        href={`/scrape/${row.scrape_job_id}`}
+                        className="underline underline-offset-2 decoration-[color:var(--color-text-secondary)] hover:decoration-[color:var(--color-text-primary)]"
+                      >
+                        {row.batch_id ?? '—'}
+                      </Link>
+                    ) : (
+                      row.batch_id ?? '—'
+                    )}
+                  </Td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -150,13 +179,13 @@ export function LeadsTable({ rows }: Props) {
           >
             <div className="mb-1.5 flex items-start justify-between gap-2">
               <p className="truncate text-[13px] font-medium text-[color:var(--color-text-primary)]">
-                {row.keyword ?? '—'}
+                {jobContext ? (row.domain ?? '—') : (row.keyword ?? '—')}
               </p>
               <TypeBadge type={row.result_type} />
             </div>
             <dl className="space-y-1 text-[12px]">
-              <Field label="Country">{row.country_code ?? '—'}</Field>
-              <Field label="Domain">{row.domain ?? '—'}</Field>
+              {!jobContext && <Field label="Country">{row.country_code ?? '—'}</Field>}
+              {!jobContext && <Field label="Domain">{row.domain ?? '—'}</Field>}
               <Field label="URL">
                 {row.url ? (
                   <a
@@ -221,18 +250,20 @@ export function LeadsTable({ rows }: Props) {
                   noLabel="Not yet"
                 />
               </Field>
-              <Field label="Batch">
-                {row.scrape_job_id ? (
-                  <Link
-                    href={`/scrape/${row.scrape_job_id}`}
-                    className="underline underline-offset-2"
-                  >
-                    {row.batch_id ?? '—'}
-                  </Link>
-                ) : (
-                  row.batch_id ?? '—'
-                )}
-              </Field>
+              {!jobContext && (
+                <Field label="Batch">
+                  {row.scrape_job_id ? (
+                    <Link
+                      href={`/scrape/${row.scrape_job_id}`}
+                      className="underline underline-offset-2"
+                    >
+                      {row.batch_id ?? '—'}
+                    </Link>
+                  ) : (
+                    row.batch_id ?? '—'
+                  )}
+                </Field>
+              )}
             </dl>
             <p className="mt-1.5 text-[11px] text-[color:var(--color-text-secondary)]">
               {formatTimestamp(row.created_at)}
