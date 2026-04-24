@@ -10,6 +10,7 @@ import {
   LEAD_PAGE_SIZES,
   queryLeads,
 } from '../../leads/_lib/query'
+import { CheckMondayButton } from '../_components/check-monday-button'
 
 type SearchParams = Record<string, string | string[] | undefined>
 
@@ -117,6 +118,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       </header>
 
       <JobMeta job={job} />
+
+      <CheckMondayButton jobId={job.id} />
 
       <div className="flex flex-wrap items-center gap-3 pt-2">
         <SearchBar />

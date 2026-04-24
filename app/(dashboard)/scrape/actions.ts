@@ -9,6 +9,50 @@ export type EnqueueState =
   | { status: 'error'; error: string }
   | null
 
+export type CheckMondayState =
+  | { status: 'ok'; message: string; checked: number; matched: number }
+  | { status: 'error'; error: string }
+  | null
+
+export async function checkMondayDuplicates(
+  _prev: CheckMondayState,
+  formData: FormData,
+): Promise<CheckMondayState> {
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { status: 'error', error: 'Not signed in.' }
+
+  const jobId = String(formData.get('job_id') ?? '').trim()
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const svc = createServiceClient()
+  const { data, error } = await svc.rpc('mark_monday_duplicates_for_job', {
+    p_job_id: jobId,
+  })
+  if (error) return { status: 'error', error: error.message }
+
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { checked: number; matched: number }
+    | null
+  const checked = row?.checked ?? 0
+  const matched = row?.matched ?? 0
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    checked,
+    matched,
+    message:
+      checked === 0
+        ? 'No rows to check yet.'
+        : matched === 0
+          ? `Checked ${checked} row${checked === 1 ? '' : 's'} — none already on Monday.`
+          : `Checked ${checked} row${checked === 1 ? '' : 's'} — ${matched} already on Monday.`,
+  }
+}
+
 export async function enqueueScrape(
   _prev: EnqueueState,
   formData: FormData,

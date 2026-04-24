@@ -17,6 +17,9 @@ export type LeadRow = {
   result_type: string | null
   batch_id: number | null
   scrape_job_id: string | null
+  is_on_monday: boolean | null
+  monday_board: string | null
+  monday_item_id: string | null
   created_at: string
 }
 
@@ -49,7 +52,7 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
   let query = svc
     .from('google_lead_gen_table')
     .select(
-      'id, keyword, country, country_code, url, domain, page_number, position_on_page, overall_position, result_type, batch_id, scrape_job_id, created_at',
+      'id, keyword, country, country_code, url, domain, page_number, position_on_page, overall_position, result_type, batch_id, scrape_job_id, is_on_monday, monday_board, monday_item_id, created_at',
       { count: 'exact' },
     )
 

@@ -29,6 +29,7 @@ export function LeadsTable({ rows }: Props) {
               <Th><SortHeader columnKey="page_number" label="Page" sortable /></Th>
               <Th><SortHeader columnKey="domain" label="Domain" sortable /></Th>
               <Th>URL</Th>
+              <Th>Monday</Th>
               <Th><SortHeader columnKey="batch_id" label="Batch" sortable /></Th>
               <Th><SortHeader columnKey="created_at" label="Scraped at" sortable /></Th>
             </tr>
@@ -60,6 +61,9 @@ export function LeadsTable({ rows }: Props) {
                   ) : (
                     '—'
                   )}
+                </Td>
+                <Td>
+                  <MondayBadge isOnMonday={row.is_on_monday} board={row.monday_board} />
                 </Td>
                 <Td>
                   {row.scrape_job_id ? (
@@ -98,6 +102,9 @@ export function LeadsTable({ rows }: Props) {
             <dl className="space-y-1 text-[12px]">
               <Field label="Country">{row.country_code ?? '—'}</Field>
               <Field label="Domain">{row.domain ?? '—'}</Field>
+              <Field label="Monday">
+                <MondayBadge isOnMonday={row.is_on_monday} board={row.monday_board} />
+              </Field>
               <Field label="URL">
                 {row.url ? (
                   <a
@@ -174,6 +181,41 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <dt className="shrink-0 text-[color:var(--color-text-secondary)]">{label}:</dt>
       <dd className="min-w-0 text-[color:var(--color-text-primary)]">{children}</dd>
     </div>
+  )
+}
+
+const MONDAY_BOARD_STYLES: Record<string, { label: string; cls: string }> = {
+  affiliates: { label: 'Rooster brand', cls: 'bg-rose-100 text-rose-800' },
+  leads: { label: 'On Leads', cls: 'bg-amber-100 text-amber-800' },
+  not_relevant_leads: { label: 'Not relevant', cls: 'bg-zinc-200 text-zinc-700' },
+  email_undelivered_leads: { label: 'Email undelivered', cls: 'bg-sky-100 text-sky-800' },
+}
+
+function MondayBadge({
+  isOnMonday,
+  board,
+}: {
+  isOnMonday: boolean | null
+  board: string | null
+}) {
+  if (isOnMonday === null) return <span className="text-[color:var(--color-text-secondary)]">—</span>
+  if (isOnMonday === false) {
+    return (
+      <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
+        New
+      </span>
+    )
+  }
+  const meta = (board && MONDAY_BOARD_STYLES[board]) || {
+    label: 'On Monday',
+    cls: 'bg-zinc-200 text-zinc-700',
+  }
+  return (
+    <span
+      className={['inline-block rounded-full px-2 py-0.5 text-[10px] font-medium', meta.cls].join(' ')}
+    >
+      {meta.label}
+    </span>
   )
 }
 
