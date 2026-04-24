@@ -3,15 +3,18 @@
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { PAGE_SIZE_OPTIONS } from '../_lib/tables'
+import { PAGE_SIZE_OPTIONS as MONDAY_PAGE_SIZE_OPTIONS } from '../_lib/tables'
 
 type Props = {
   page: number
   size: number
   total: number
+  /** Optional override — defaults to [10, 25, 50, 100] via Monday config. */
+  pageSizeOptions?: readonly number[]
 }
 
-export function Pagination({ page, size, total }: Props) {
+export function Pagination({ page, size, total, pageSizeOptions }: Props) {
+  const sizeOptions = pageSizeOptions ?? MONDAY_PAGE_SIZE_OPTIONS
   const pathname = usePathname()
   const sp = useSearchParams()
   const router = useRouter()
@@ -52,7 +55,7 @@ export function Pagination({ page, size, total }: Props) {
             onChange={e => onSizeChange(Number(e.target.value))}
             className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-1 py-0.5 text-[12px]"
           >
-            {PAGE_SIZE_OPTIONS.map(opt => (
+            {sizeOptions.map(opt => (
               <option key={opt} value={opt}>
                 {opt}
               </option>

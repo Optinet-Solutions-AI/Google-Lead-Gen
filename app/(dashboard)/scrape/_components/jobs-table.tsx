@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import type { ScrapeJob } from '../_lib/queries'
 
 type Props = { jobs: ScrapeJob[] }
@@ -37,39 +38,46 @@ export function JobsTable({ jobs }: Props) {
           </tr>
         </thead>
         <tbody>
-          {jobs.map(job => (
-            <tr
-              key={job.id}
-              className="border-b border-[color:var(--color-border)] last:border-b-0"
-            >
-              <Td className="max-w-[280px] truncate" title={job.keyword}>
-                {job.keyword}
-              </Td>
-              <Td>{job.country_code}</Td>
-              <Td>{job.pages}</Td>
-              <Td>
-                <span
-                  className={[
-                    'inline-block rounded-full px-2 py-0.5 text-[10px] font-medium',
-                    STATUS_STYLES[job.status],
-                  ].join(' ')}
+          {jobs.map(job => {
+            const href = `/scrape/${job.id}`
+            return (
+              <tr
+                key={job.id}
+                className="group border-b border-[color:var(--color-border)] last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]"
+              >
+                <LinkTd href={href} className="max-w-[280px] truncate" title={job.keyword}>
+                  {job.keyword}
+                </LinkTd>
+                <LinkTd href={href}>{job.country_code}</LinkTd>
+                <LinkTd href={href}>{job.pages}</LinkTd>
+                <LinkTd href={href}>
+                  <span
+                    className={[
+                      'inline-block rounded-full px-2 py-0.5 text-[10px] font-medium',
+                      STATUS_STYLES[job.status],
+                    ].join(' ')}
+                  >
+                    {job.status}
+                    {job.attempts > 1 ? ` · ${job.attempts}` : ''}
+                  </span>
+                </LinkTd>
+                <LinkTd href={href} className="text-[color:var(--color-text-secondary)]">
+                  {job.claimed_by ?? '—'}
+                </LinkTd>
+                <LinkTd href={href}>{formatTimestamp(job.started_at)}</LinkTd>
+                <LinkTd href={href}>{formatDuration(job.started_at, job.completed_at)}</LinkTd>
+                <LinkTd href={href}>{totalResults(job.result_summary) ?? '—'}</LinkTd>
+                <LinkTd href={href}>{job.batch_id ?? '—'}</LinkTd>
+                <LinkTd
+                  href={href}
+                  className="max-w-[280px] truncate text-red-700"
+                  title={job.error_message ?? ''}
                 >
-                  {job.status}
-                  {job.attempts > 1 ? ` · ${job.attempts}` : ''}
-                </span>
-              </Td>
-              <Td className="text-[color:var(--color-text-secondary)]">
-                {job.claimed_by ?? '—'}
-              </Td>
-              <Td>{formatTimestamp(job.started_at)}</Td>
-              <Td>{formatDuration(job.started_at, job.completed_at)}</Td>
-              <Td>{totalResults(job.result_summary) ?? '—'}</Td>
-              <Td>{job.batch_id ?? '—'}</Td>
-              <Td className="max-w-[280px] truncate text-red-700" title={job.error_message ?? ''}>
-                {job.error_message ?? ''}
-              </Td>
-            </tr>
-          ))}
+                  {job.error_message ?? ''}
+                </LinkTd>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -82,9 +90,10 @@ export function JobsCardList({ jobs }: Props) {
   return (
     <div className="flex flex-col gap-2 md:hidden">
       {jobs.map(job => (
-        <div
+        <Link
           key={job.id}
-          className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3"
+          href={`/scrape/${job.id}`}
+          className="block rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 transition-colors hover:bg-[color:var(--color-bg-secondary)]"
         >
           <div className="mb-1.5 flex items-start justify-between gap-2">
             <p className="truncate text-[13px] font-medium text-[color:var(--color-text-primary)]">
@@ -115,7 +124,7 @@ export function JobsCardList({ jobs }: Props) {
                 : job.error_message}
             </p>
           )}
-        </div>
+        </Link>
       ))}
     </div>
   )
@@ -132,21 +141,27 @@ function Th({ children }: { children: React.ReactNode }) {
   )
 }
 
-function Td({
+/** <td><Link> — whole cell becomes the click target for row navigation. */
+function LinkTd({
+  href,
   children,
   className,
   title,
 }: {
+  href: string
   children: React.ReactNode
   className?: string
   title?: string
 }) {
   return (
-    <td
-      {...(title ? { title } : {})}
-      className={['whitespace-nowrap px-3 py-2 align-middle', className ?? ''].join(' ')}
-    >
-      {children}
+    <td className="p-0 align-middle">
+      <Link
+        href={href}
+        {...(title ? { title } : {})}
+        className={['block whitespace-nowrap px-3 py-2', className ?? ''].join(' ')}
+      >
+        {children}
+      </Link>
     </td>
   )
 }

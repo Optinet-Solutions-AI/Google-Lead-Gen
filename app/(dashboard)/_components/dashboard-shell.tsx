@@ -8,6 +8,7 @@ import {
   Database,
   KeyRound,
   LayoutDashboard,
+  ListChecks,
   LogOut,
   Menu,
   Search,
@@ -27,6 +28,12 @@ const NAV_ITEMS = [
     href: '/scrape',
     icon: Search,
     match: (p: string) => p.startsWith('/scrape'),
+  },
+  {
+    label: 'Leads',
+    href: '/leads',
+    icon: ListChecks,
+    match: (p: string) => p.startsWith('/leads'),
   },
   {
     label: 'Monday Data',
