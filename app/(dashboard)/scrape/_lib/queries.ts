@@ -19,16 +19,16 @@ export async function listActiveProfiles(): Promise<GoLoginProfile[]> {
 }
 
 /** Enrichment pipeline stages we currently know about. Add new keys here
- *  as Epic 7.2–7.7 land. The order is the pipeline order and drives the
+ *  as Epic 7 stages land. The order is the pipeline order and drives the
  *  rendering of badges in the jobs table. */
 export const PIPELINE_STAGES = [
   { key: 'monday_check', label: 'Monday duplicate check' },
-  // 7.2 Affiliate detection — { key: 'affiliate', label: 'Affiliate detection' },
-  // 7.3 Rooster partner    — { key: 'rooster', label: 'Rooster partner check' },
-  // 7.4 Contact extraction — { key: 'contacts', label: 'Contact extraction' },
-  // 7.5 S-tag extraction   — { key: 'stags', label: 'S-tag extraction' },
-  // 7.6 S-tag dup check    — { key: 'stag_check', label: 'S-tag duplicate check' },
-  // 7.7 Monday sync        — { key: 'monday_sync', label: 'Monday sync' },
+  { key: 'affiliate', label: 'Affiliate detection' },
+  { key: 'rooster', label: 'Rooster partner check' },
+  { key: 'contacts', label: 'Contact extraction' },
+  { key: 'stags', label: 'S-tag extraction' },
+  { key: 'stag_check', label: 'S-tag duplicate check' },
+  // 7.7 Monday sync — { key: 'monday_sync', label: 'Monday sync' },
 ] as const
 
 export type StageKey = (typeof PIPELINE_STAGES)[number]['key']
@@ -81,15 +81,35 @@ async function fetchEnrichmentStatus(
   const svc = createServiceClient()
   const { data, error } = await svc
     .from('google_lead_gen_table')
-    .select('scrape_job_id, is_on_monday')
+    .select(
+      'scrape_job_id, is_on_monday, affiliate_checked_at, rooster_checked_at, contact_checked_at, s_tags_checked_at, s_tag_id',
+    )
     .in('scrape_job_id', jobIds)
   if (error) throw error
+
+  // s_tag_check stage applied if any s_tags_table row for the job has a
+  // non-null is_existing_on_monday — fetch that separately.
+  const { data: stagDup, error: stagErr } = await svc
+    .from('s_tags_table')
+    .select('lead_id, is_existing_on_monday')
+    .not('is_existing_on_monday', 'is', null)
+  if (stagErr) throw stagErr
+  const leadIdsWithStagCheck = new Set<number>(
+    (stagDup ?? []).map(r => r.lead_id as number),
+  )
 
   for (const row of data ?? []) {
     const jobId = row.scrape_job_id as string | null
     if (!jobId) continue
     const acc = out.get(jobId) ?? {}
     if (row.is_on_monday !== null) acc.monday_check = true
+    if (row.affiliate_checked_at !== null) acc.affiliate = true
+    if (row.rooster_checked_at !== null) acc.rooster = true
+    if (row.contact_checked_at !== null) acc.contacts = true
+    if (row.s_tags_checked_at !== null) acc.stags = true
+    if (row.s_tag_id != null && leadIdsWithStagCheck.has(row.s_tag_id as number)) {
+      acc.stag_check = true
+    }
     out.set(jobId, acc)
   }
   return out
