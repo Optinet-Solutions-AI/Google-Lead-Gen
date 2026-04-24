@@ -7,6 +7,7 @@ import {
   Circle,
   Database,
   Mail,
+  Play,
   Search,
   Tag,
   Users,
@@ -71,11 +72,10 @@ function relativeTime(iso: string | null): string {
 
 type StageRowProps = {
   index: number
+  stageKey: StageKey
   title: string
   icon: React.ReactNode
   status: StageStatus
-  expanded: boolean
-  actionLabel: string
   action: (formData: FormData) => void
   pending: boolean
   message: string | null
@@ -85,11 +85,10 @@ type StageRowProps = {
 
 function StageRow({
   index,
+  stageKey,
   title,
   icon,
   status,
-  expanded,
-  actionLabel,
   action,
   pending,
   message,
@@ -116,27 +115,24 @@ function StageRow({
           <span className="whitespace-nowrap">{index}. {title}</span>
         </span>
         <span className="text-[11px] text-[color:var(--color-text-secondary)]">
-          {summaryLabel(
-            { 1: 'monday', 2: 'affiliate', 3: 'rooster', 4: 'contact', 5: 'stag', 6: 'stagCheck' }[index] as StageKey,
-            status,
-          )}
+          {summaryLabel(stageKey, status)}
           {status.lastRunAt && <> · {relativeTime(status.lastRunAt)}</>}
         </span>
 
-        {expanded && (
-          <form action={action} className="ml-auto">
-            <input type="hidden" name="job_id" value={jobId} />
-            <button
-              type="submit"
-              disabled={pending}
-              className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-1 text-[11px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:opacity-50"
-            >
-              {pending ? 'Running…' : actionLabel}
-            </button>
-          </form>
-        )}
+        <form action={action} className="ml-auto">
+          <input type="hidden" name="job_id" value={jobId} />
+          <button
+            type="submit"
+            disabled={pending}
+            aria-label={`Run ${title}`}
+            title={`Run ${title}`}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:opacity-50"
+          >
+            <Play className={['h-3 w-3', pending ? 'animate-pulse' : ''].join(' ')} />
+          </button>
+        </form>
       </div>
-      {expanded && (message || error) && (
+      {(message || error) && (
         <div className="text-[11px]">
           {message && (
             <span className="rounded-md bg-green-50 px-2 py-1 text-green-700">{message}</span>
@@ -210,86 +206,82 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
         </span>
       </button>
 
-      <div className="flex flex-col gap-1.5 border-t border-[color:var(--color-border)] p-2">
-        <StageRow
-          index={1}
-          title="Check Monday duplicates"
-          icon={<Database className="h-3 w-3" />}
-          status={summary.monday}
-          expanded={open}
-          actionLabel="Run now"
-          action={mondayAction}
-          pending={mondayPending}
-          message={mondayState?.status === 'ok' ? mondayState.message : null}
-          error={mondayState?.status === 'error' ? mondayState.error : null}
-          jobId={jobId}
-        />
-        <StageRow
-          index={2}
-          title="Detect affiliates"
-          icon={<Search className="h-3 w-3" />}
-          status={summary.affiliate}
-          expanded={open}
-          actionLabel="Run now"
-          action={affAction}
-          pending={affPending}
-          message={affState?.status === 'ok' ? affState.message : null}
-          error={affState?.status === 'error' ? affState.error : null}
-          jobId={jobId}
-        />
-        <StageRow
-          index={3}
-          title="Check Rooster brands"
-          icon={<CheckCircle2 className="h-3 w-3" />}
-          status={summary.rooster}
-          expanded={open}
-          actionLabel="Run now"
-          action={roosterAction}
-          pending={roosterPending}
-          message={roosterState?.status === 'ok' ? roosterState.message : null}
-          error={roosterState?.status === 'error' ? roosterState.error : null}
-          jobId={jobId}
-        />
-        <StageRow
-          index={4}
-          title="Extract contacts"
-          icon={<Mail className="h-3 w-3" />}
-          status={summary.contact}
-          expanded={open}
-          actionLabel="Run now"
-          action={contactAction}
-          pending={contactPending}
-          message={contactState?.status === 'ok' ? contactState.message : null}
-          error={contactState?.status === 'error' ? contactState.error : null}
-          jobId={jobId}
-        />
-        <StageRow
-          index={5}
-          title="Extract s-tags (affiliates)"
-          icon={<Tag className="h-3 w-3" />}
-          status={summary.stag}
-          expanded={open}
-          actionLabel="Run now"
-          action={stagAction}
-          pending={stagPending}
-          message={stagState?.status === 'ok' ? stagState.message : null}
-          error={stagState?.status === 'error' ? stagState.error : null}
-          jobId={jobId}
-        />
-        <StageRow
-          index={6}
-          title="Verify s-tags on Monday"
-          icon={<Users className="h-3 w-3" />}
-          status={summary.stagCheck}
-          expanded={open}
-          actionLabel="Run now"
-          action={stagCheckAction}
-          pending={stagCheckPending}
-          message={stagCheckState?.status === 'ok' ? stagCheckState.message : null}
-          error={stagCheckState?.status === 'error' ? stagCheckState.error : null}
-          jobId={jobId}
-        />
-      </div>
+      {open && (
+        <div className="flex flex-col gap-1.5 border-t border-[color:var(--color-border)] p-2">
+          <StageRow
+            index={1}
+            stageKey="monday"
+            title="Check Monday duplicates"
+            icon={<Database className="h-3 w-3" />}
+            status={summary.monday}
+            action={mondayAction}
+            pending={mondayPending}
+            message={mondayState?.status === 'ok' ? mondayState.message : null}
+            error={mondayState?.status === 'error' ? mondayState.error : null}
+            jobId={jobId}
+          />
+          <StageRow
+            index={2}
+            stageKey="affiliate"
+            title="Detect affiliates"
+            icon={<Search className="h-3 w-3" />}
+            status={summary.affiliate}
+            action={affAction}
+            pending={affPending}
+            message={affState?.status === 'ok' ? affState.message : null}
+            error={affState?.status === 'error' ? affState.error : null}
+            jobId={jobId}
+          />
+          <StageRow
+            index={3}
+            stageKey="rooster"
+            title="Check Rooster brands"
+            icon={<CheckCircle2 className="h-3 w-3" />}
+            status={summary.rooster}
+            action={roosterAction}
+            pending={roosterPending}
+            message={roosterState?.status === 'ok' ? roosterState.message : null}
+            error={roosterState?.status === 'error' ? roosterState.error : null}
+            jobId={jobId}
+          />
+          <StageRow
+            index={4}
+            stageKey="contact"
+            title="Extract contacts"
+            icon={<Mail className="h-3 w-3" />}
+            status={summary.contact}
+            action={contactAction}
+            pending={contactPending}
+            message={contactState?.status === 'ok' ? contactState.message : null}
+            error={contactState?.status === 'error' ? contactState.error : null}
+            jobId={jobId}
+          />
+          <StageRow
+            index={5}
+            stageKey="stag"
+            title="Extract s-tags (affiliates)"
+            icon={<Tag className="h-3 w-3" />}
+            status={summary.stag}
+            action={stagAction}
+            pending={stagPending}
+            message={stagState?.status === 'ok' ? stagState.message : null}
+            error={stagState?.status === 'error' ? stagState.error : null}
+            jobId={jobId}
+          />
+          <StageRow
+            index={6}
+            stageKey="stagCheck"
+            title="Verify s-tags on Monday"
+            icon={<Users className="h-3 w-3" />}
+            status={summary.stagCheck}
+            action={stagCheckAction}
+            pending={stagCheckPending}
+            message={stagCheckState?.status === 'ok' ? stagCheckState.message : null}
+            error={stagCheckState?.status === 'error' ? stagCheckState.error : null}
+            jobId={jobId}
+          />
+        </div>
+      )}
     </section>
   )
 }
