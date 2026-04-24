@@ -6,6 +6,20 @@ import type { LeadDetail } from '../_lib/detail-query'
 
 type Detail = LeadDetail
 
+function cleanDomain(raw: string | null): string {
+  if (!raw) return '—'
+  try {
+    const u = raw.startsWith('http') ? new URL(raw) : new URL('http://' + raw)
+    return u.hostname.replace(/^www\./i, '').toLowerCase()
+  } catch {
+    return raw
+      .replace(/^https?:\/\//i, '')
+      .replace(/^www\./i, '')
+      .replace(/\/.*$/, '')
+      .toLowerCase()
+  }
+}
+
 async function fetchLeadDetail(leadId: number, signal: AbortSignal): Promise<Detail> {
   const res = await fetch(`/api/leads/${leadId}`, { signal, cache: 'no-store' })
   if (!res.ok) {
@@ -76,19 +90,19 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
           z-50 keeps it above the sidebar (z-40) and mobile backdrop (z-30). */}
       <aside className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[460px] flex-col border-l border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] shadow-xl">
         <header className="flex items-start justify-between gap-3 border-b border-[color:var(--color-border)] px-4 py-3">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="truncate text-[14px] font-semibold text-[color:var(--color-text-primary)]">
-              {lead?.domain ?? '—'}
+              {cleanDomain(lead?.domain ?? lead?.url ?? null)}
             </p>
             {lead?.url && (
               <a
                 href={lead.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-[11px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
+                className="mt-0.5 flex items-start gap-1 text-[11px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
               >
-                <ExternalLink className="h-3 w-3" />
-                {lead.url.length > 60 ? lead.url.slice(0, 60) + '…' : lead.url}
+                <ExternalLink className="mt-0.5 h-3 w-3 shrink-0" />
+                <span className="break-all">{lead.url}</span>
               </a>
             )}
           </div>
