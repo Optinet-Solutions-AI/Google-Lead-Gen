@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import { CronExpressionParser } from 'cron-parser'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { logActivity } from '@/lib/activity-log'
 
 export type ActionState =
   | { status: 'ok'; message: string }
@@ -97,6 +98,13 @@ export async function createScheduledSet(
     }
   }
 
+  await logActivity({
+    action: 'schedule.create',
+    entity_type: 'scheduled_set',
+    entity_id: data.id,
+    details: { name, cron, run_enrichment: runEnrichment },
+  })
+
   revalidatePath('/schedules')
   redirect(`/schedules/${data.id}`)
 }
@@ -142,6 +150,13 @@ export async function updateScheduledSet(
 
   if (error) return { status: 'error', error: error.message }
 
+  await logActivity({
+    action: 'schedule.update',
+    entity_type: 'scheduled_set',
+    entity_id: id,
+    details: { name, cron, is_active: isActive, run_enrichment: runEnrichment },
+  })
+
   revalidatePath('/schedules')
   revalidatePath(`/schedules/${id}`)
   return { status: 'ok', message: 'Schedule saved.' }
@@ -153,6 +168,11 @@ export async function deleteScheduledSet(formData: FormData): Promise<void> {
   if (!id) return
   const svc = createServiceClient()
   await svc.from('scheduled_keyword_sets').delete().eq('id', id)
+  await logActivity({
+    action: 'schedule.delete',
+    entity_type: 'scheduled_set',
+    entity_id: id,
+  })
   revalidatePath('/schedules')
   redirect('/schedules')
 }
@@ -167,6 +187,11 @@ export async function runScheduledSetNow(formData: FormData): Promise<void> {
     .from('scheduled_keyword_sets')
     .update({ next_run_at: new Date(Date.now() - 60_000).toISOString() })
     .eq('id', id)
+  await logActivity({
+    action: 'schedule.run_now',
+    entity_type: 'scheduled_set',
+    entity_id: id,
+  })
   revalidatePath('/schedules')
   revalidatePath(`/schedules/${id}`)
 }

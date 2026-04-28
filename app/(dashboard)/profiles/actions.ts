@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { logActivity } from '@/lib/activity-log'
 
 async function assertSignedIn(): Promise<void> {
   const supabase = await createServerClient()
@@ -28,6 +29,14 @@ export async function setRequiresGoogleLogin(formData: FormData): Promise<void> 
     .update({ requires_google_login: value, updated_at: new Date().toISOString() })
     .eq('country_code', country)
   if (error) throw new Error(error.message)
+
+  await logActivity({
+    action: 'profile.set_requires_login',
+    entity_type: 'gologin_profile',
+    entity_id: country,
+    details: { value },
+  })
+
   revalidatePath('/profiles')
   revalidatePath('/scrape', 'layout')
 }
@@ -50,6 +59,14 @@ export async function setIsGoogleLoggedIn(formData: FormData): Promise<void> {
     })
     .eq('country_code', country)
   if (error) throw new Error(error.message)
+
+  await logActivity({
+    action: 'profile.set_logged_in',
+    entity_type: 'gologin_profile',
+    entity_id: country,
+    details: { value },
+  })
+
   revalidatePath('/profiles')
   revalidatePath('/scrape', 'layout')
 }
@@ -69,5 +86,13 @@ export async function setProfileNotes(formData: FormData): Promise<void> {
     })
     .eq('country_code', country)
   if (error) throw new Error(error.message)
+
+  await logActivity({
+    action: 'profile.set_notes',
+    entity_type: 'gologin_profile',
+    entity_id: country,
+    details: { has_notes: notes.length > 0 },
+  })
+
   revalidatePath('/profiles')
 }

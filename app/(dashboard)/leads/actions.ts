@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { logActivity } from '@/lib/activity-log'
 
 // getLeadDetails used to live here as a server action but server actions
 // trigger a full page-tree re-render on every call, which made the drawer
@@ -43,6 +44,13 @@ export async function deleteLeadScreenshot(formData: FormData): Promise<void> {
     .update({ screenshot_content_link: null, screenshot_view_link: null })
     .eq('id', leadId)
   if (updErr) throw new Error(updErr.message)
+
+  await logActivity({
+    action: 'screenshot.delete',
+    entity_type: 'lead',
+    entity_id: leadId,
+    details: { had_path: path !== null },
+  })
 
   revalidatePath('/leads')
   revalidatePath('/scrape', 'layout')
@@ -125,6 +133,13 @@ export async function setMondayLabel(formData: FormData): Promise<void> {
   const { error } = await svc.from('google_lead_gen_table').update(patch).eq('id', leadId)
   if (error) throw new Error(error.message)
 
+  await logActivity({
+    action: 'override.monday',
+    entity_type: 'lead',
+    entity_id: leadId,
+    details: { value },
+  })
+
   revalidatePath('/leads')
   revalidatePath('/scrape', 'layout')
 }
@@ -140,9 +155,10 @@ async function setBooleanFlag(params: {
   value: string
   valueColumn: string
   overrideColumn: string
+  logAction: string
   extraPatch?: Record<string, unknown>
 }) {
-  const { leadId, value, valueColumn, overrideColumn, extraPatch } = params
+  const { leadId, value, valueColumn, overrideColumn, logAction, extraPatch } = params
   if (!Number.isFinite(leadId)) throw new Error('Missing lead id.')
   if (!BOOL_VALUES.has(value)) throw new Error(`Invalid value: ${value}`)
 
@@ -161,6 +177,13 @@ async function setBooleanFlag(params: {
 
   const { error } = await svc.from('google_lead_gen_table').update(patch).eq('id', leadId)
   if (error) throw new Error(error.message)
+
+  await logActivity({
+    action: logAction,
+    entity_type: 'lead',
+    entity_id: leadId,
+    details: { value },
+  })
 
   revalidatePath('/leads')
   revalidatePath('/scrape', 'layout')
@@ -181,6 +204,7 @@ export async function setAffiliateLabel(formData: FormData): Promise<void> {
     value: String(formData.get('value') ?? ''),
     valueColumn: 'is_affiliate',
     overrideColumn: 'is_affiliate_overridden_at',
+    logAction: 'override.affiliate',
   })
 }
 
@@ -191,6 +215,7 @@ export async function setRoosterLabel(formData: FormData): Promise<void> {
     value: String(formData.get('value') ?? ''),
     valueColumn: 'is_rooster_partner',
     overrideColumn: 'is_rooster_overridden_at',
+    logAction: 'override.rooster',
   })
 }
 
@@ -201,6 +226,7 @@ export async function setContactLabel(formData: FormData): Promise<void> {
     value: String(formData.get('value') ?? ''),
     valueColumn: 'has_contact_details',
     overrideColumn: 'is_contact_overridden_at',
+    logAction: 'override.contact',
   })
 }
 
@@ -211,6 +237,7 @@ export async function setStagLabel(formData: FormData): Promise<void> {
     value: String(formData.get('value') ?? ''),
     valueColumn: 'has_s_tags',
     overrideColumn: 'is_stag_overridden_at',
+    logAction: 'override.stag',
   })
 }
 
@@ -240,6 +267,13 @@ export async function setStagVerifiedLabel(formData: FormData): Promise<void> {
     .update(patch)
     .eq('id', leadId)
   if (error) throw new Error(error.message)
+
+  await logActivity({
+    action: 'override.stag_verified',
+    entity_type: 'lead',
+    entity_id: leadId,
+    details: { value },
+  })
 
   revalidatePath('/leads')
   revalidatePath('/scrape', 'layout')

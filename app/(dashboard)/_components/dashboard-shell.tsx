@@ -6,6 +6,7 @@ import { useState } from 'react'
 import {
   CalendarClock,
   ChevronLeft,
+  Clock,
   Database,
   Globe,
   KeyRound,
@@ -61,6 +62,12 @@ const NAV_ITEMS = [
     href: '/brands',
     icon: Star,
     match: (p: string) => p.startsWith('/brands'),
+  },
+  {
+    label: 'Activity Log',
+    href: '/activity',
+    icon: Clock,
+    match: (p: string) => p.startsWith('/activity'),
   },
   {
     label: 'Change Password',

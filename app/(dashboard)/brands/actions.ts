@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { logActivity } from '@/lib/activity-log'
 
 async function assertSignedIn(): Promise<void> {
   const supabase = await createServerClient()
@@ -46,6 +47,13 @@ export async function addRoosterBrand(
     return { status: 'error', error: error.message }
   }
 
+  await logActivity({
+    action: 'brand.add',
+    entity_type: 'rooster_brand',
+    entity_id: domain,
+    details: { domain, brand_name },
+  })
+
   revalidatePath('/brands')
   revalidatePath('/scrape', 'layout')
   return { status: 'ok', message: `Added ${domain}` }
@@ -63,6 +71,14 @@ export async function setRoosterBrandActive(formData: FormData): Promise<void> {
     .update({ is_active: value, updated_at: new Date().toISOString() })
     .eq('id', id)
   if (error) throw new Error(error.message)
+
+  await logActivity({
+    action: 'brand.toggle_active',
+    entity_type: 'rooster_brand',
+    entity_id: id,
+    details: { is_active: value },
+  })
+
   revalidatePath('/brands')
   revalidatePath('/scrape', 'layout')
 }
@@ -79,6 +95,14 @@ export async function updateRoosterBrandName(formData: FormData): Promise<void> 
     .update({ brand_name, updated_at: new Date().toISOString() })
     .eq('id', id)
   if (error) throw new Error(error.message)
+
+  await logActivity({
+    action: 'brand.update',
+    entity_type: 'rooster_brand',
+    entity_id: id,
+    details: { field: 'brand_name', brand_name },
+  })
+
   revalidatePath('/brands')
 }
 
@@ -94,6 +118,14 @@ export async function updateRoosterBrandNotes(formData: FormData): Promise<void>
     .update({ notes, updated_at: new Date().toISOString() })
     .eq('id', id)
   if (error) throw new Error(error.message)
+
+  await logActivity({
+    action: 'brand.update',
+    entity_type: 'rooster_brand',
+    entity_id: id,
+    details: { field: 'notes', has_notes: !!notes },
+  })
+
   revalidatePath('/brands')
 }
 
@@ -105,6 +137,13 @@ export async function deleteRoosterBrand(formData: FormData): Promise<void> {
   const svc = createServiceClient()
   const { error } = await svc.from('rooster_brands').delete().eq('id', id)
   if (error) throw new Error(error.message)
+
+  await logActivity({
+    action: 'brand.delete',
+    entity_type: 'rooster_brand',
+    entity_id: id,
+  })
+
   revalidatePath('/brands')
   revalidatePath('/scrape', 'layout')
 }

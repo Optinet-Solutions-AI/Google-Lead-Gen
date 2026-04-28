@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
+import { logActivity } from '@/lib/activity-log'
 
 export type EnqueueState =
   | { status: 'ok'; message: string }
@@ -39,6 +40,13 @@ export async function checkMondayDuplicates(
     | null
   const checked = row?.checked ?? 0
   const matched = row?.matched ?? 0
+
+  await logActivity({
+    action: 'enrichment.monday_dup_check',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { checked, matched },
+  })
 
   revalidatePath(`/scrape/${jobId}`)
   return {
@@ -129,6 +137,19 @@ export async function enqueueScrape(
   const when = scheduledAtIso
     ? ` to run at ${new Date(scheduledAtIso).toLocaleString()}`
     : ''
+
+  await logActivity({
+    action: 'scrape.enqueue',
+    entity_type: 'scrape_batch',
+    details: {
+      keywords_count: keywords.length,
+      country_code,
+      pages,
+      priority,
+      with_enrichment: withEnrichment,
+      scheduled_at: scheduledAtIso,
+    },
+  })
 
   revalidatePath('/scrape')
   return {
@@ -247,6 +268,13 @@ export async function runAffiliateDetection(
   const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
   if (qErr) return { status: 'error', error: qErr.message }
 
+  await logActivity({
+    action: 'enrichment.affiliate',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { enqueued: enqueueable.length, skipped: skippedCount },
+  })
+
   revalidatePath(`/scrape/${jobId}`)
   return {
     status: 'ok',
@@ -326,6 +354,13 @@ export async function runRoosterCheck(
   const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
   if (qErr) return { status: 'error', error: qErr.message }
 
+  await logActivity({
+    action: 'enrichment.rooster',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { enqueued: enqueueable.length, skipped: skippedCount },
+  })
+
   revalidatePath(`/scrape/${jobId}`)
   return {
     status: 'ok',
@@ -403,6 +438,13 @@ export async function runContactExtraction(
 
   const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
   if (qErr) return { status: 'error', error: qErr.message }
+
+  await logActivity({
+    action: 'enrichment.contact',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { enqueued: enqueueable.length, skipped: skippedCount },
+  })
 
   revalidatePath(`/scrape/${jobId}`)
   return {
@@ -487,6 +529,13 @@ export async function runStagExtraction(
   const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
   if (qErr) return { status: 'error', error: qErr.message }
 
+  await logActivity({
+    action: 'enrichment.stag',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { enqueued: enqueueable.length, skipped: skippedCount },
+  })
+
   revalidatePath(`/scrape/${jobId}`)
   return {
     status: 'ok',
@@ -516,6 +565,13 @@ export async function runStagDuplicateCheck(
     | null
   const checked = row?.checked ?? 0
   const matched = row?.matched ?? 0
+
+  await logActivity({
+    action: 'enrichment.stag_dup_check',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { checked, matched },
+  })
 
   revalidatePath(`/scrape/${jobId}`)
   return {
