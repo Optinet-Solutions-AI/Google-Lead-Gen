@@ -8,7 +8,7 @@ export default async function ProfilesPage() {
   const { data, error } = await svc
     .from('gologin_profiles')
     .select(
-      'country_code, country_name, gologin_display_name, gologin_profile_id, is_active, requires_google_login, is_google_logged_in, google_login_verified_at, google_login_notes, updated_at',
+      'country_code, country_name, gologin_display_name, gologin_profile_id, is_active, requires_google_login, is_google_logged_in, google_login_verified_at, google_login_notes, login_check_source, updated_at',
     )
     .order('country_name', { ascending: true })
   if (error) throw error

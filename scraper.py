@@ -118,6 +118,46 @@ def deduplicate_results(results):
     return cleaned_results
 
 # ---------------------------
+# Login-state detection
+# ---------------------------
+def detect_login_state(driver):
+    """
+    Sniff the currently loaded Google page for sign-in indicators.
+
+    Returns:
+      True   — a Google account is signed in
+      False  — the profile is signed OUT (sign-in CTA visible)
+      None   — indeterminate (CAPTCHA, error page, or markup we don't recognise)
+    """
+    try:
+        source = driver.page_source
+    except Exception as exc:
+        print(f"[WARN] login-state: page_source unavailable: {exc}", file=sys.stderr)
+        return None
+
+    # Logged-in signals (specific to an active account on Google)
+    logged_in_signals = (
+        'aria-label="Google Account',          # account avatar tooltip
+        'myaccount.google.com',                # account dashboard link
+    )
+    # Logged-out signal — the explicit "Sign in" CTA points at ServiceLogin
+    logged_out_signals = (
+        'accounts.google.com/ServiceLogin',
+    )
+
+    has_logged_in  = any(s in source for s in logged_in_signals)
+    has_logged_out = any(s in source for s in logged_out_signals)
+
+    if has_logged_in and not has_logged_out:
+        return True
+    if has_logged_out and not has_logged_in:
+        return False
+    if has_logged_in and has_logged_out:
+        # Both signals present → trust the more specific logged-in one
+        return True
+    return None
+
+# ---------------------------
 # CAPTCHA exception
 # ---------------------------
 class CaptchaDetectedException(Exception):
@@ -242,10 +282,19 @@ def get_google_results_selenium(driver, keyword, country, page=0, wait_for_spons
 # ---------------------------
 def scrape_google_search(driver, keyword, country, max_pages=5, delay_min=2, delay_max=5):
     all_results = []
+    login_state = None
 
     for page in range(max_pages):
         page_results = get_google_results_selenium(driver, keyword, country, page)
         all_results.extend(page_results)
+
+        # Capture the login state from the first successfully loaded page.
+        # All pages of a single scrape share one session so checking once
+        # is enough — and we do it on page 1 specifically because later
+        # pages may have different layouts (results, no header avatar).
+        if page == 0:
+            login_state = detect_login_state(driver)
+            print(f"[INFO] Login-state detected: {login_state}")
 
         if page < max_pages - 1:
             time.sleep(random.uniform(delay_min, delay_max))
@@ -263,6 +312,7 @@ def scrape_google_search(driver, keyword, country, max_pages=5, delay_min=2, del
         "ppc_results": sum(r["resultType"] == "PPC" for r in all_results),
         "pages_scraped": max_pages,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "is_logged_in": login_state,
         "results": all_results
     }
 

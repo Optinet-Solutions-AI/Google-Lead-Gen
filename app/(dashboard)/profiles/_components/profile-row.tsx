@@ -17,6 +17,7 @@ export type ProfileRow = {
   is_google_logged_in: boolean
   google_login_verified_at: string | null
   google_login_notes: string | null
+  login_check_source: string | null
   updated_at: string
 }
 
@@ -46,15 +47,24 @@ export function ProfileRowEditor({ profile }: { profile: ProfileRow }) {
         />
       </Td>
       <Td className="text-[color:var(--color-text-secondary)]">
-        {profile.google_login_verified_at
-          ? new Date(profile.google_login_verified_at).toLocaleString(undefined, {
-              year: 'numeric',
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-            })
-          : '—'}
+        {profile.google_login_verified_at ? (
+          <>
+            <span className="text-[color:var(--color-text-primary)]">
+              {new Date(profile.google_login_verified_at).toLocaleString(undefined, {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </span>
+            {profile.login_check_source && (
+              <span className="ml-1.5 text-[10px]">({profile.login_check_source})</span>
+            )}
+          </>
+        ) : (
+          '—'
+        )}
       </Td>
       <Td className="min-w-[240px]">
         <NotesField country={profile.country_code} initial={profile.google_login_notes} />

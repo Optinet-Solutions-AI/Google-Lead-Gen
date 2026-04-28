@@ -253,6 +253,9 @@ def process_job(job: dict[str, Any]) -> None:
         "ppc_results": payload.get("ppc_results"),
         "pages_scraped": payload.get("pages_scraped"),
         "scraped_at": payload.get("timestamp"),
+        # is_logged_in: True / False / None — flows into complete_scrape_job,
+        # which bumps gologin_profiles.is_google_logged_in for the country.
+        "is_logged_in": payload.get("is_logged_in"),
     }
 
     try:

@@ -44,7 +44,8 @@ export async function setIsGoogleLoggedIn(formData: FormData): Promise<void> {
     .from('gologin_profiles')
     .update({
       is_google_logged_in: value,
-      google_login_verified_at: value ? now : null,
+      google_login_verified_at: now,
+      login_check_source: 'manual',
       updated_at: now,
     })
     .eq('country_code', country)
