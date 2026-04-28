@@ -4,16 +4,46 @@ import { useEffect, useRef, useState, useTransition } from 'react'
 import { ChevronDown, RotateCcw } from 'lucide-react'
 import { setMondayLabel } from '../actions'
 
-const OPTIONS: ReadonlyArray<{
-  value: 'no' | 'leads' | 'affiliate' | 'updates'
-  label: string
-  cls: string
-}> = [
-  { value: 'no', label: 'No', cls: 'bg-emerald-100 text-emerald-800' },
-  { value: 'leads', label: 'Leads', cls: 'bg-amber-100 text-amber-800' },
-  { value: 'affiliate', label: 'Affiliate', cls: 'bg-rose-100 text-rose-800' },
-  { value: 'updates', label: 'Updates', cls: 'bg-sky-100 text-sky-800' },
+type CategoryKey =
+  | 'no'
+  | 'affiliates'
+  | 'affiliates_updates'
+  | 'leads'
+  | 'leads_updates'
+  | 'not_relevant_leads'
+  | 'not_relevant_leads_updates'
+  | 'email_undelivered_leads'
+  | 'email_undelivered_leads_updates'
+
+type CategoryMeta = { label: string; cls: string }
+
+export const CATEGORY_META: Record<CategoryKey, CategoryMeta> = {
+  no:                              { label: 'No',                          cls: 'bg-emerald-100 text-emerald-800' },
+  affiliates:                      { label: 'Affiliates',                  cls: 'bg-rose-100 text-rose-800' },
+  affiliates_updates:              { label: 'Affiliates updates',          cls: 'bg-rose-50 text-rose-700' },
+  leads:                           { label: 'Leads',                       cls: 'bg-amber-100 text-amber-800' },
+  leads_updates:                   { label: 'Leads updates',               cls: 'bg-amber-50 text-amber-700' },
+  not_relevant_leads:              { label: 'Not relevant',                cls: 'bg-zinc-200 text-zinc-700' },
+  not_relevant_leads_updates:      { label: 'Not relevant updates',        cls: 'bg-zinc-100 text-zinc-600' },
+  email_undelivered_leads:         { label: 'Email undelivered',           cls: 'bg-sky-100 text-sky-800' },
+  email_undelivered_leads_updates: { label: 'Email undelivered updates',   cls: 'bg-sky-50 text-sky-700' },
+}
+
+const ITEM_CATEGORIES: CategoryKey[] = [
+  'affiliates',
+  'leads',
+  'not_relevant_leads',
+  'email_undelivered_leads',
 ]
+
+const UPDATE_CATEGORIES: CategoryKey[] = [
+  'affiliates_updates',
+  'leads_updates',
+  'not_relevant_leads_updates',
+  'email_undelivered_leads_updates',
+]
+
+const FALLBACK_BADGE: CategoryMeta = { label: 'On Monday', cls: 'bg-zinc-200 text-zinc-700' }
 
 type Props = {
   leadId: number
@@ -47,6 +77,8 @@ export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden }: P
   }
 
   const current = badgeFor(isOnMonday, board)
+  const currentValue: CategoryKey | 'unset' =
+    isOnMonday === null ? 'unset' : isOnMonday === false ? 'no' : (board as CategoryKey | null) ?? 'unset'
 
   return (
     <div ref={ref} className="relative inline-block">
@@ -66,30 +98,33 @@ export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden }: P
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 min-w-[140px] rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1 shadow-md">
-          {OPTIONS.map(opt => {
-            const active = (opt.value === 'no' && isOnMonday === false) ||
-              (opt.value !== 'no' && isOnMonday === true && board === opt.value)
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => submit(opt.value)}
-                disabled={pending}
-                className={[
-                  'flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-left text-[11px] transition-colors hover:bg-[color:var(--color-bg-secondary)] disabled:opacity-50',
-                  active ? 'bg-[color:var(--color-bg-secondary)]' : '',
-                ].join(' ')}
-              >
-                <span className={['rounded-full px-2 py-0.5 text-[10px] font-medium', opt.cls].join(' ')}>
-                  {opt.label}
-                </span>
-                {active && (
-                  <span className="text-[10px] text-[color:var(--color-text-secondary)]">current</span>
-                )}
-              </button>
-            )
-          })}
+        <div className="absolute left-0 top-full z-20 mt-1 min-w-[220px] rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1 shadow-md">
+          <MenuItem
+            value="no"
+            currentValue={currentValue}
+            onClick={() => submit('no')}
+            disabled={pending}
+          />
+          <SectionLabel>Items</SectionLabel>
+          {ITEM_CATEGORIES.map(c => (
+            <MenuItem
+              key={c}
+              value={c}
+              currentValue={currentValue}
+              onClick={() => submit(c)}
+              disabled={pending}
+            />
+          ))}
+          <SectionLabel>Updates (mention in body text)</SectionLabel>
+          {UPDATE_CATEGORIES.map(c => (
+            <MenuItem
+              key={c}
+              value={c}
+              currentValue={currentValue}
+              onClick={() => submit(c)}
+              disabled={pending}
+            />
+          ))}
           <div className="my-1 border-t border-[color:var(--color-border)]" />
           <button
             type="button"
@@ -106,14 +141,52 @@ export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden }: P
   )
 }
 
-const FALLBACK_BADGE = { label: 'On Monday', cls: 'bg-zinc-200 text-zinc-700' }
+function MenuItem({
+  value,
+  currentValue,
+  onClick,
+  disabled,
+}: {
+  value: CategoryKey
+  currentValue: CategoryKey | 'unset'
+  onClick: () => void
+  disabled: boolean
+}) {
+  const meta = CATEGORY_META[value]
+  const active = value === currentValue
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        'flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-left text-[11px] transition-colors hover:bg-[color:var(--color-bg-secondary)] disabled:opacity-50',
+        active ? 'bg-[color:var(--color-bg-secondary)]' : '',
+      ].join(' ')}
+    >
+      <span className={['rounded-full px-2 py-0.5 text-[10px] font-medium', meta.cls].join(' ')}>
+        {meta.label}
+      </span>
+      {active && (
+        <span className="text-[10px] text-[color:var(--color-text-secondary)]">current</span>
+      )}
+    </button>
+  )
+}
 
-function badgeFor(isOnMonday: boolean | null, board: string | null) {
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="px-2 pt-1.5 pb-0.5 text-[9px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+      {children}
+    </p>
+  )
+}
+
+function badgeFor(isOnMonday: boolean | null, board: string | null): CategoryMeta {
   if (isOnMonday === null) {
     return { label: '—', cls: 'bg-transparent text-[color:var(--color-text-secondary)]' }
   }
-  if (isOnMonday === false) {
-    return OPTIONS.find(o => o.value === 'no') ?? FALLBACK_BADGE
-  }
-  return OPTIONS.find(o => o.value === board) ?? FALLBACK_BADGE
+  if (isOnMonday === false) return CATEGORY_META.no
+  if (board && board in CATEGORY_META) return CATEGORY_META[board as CategoryKey]
+  return FALLBACK_BADGE
 }

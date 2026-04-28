@@ -9,14 +9,29 @@ import { createServiceClient } from '@/lib/supabase/service'
 // feel sluggish. The fetch was moved to /api/leads/[id] — see
 // app/(dashboard)/leads/_lib/detail-query.ts for the shared loader.
 
-type MondayLabelValue = 'no' | 'leads' | 'affiliate' | 'updates' | 'clear'
+type MondayLabelValue =
+  | 'no'
+  | 'clear'
+  | 'affiliates'
+  | 'affiliates_updates'
+  | 'leads'
+  | 'leads_updates'
+  | 'not_relevant_leads'
+  | 'not_relevant_leads_updates'
+  | 'email_undelivered_leads'
+  | 'email_undelivered_leads_updates'
 
 const VALID: ReadonlySet<string> = new Set([
   'no',
-  'leads',
-  'affiliate',
-  'updates',
   'clear',
+  'affiliates',
+  'affiliates_updates',
+  'leads',
+  'leads_updates',
+  'not_relevant_leads',
+  'not_relevant_leads_updates',
+  'email_undelivered_leads',
+  'email_undelivered_leads_updates',
 ])
 
 /**
@@ -60,6 +75,7 @@ export async function setMondayLabel(formData: FormData): Promise<void> {
       }
       break
     default:
+      // One of the 8 granular categories
       patch = {
         is_on_monday: true,
         monday_board: value,
