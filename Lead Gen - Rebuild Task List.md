@@ -145,7 +145,7 @@ Verified end-to-end (`0bd4190`).
 
 ---
 
-## EPIC 7: Enrichment Pipeline — Build Stage by Stage — [BACKLOG]
+## EPIC 7: Enrichment Pipeline — Build Stage by Stage — [7.1–7.6 DONE · 7.7 DEFERRED]
 
 **Goal:** automate everything end-to-end in one run. **Approach:** build each enrichment stage as a standalone, manually-triggerable feature first, verify it on a real batch, then wire them together in Epic 8.
 
@@ -157,7 +157,7 @@ Verified end-to-end (`0bd4190`).
 
 ---
 
-### 7.1 — Stage: Monday Lead Duplicate Check
+### 7.1 — Stage: Monday Lead Duplicate Check — [DONE]
 **Pipeline step 2 of 8.** Look up each scrape row's domain against our Supabase Monday mirrors (4 boards + their updates). Pure DB lookup — no external API calls.
 
 - Port the legacy RPC `search_website_across_all_boards_and_updates(domain text)` from the catalog
@@ -167,7 +167,7 @@ Verified end-to-end (`0bd4190`).
 - UI: "Run Monday duplicate check" button per batch on `/scrape/[id]`
 - Verify: pick 20 rows known to exist on Monday + 20 known not to, confirm precision/recall
 
-### 7.2 — Stage: Affiliate Site Detection
+### 7.2 — Stage: Affiliate Site Detection — [DONE]
 **Pipeline step 3 of 8.** Classify each result URL as affiliate vs non-affiliate.
 
 - Port the heuristic scorer from the catalog **verbatim** (15+ rules with point values — the catalog has them)
@@ -177,7 +177,7 @@ Verified end-to-end (`0bd4190`).
 - UI: "Run affiliate detection" button per batch
 - Verify: 20 known affiliates + 20 known non-affiliates → precision/recall ≥ 95%
 
-### 7.3 — Stage: Rooster Partner Brand Check
+### 7.3 — Stage: Rooster Partner Brand Check — [DONE]
 **Pipeline step 4 of 8.** Determine if the destination URL belongs to a brand Rooster already represents (so we don't try to add ourselves as a lead).
 
 - Match the redirected destination against `affiliates_table` (our Rooster brand list)
@@ -186,7 +186,7 @@ Verified end-to-end (`0bd4190`).
 - UI: badge in `LeadsTable`
 - Verify: 10 known Rooster brand domains + 10 non-Rooster domains
 
-### 7.4 — Stage: Contact Details Collection
+### 7.4 — Stage: Contact Details Collection — [DONE — regex first iteration]
 **Pipeline step 5 of 8.** For non-affiliate, non-Rooster rows (actionable leads), find email + phone + contact-page URL.
 
 - Replace legacy GPT-4o flow with **Claude Opus 4.6 + `web_search` tool** (catalog has the original prompt — adapt it)
@@ -195,7 +195,7 @@ Verified end-to-end (`0bd4190`).
 - UI: contact cell expands in `LeadsTable` drill-in
 - Verify: 20 leads, manually compare extracted contacts against the live website
 
-### 7.5 — Stage: S-Tag Extraction
+### 7.5 — Stage: S-Tag Extraction — [DONE]
 **Pipeline step 6 of 8.** For affiliate rows, extract the S-tag (affiliate tracking ID) from the destination URL chain.
 
 - Port the regex set + the **business-critical query-param key order** verbatim from the catalog: `['btag', 'stag', 'cxd', 'mid', 'affid']`
@@ -205,7 +205,7 @@ Verified end-to-end (`0bd4190`).
 - UI: S-tag column in `LeadsTable` (visible only for affiliate rows)
 - Verify: 20 known affiliates, manually trace the redirect and compare extracted tag
 
-### 7.6 — Stage: S-Tag Duplicate Check
+### 7.6 — Stage: S-Tag Duplicate Check — [DONE]
 **Pipeline step 7 of 8.** Check whether the extracted S-tag already exists on Monday (via our Supabase mirror).
 
 - Port the legacy RPC `search_s_tag_across_all_boards_and_updates(tag text)` from the catalog
@@ -213,7 +213,7 @@ Verified end-to-end (`0bd4190`).
 - UI: badge alongside the S-tag column
 - Verify: 10 known-existing tags + 10 fresh tags
 
-### 7.7 — Stage: Monday.com Sync (Create or Update)
+### 7.7 — Stage: Monday.com Sync (Create or Update) — [DEFERRED — explicit user instruction not to write to Monday yet]
 **Pipeline step 8 of 8.** Push enriched rows back to Monday — either create a new item or add an update on an existing one.
 
 - Branch logic:
@@ -255,13 +255,66 @@ Run a fresh 10-keyword scrape. Verify: every row passes through the correct stag
 
 ## BACKLOG
 
+### B.0 — Cloudflare / CAPTCHA blocker resilience (**top priority**)
+The current enrichment pipeline (7.2–7.5) uses plain `fetch()` from the Vercel
+runtime. Many casino-affiliate sites are behind Cloudflare or hit CAPTCHA on
+unfamiliar User-Agents — those rows currently get marked `affiliate_confidence
+= ERROR` and skipped, leaving real affiliate sites un-classified. Until this
+is fixed, the pipeline silently misses the rows that matter most.
+
+**Approach options (in increasing complexity):**
+
+1. **Scraping Bee fallback.** Quickest win. When `fetchHtml` returns 403/503,
+   retry through Scraping Bee (or ZenRows / ScrapeNinja). Per-fetch cost,
+   but covers ~90% of Cloudflare-protected sites. Add `SCRAPINGBEE_API_KEY`
+   env var and a `fallbackFetchHtml()` wrapper.
+
+2. **VM-side fetch via the existing GoLogin worker.** We already have 3
+   GoLogin browser instances per VM with country-specific residential
+   proxies. Add an `enrichment_fetch_queue` table; the Next.js side enqueues
+   `(lead_id, url)`; a new worker polls it, opens the URL in a real Chromium
+   instance with the country-matched profile, dumps the rendered HTML back
+   into a `fetched_html_cache` table. Each enrichment stage then reads HTML
+   from the cache instead of calling `fetch()` directly.
+
+   Pros: realistic browser fingerprint, no third-party cost, leverages
+   infrastructure that already exists. Cons: ~3-5s per fetch (vs ~500ms),
+   competes with SERP scraping for browser instances.
+
+3. **Hybrid.** Try plain fetch first (fastest, free), fall back to Scraping
+   Bee or VM on 403/503/timeout. Flag `fetch_method` per row so we can
+   measure which path each row took.
+
+**Recommended:** option 3 — start with Scraping Bee for fast unblocking, add
+the VM path later if cost or accuracy becomes an issue.
+
+**Affects:** stages 7.2, 7.3, 7.4, 7.5 — they all share `lib/affiliate-detection/fetch.ts`.
+
 ### B.1 — Google account sign-in on 15 GoLogin profiles (your task)
 Each country profile needs to be signed into a Google account that has passed adult-content / age verification. Without this, PPC ads (sponsored results) don't render reliably for casino/gambling keywords. **One-time manual setup per profile.**
 
-### B.2 — VM health endpoint (deferred from 5.5)
+### B.2 — Monday.com write (Epic 7.7)
+Deferred per user instruction. When unfrozen: create / update items on the
+Affiliates and Leads boards based on enrichment results. Branch logic + Monday
+GraphQL details already in §7.7.
+
+### B.3 — Claude tie-breaker for affiliate detection
+Heuristic scorer currently classifies LOW/MEDIUM confidence rows by score
+margin alone. Per the catalog recommendation, those rows should escalate to
+Claude Opus 4.6 with a structured-output schema for a tie-break call. Improves
+precision on edge cases (review sites that look casino-ish, casino sites that
+look review-ish).
+
+### B.4 — Claude + web_search for contact extraction
+Stage 7.4 currently uses regex extraction only. Catalog's recommendation is
+Claude Opus 4.6 with the `web_search` tool for the harder cases (contact
+buried behind /imprint or /about-us, JS-rendered pages, etc.). Hunter.io
+fallback for email-only domains.
+
+### B.5 — VM health endpoint (deferred from 5.5)
 Only build if we start hitting silent worker outages.
 
-### B.3 — Multi-VM scaling
+### B.6 — Multi-VM scaling
 Currently 1 VM × 3 workers. Architecture supports N VMs with no code changes (country-level locks coordinate through Postgres). Add a second VM only when we hit GoLogin bandwidth ceilings or queue depth becomes a problem.
 
 ---
@@ -276,9 +329,11 @@ Currently 1 VM × 3 workers. Architecture supports N VMs with no code changes (c
 | 4. Multi-Keyword Input | DONE | `78287ed` |
 | 5. AWS VM Workers | DONE + extras | + country locks, + pg_cron stale-lock release, + 3 workers/VM |
 | 6. Scheduling | DONE | `0bd4190` — every-minute tick |
-| **7. Enrichment Pipeline (7 stages)** | **BACKLOG** | **Build stage-by-stage, verify each in isolation** |
-| **8. Orchestration (one-run automation)** | **BACKLOG** | **Wire 7.1–7.7 together with conditional branches** |
+| **7. Enrichment Pipeline** | **7.1–7.6 DONE · 7.7 DEFERRED** | **All 6 enrichment stages live with manual override + detail drawer.** |
+| 8. Orchestration (one-run automation) | BACKLOG | Wire 7.1–7.6 together with conditional branches |
+| **B.0 Cloudflare / CAPTCHA blocker resilience** | **BACKLOG (top priority)** | **Currently many real affiliates are getting `confidence=ERROR` and being skipped** |
 | B.1 Google account sign-in (manual) | BACKLOG | Your task |
+| B.2 Monday.com write (7.7) | DEFERRED | Per user instruction |
 
 **End-to-end pipeline (final shape):**
 
