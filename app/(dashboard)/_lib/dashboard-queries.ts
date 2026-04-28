@@ -54,6 +54,36 @@ export type ActivityRow = {
   created_at: string
 }
 
+export type WorkerKind = 'scrape' | 'enrichment'
+
+export type WorkerSlot = {
+  worker_id: string
+  kind: WorkerKind
+  port: number
+  busy: boolean
+  current: null | {
+    job_id: string
+    country_code: string
+    started_at: string | null
+    keyword: string | null
+    url: string | null
+    process_stages: string[] | null
+  }
+}
+
+export const EXPECTED_WORKERS: ReadonlyArray<{
+  id: string
+  kind: WorkerKind
+  port: number
+}> = [
+  { id: 'vm1-9222', kind: 'scrape', port: 9222 },
+  { id: 'vm1-9223', kind: 'scrape', port: 9223 },
+  { id: 'vm1-9224', kind: 'scrape', port: 9224 },
+  { id: 'enrich-vm1-9225', kind: 'enrichment', port: 9225 },
+  { id: 'enrich-vm1-9226', kind: 'enrichment', port: 9226 },
+  { id: 'enrich-vm1-9227', kind: 'enrichment', port: 9227 },
+]
+
 export type DashboardData = {
   kpiLeads: Kpi
   kpiAffiliates: Kpi
@@ -63,6 +93,8 @@ export type DashboardData = {
   profileWarnings: ProfileWarning[]
   recentBatches: RecentBatch[]
   recentActivity: ActivityRow[]
+  workers: WorkerSlot[]
+  hasActiveWork: boolean
 }
 
 export async function loadDashboardData(): Promise<DashboardData> {
@@ -205,6 +237,80 @@ export async function loadDashboardData(): Promise<DashboardData> {
     .order('created_at', { ascending: false })
     .limit(10)
 
+  // ----- Worker activity -----
+  const [scrapeBusy, enrichBusy] = await Promise.all([
+    svc
+      .from('scrape_queue')
+      .select('id, claimed_by, keyword, country_code, started_at')
+      .eq('status', 'running'),
+    svc
+      .from('enrichment_fetch_queue')
+      .select('id, claimed_by, country_code, url, started_at, process_stages')
+      .eq('status', 'running'),
+  ])
+
+  const scrapeByWorker = new Map<string, {
+    id: string; keyword: string; country_code: string; started_at: string | null
+  }>()
+  for (const j of scrapeBusy.data ?? []) {
+    const r = j as { id: string; claimed_by: string | null; keyword: string; country_code: string; started_at: string | null }
+    if (r.claimed_by) scrapeByWorker.set(r.claimed_by, r)
+  }
+  const enrichByWorker = new Map<string, {
+    id: string; url: string; country_code: string; started_at: string | null; process_stages: string[] | null
+  }>()
+  for (const j of enrichBusy.data ?? []) {
+    const r = j as { id: string; claimed_by: string | null; url: string; country_code: string; started_at: string | null; process_stages: string[] | null }
+    if (r.claimed_by) enrichByWorker.set(r.claimed_by, r)
+  }
+
+  const workers: WorkerSlot[] = EXPECTED_WORKERS.map(w => {
+    if (w.kind === 'scrape') {
+      const job = scrapeByWorker.get(w.id)
+      return {
+        worker_id: w.id,
+        kind: w.kind,
+        port: w.port,
+        busy: !!job,
+        current: job
+          ? {
+              job_id: job.id,
+              country_code: job.country_code,
+              started_at: job.started_at,
+              keyword: job.keyword,
+              url: null,
+              process_stages: null,
+            }
+          : null,
+      }
+    } else {
+      const job = enrichByWorker.get(w.id)
+      return {
+        worker_id: w.id,
+        kind: w.kind,
+        port: w.port,
+        busy: !!job,
+        current: job
+          ? {
+              job_id: job.id,
+              country_code: job.country_code,
+              started_at: job.started_at,
+              keyword: null,
+              url: job.url,
+              process_stages: Array.isArray(job.process_stages) ? job.process_stages : null,
+            }
+          : null,
+      }
+    }
+  })
+
+  const hasActiveWork =
+    workers.some(w => w.busy) ||
+    enrichPending > 0 ||
+    enrichRunning > 0 ||
+    scrapeRunning > 0 ||
+    scrapePending > 0
+
   return {
     kpiLeads: makeKpi(leadsTotal, leadsCur, leadsPrev),
     kpiAffiliates: makeKpi(affTotal, affCur, affPrev),
@@ -224,6 +330,8 @@ export async function loadDashboardData(): Promise<DashboardData> {
     profileWarnings: (warnRows ?? []) as ProfileWarning[],
     recentBatches: (batchRows ?? []) as unknown as RecentBatch[],
     recentActivity: (actRows ?? []) as unknown as ActivityRow[],
+    workers,
+    hasActiveWork,
   }
 }
 

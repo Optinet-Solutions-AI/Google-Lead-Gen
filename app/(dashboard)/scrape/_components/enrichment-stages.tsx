@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Circle,
   Database,
+  Loader2,
   Mail,
   Play,
   Search,
@@ -96,39 +97,65 @@ function StageRow({
   jobId,
 }: StageRowProps) {
   const done = status.total > 0
+  // In-flight state — block the play button while jobs are queued/running
+  // so users don't double-trigger the same stage. Workers process the
+  // queue in the background; the dashboard auto-refreshes counts.
+  const inflightPending = status.inflight_pending ?? 0
+  const inflightRunning = status.inflight_running ?? 0
+  const hasInflight = inflightPending + inflightRunning > 0
+  const buttonDisabled = pending || hasInflight
+
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2">
       <div className="flex flex-wrap items-center gap-3">
         <span
           className={[
             'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold',
-            done
-              ? 'bg-emerald-100 text-emerald-700'
-              : 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]',
+            hasInflight
+              ? 'bg-amber-100 text-amber-700'
+              : done
+                ? 'bg-emerald-100 text-emerald-700'
+                : 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]',
           ].join(' ')}
-          title={done ? 'Done' : 'Not run'}
+          title={hasInflight ? 'Working' : done ? 'Done' : 'Not run'}
         >
-          {done ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+          {hasInflight
+            ? <Loader2 className="h-3 w-3 animate-spin" />
+            : done
+              ? <CheckCircle2 className="h-3 w-3" />
+              : <Circle className="h-3 w-3" />}
         </span>
         <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[color:var(--color-text-primary)]">
           {icon}
           <span className="whitespace-nowrap">{index}. {title}</span>
         </span>
         <span className="text-[11px] text-[color:var(--color-text-secondary)]">
-          {summaryLabel(stageKey, status)}
-          {status.lastRunAt && <> · {relativeTime(status.lastRunAt)}</>}
+          {hasInflight ? (
+            <span className="font-medium text-amber-700">
+              {inflightRunning > 0 && `${inflightRunning} running`}
+              {inflightRunning > 0 && inflightPending > 0 && ' · '}
+              {inflightPending > 0 && `${inflightPending} pending`}
+            </span>
+          ) : (
+            <>
+              {summaryLabel(stageKey, status)}
+              {status.lastRunAt && <> · {relativeTime(status.lastRunAt)}</>}
+            </>
+          )}
         </span>
 
         <form action={action} className="ml-auto">
           <input type="hidden" name="job_id" value={jobId} />
           <button
             type="submit"
-            disabled={pending}
-            aria-label={`Run ${title}`}
-            title={`Run ${title}`}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:opacity-50"
+            disabled={buttonDisabled}
+            aria-label={hasInflight ? `${title} already running` : `Run ${title}`}
+            title={hasInflight ? `${title} already running — wait for it to finish` : `Run ${title}`}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <Play className={['h-3 w-3', pending ? 'animate-pulse' : ''].join(' ')} />
+            {hasInflight
+              ? <Loader2 className="h-3 w-3 animate-spin" />
+              : <Play className={['h-3 w-3', pending ? 'animate-pulse' : ''].join(' ')} />}
           </button>
         </form>
       </div>

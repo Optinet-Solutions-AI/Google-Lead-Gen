@@ -49,6 +49,9 @@ export type ScrapeJob = {
   claimed_by: string | null
   started_at: string | null
   completed_at: string | null
+  scheduled_at: string | null
+  with_enrichment: boolean
+  enrichment_status: string | null
   error_message: string | null
   result_summary: Record<string, unknown> | null
   batch_id: number | null
@@ -65,6 +68,10 @@ export type StageStatus = {
   positive: number
   /** Fetch-errored (only tracked for affiliate detection via confidence=ERROR). */
   errored: number
+  /** In-flight queue counts (per stage) — drives the loading state on
+   *  the play button so users don't spam-click while jobs are in flight. */
+  inflight_pending: number
+  inflight_running: number
 }
 
 export type StageSummary = {
@@ -76,7 +83,14 @@ export type StageSummary = {
   stagCheck: StageStatus
 }
 
-const EMPTY_STATUS = (): StageStatus => ({ lastRunAt: null, total: 0, positive: 0, errored: 0 })
+const EMPTY_STATUS = (): StageStatus => ({
+  lastRunAt: null,
+  total: 0,
+  positive: 0,
+  errored: 0,
+  inflight_pending: 0,
+  inflight_running: 0,
+})
 
 export async function fetchStageSummary(jobId: string): Promise<StageSummary> {
   const svc = createServiceClient()
@@ -119,6 +133,39 @@ export async function fetchStageSummary(jobId: string): Promise<StageSummary> {
     else if (!tagMatchedByLead.has(leadId)) tagMatchedByLead.set(leadId, false)
   }
 
+  // ----- in-flight enrichment-fetch-queue counts -----
+  // (pending or running enrichment jobs against any lead in this scrape)
+  const leadIds = rows
+    .map(r => r.id as number | undefined)
+    .filter((id): id is number => typeof id === 'number')
+  if (leadIds.length > 0) {
+    const { data: queueRows, error: qErr } = await svc
+      .from('enrichment_fetch_queue')
+      .select('process_stages, status')
+      .in('status', ['pending', 'running'])
+      .in('lead_id', leadIds)
+    if (!qErr) {
+      const map: Record<string, keyof StageSummary> = {
+        affiliate: 'affiliate',
+        rooster: 'rooster',
+        contact: 'contact',
+        stag: 'stag',
+      }
+      for (const q of queueRows ?? []) {
+        const st = (q as { status: string }).status
+        const stages = (q as { process_stages: unknown }).process_stages
+        if (!Array.isArray(stages)) continue
+        for (const stage of stages) {
+          if (typeof stage !== 'string') continue
+          const key = map[stage]
+          if (!key) continue
+          if (st === 'pending') s[key].inflight_pending += 1
+          else if (st === 'running') s[key].inflight_running += 1
+        }
+      }
+    }
+  }
+
   for (const row of rows) {
     bump(s.monday, row.monday_checked_at as string | null, row.is_on_monday === true, false)
     bump(
@@ -153,12 +200,17 @@ export async function listRecentJobs(limit = 30): Promise<ScrapeJob[]> {
   const { data, error } = await svc
     .from('scrape_queue')
     .select(
-      'id, keyword, country_code, pages, priority, status, attempts, claimed_by, started_at, completed_at, error_message, result_summary, batch_id, created_at',
+      [
+        'id, keyword, country_code, pages, priority, status, attempts',
+        'claimed_by, started_at, completed_at, scheduled_at',
+        'with_enrichment, enrichment_status',
+        'error_message, result_summary, batch_id, created_at',
+      ].join(', '),
     )
     .order('created_at', { ascending: false })
     .limit(limit)
   if (error) throw error
-  const jobs = (data ?? []) as Omit<ScrapeJob, 'enrichment'>[]
+  const jobs = (data ?? []) as unknown as Omit<ScrapeJob, 'enrichment'>[]
 
   const completedIds = jobs.filter(j => j.status === 'completed').map(j => j.id)
   const enrichmentByJob = await fetchEnrichmentStatus(completedIds)

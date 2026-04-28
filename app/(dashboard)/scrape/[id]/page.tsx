@@ -10,6 +10,7 @@ import {
   LEAD_PAGE_SIZES,
   queryLeads,
 } from '../../leads/_lib/query'
+import { AutoRefresh } from '../_components/auto-refresh'
 import { EnrichmentStages } from '../_components/enrichment-stages'
 import { fetchStageSummary } from '../_lib/queries'
 
@@ -132,6 +133,17 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       <LeadsTable rows={rows} jobContext />
 
       <Pagination page={page} size={size} total={total} pageSizeOptions={LEAD_PAGE_SIZES} />
+
+      <AutoRefresh
+        enabled={
+          job.status === 'pending' ||
+          job.status === 'running' ||
+          stageSummary.affiliate.inflight_pending + stageSummary.affiliate.inflight_running > 0 ||
+          stageSummary.rooster.inflight_pending + stageSummary.rooster.inflight_running > 0 ||
+          stageSummary.contact.inflight_pending + stageSummary.contact.inflight_running > 0 ||
+          stageSummary.stag.inflight_pending + stageSummary.stag.inflight_running > 0
+        }
+      />
     </div>
   )
 }
