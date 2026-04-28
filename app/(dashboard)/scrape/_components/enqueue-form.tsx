@@ -4,7 +4,17 @@ import { useActionState, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { enqueueScrape, type EnqueueState } from '../actions'
 
-type Profile = { country_code: string; country_name: string }
+type Profile = {
+  country_code: string
+  country_name: string
+  requires_google_login: boolean
+  is_google_logged_in: boolean
+}
+
+function loginBadge(p: Profile): string {
+  if (!p.requires_google_login) return ''
+  return p.is_google_logged_in ? ' ✓' : ' ⚠ needs login'
+}
 
 const initial: EnqueueState = null
 
@@ -22,7 +32,14 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
   const router = useRouter()
 
   const [keywordsText, setKeywordsText] = useState('')
+  const [selectedCountry, setSelectedCountry] = useState('')
   const count = useMemo(() => countKeywords(keywordsText), [keywordsText])
+  const selectedProfile = useMemo(
+    () => profiles.find(p => p.country_code === selectedCountry) ?? null,
+    [profiles, selectedCountry],
+  )
+  const loginWarning =
+    selectedProfile?.requires_google_login && !selectedProfile.is_google_logged_in
 
   useEffect(() => {
     if (state?.status === 'ok') {
@@ -67,7 +84,8 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
           <select
             name="country_code"
             required
-            defaultValue=""
+            value={selectedCountry}
+            onChange={e => setSelectedCountry(e.target.value)}
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
           >
             <option value="" disabled>
@@ -75,7 +93,7 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
             </option>
             {profiles.map(p => (
               <option key={p.country_code} value={p.country_code}>
-                {p.country_name} ({p.country_code})
+                {p.country_name} ({p.country_code}){loginBadge(p)}
               </option>
             ))}
           </select>
@@ -124,6 +142,18 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
         </button>
       </div>
 
+      {loginWarning && (
+        <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+          ⚠ <strong>{selectedProfile?.country_name}</strong> needs a Google account
+          signed in for PPC ads to render reliably. The scrape will still run but
+          PPC results may be missing or filtered. Mark the profile as logged in
+          on{' '}
+          <a href="/profiles" className="underline underline-offset-2">
+            /profiles
+          </a>{' '}
+          once you&apos;ve signed in.
+        </p>
+      )}
       {state?.status === 'ok' && (
         <p className="mt-3 rounded-md bg-green-50 px-3 py-2 text-[12px] text-green-700">
           {state.message}

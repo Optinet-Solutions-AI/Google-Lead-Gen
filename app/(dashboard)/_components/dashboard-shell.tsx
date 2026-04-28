@@ -7,6 +7,7 @@ import {
   CalendarClock,
   ChevronLeft,
   Database,
+  Globe,
   KeyRound,
   LayoutDashboard,
   ListChecks,
@@ -47,6 +48,12 @@ const NAV_ITEMS = [
     href: '/monday/leads',
     icon: Database,
     match: (p: string) => p.startsWith('/monday'),
+  },
+  {
+    label: 'Country Profiles',
+    href: '/profiles',
+    icon: Globe,
+    match: (p: string) => p.startsWith('/profiles'),
   },
   {
     label: 'Change Password',

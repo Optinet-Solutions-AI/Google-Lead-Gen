@@ -4,13 +4,17 @@ import { createServiceClient } from '@/lib/supabase/service'
 export type GoLoginProfile = {
   country_code: string
   country_name: string
+  requires_google_login: boolean
+  is_google_logged_in: boolean
 }
 
 export async function listActiveProfiles(): Promise<GoLoginProfile[]> {
   const svc = createServiceClient()
   const { data, error } = await svc
     .from('gologin_profiles')
-    .select('country_code, country_name')
+    .select(
+      'country_code, country_name, requires_google_login, is_google_logged_in',
+    )
     .eq('is_active', true)
     .not('gologin_profile_id', 'is', null)
     .order('country_name', { ascending: true })
