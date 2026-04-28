@@ -9,6 +9,45 @@ import { createServiceClient } from '@/lib/supabase/service'
 // feel sluggish. The fetch was moved to /api/leads/[id] — see
 // app/(dashboard)/leads/_lib/detail-query.ts for the shared loader.
 
+/**
+ * Delete the screenshot attached to a lead. Removes the file from
+ * Supabase Storage and clears the screenshot_*_link columns. Used by
+ * the "Delete screenshot" button in the row-detail drawer.
+ */
+export async function deleteLeadScreenshot(formData: FormData): Promise<void> {
+  await assertSignedIn()
+  const leadId = Number(formData.get('lead_id'))
+  if (!Number.isFinite(leadId)) throw new Error('Missing lead id.')
+
+  const svc = createServiceClient()
+  const { data: lead, error: readErr } = await svc
+    .from('google_lead_gen_table')
+    .select('screenshot_content_link')
+    .eq('id', leadId)
+    .maybeSingle()
+  if (readErr) throw new Error(readErr.message)
+
+  const path = (lead as { screenshot_content_link: string | null } | null)?.screenshot_content_link
+  if (path) {
+    // Best-effort delete — even if the storage object's gone we still
+    // want to clear the DB columns.
+    try {
+      await svc.storage.from('lead-screenshots').remove([path])
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const { error: updErr } = await svc
+    .from('google_lead_gen_table')
+    .update({ screenshot_content_link: null, screenshot_view_link: null })
+    .eq('id', leadId)
+  if (updErr) throw new Error(updErr.message)
+
+  revalidatePath('/leads')
+  revalidatePath('/scrape', 'layout')
+}
+
 type MondayLabelValue =
   | 'no'
   | 'clear'

@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { fetchHtml, runWithConcurrency } from '@/lib/affiliate-detection/fetch'
-import { scoreAffiliate, shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
+import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { findRoosterBrandLinks } from '@/lib/affiliate-detection/rooster'
 import { extractContacts } from '@/lib/contact-extraction/extract'
 import { extractStagsFromHtml } from '@/lib/stag-extraction/extract'
@@ -184,22 +184,35 @@ export async function runAffiliateDetection(
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
 
   const svc = createServiceClient()
-  const leads = await fetchLeadsForStage(
-    jobId,
-    'id, url, domain, is_affiliate',
-    'is_affiliate_overridden_at',
-  )
+  const { data: leads, error: leadsErr } = await svc
+    .from('google_lead_gen_table')
+    .select('id, url, domain, country_code, result_type')
+    .eq('scrape_job_id', jobId)
+    .is('is_affiliate_overridden_at', null)
+  if (leadsErr) return { status: 'error', error: leadsErr.message }
 
-  let affiliateCount = 0
-  let errorCount = 0
+  // Pre-flag SKIPPED rows synchronously (cheap, no fetch needed) so the
+  // enqueue stays focused on rows that genuinely need a browser fetch.
   let skippedCount = 0
-
-  await runWithConcurrency(leads, STAGE_FETCH_CONCURRENCY, async lead => {
+  const enqueueable: Array<{
+    lead_id: number
+    country_code: string
+    url: string
+    want_html: boolean
+    want_screenshot: boolean
+    process_stages: string[]
+  }> = []
+  const now = new Date().toISOString()
+  for (const lead of (leads ?? []) as Array<{
+    id: number
+    url: string | null
+    domain: string | null
+    country_code: string | null
+    result_type: string | null
+  }>) {
     const url = lead.url ?? ''
-    if (!url || !url.startsWith('http')) {
-      skippedCount++
-      return
-    }
+    if (!url || !url.startsWith('http')) continue
+    if (!lead.country_code) continue
     if (shouldSkipDomain(lead.domain)) {
       await svc
         .from('google_lead_gen_table')
@@ -210,49 +223,40 @@ export async function runAffiliateDetection(
           affiliate_confidence: 'SKIPPED',
           affiliate_external_links: 0,
           affiliate_indicators: ['Skipped — known social/non-affiliate domain'],
-          affiliate_checked_at: new Date().toISOString(),
+          affiliate_checked_at: now,
         })
         .eq('id', lead.id)
       skippedCount++
-      return
+      continue
     }
+    enqueueable.push({
+      lead_id: lead.id,
+      country_code: lead.country_code,
+      url,
+      want_html: true,
+      // Per user policy: PPC rows always get a screenshot for verification.
+      want_screenshot: lead.result_type === 'PPC',
+      process_stages: ['affiliate'],
+    })
+  }
 
-    const fetched = await fetchHtml(url)
-    if (!fetched.ok) {
-      await svc
-        .from('google_lead_gen_table')
-        .update({
-          is_affiliate: null,
-          affiliate_confidence: 'ERROR',
-          affiliate_indicators: [`Fetch failed: ${fetched.error}`],
-          affiliate_checked_at: new Date().toISOString(),
-        })
-        .eq('id', lead.id)
-      errorCount++
-      return
+  if (enqueueable.length === 0) {
+    revalidatePath(`/scrape/${jobId}`)
+    return {
+      status: 'ok',
+      message: skippedCount > 0
+        ? `${skippedCount} skipped — nothing else to enqueue.`
+        : 'No leads to process.',
     }
+  }
 
-    const result = scoreAffiliate(fetched.html, fetched.finalUrl)
-    const isAffiliate = result.classification === 'AFFILIATE'
-    if (isAffiliate) affiliateCount++
-    await svc
-      .from('google_lead_gen_table')
-      .update({
-        is_affiliate: isAffiliate,
-        affiliate_score: result.affiliateScore,
-        affiliate_casino_score: result.casinoScore,
-        affiliate_confidence: result.confidence,
-        affiliate_external_links: result.externalCasinoLinks,
-        affiliate_indicators: result.indicators,
-        affiliate_checked_at: new Date().toISOString(),
-      })
-      .eq('id', lead.id)
-  })
+  const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
+  if (qErr) return { status: 'error', error: qErr.message }
 
   revalidatePath(`/scrape/${jobId}`)
   return {
     status: 'ok',
-    message: `Checked ${leads.length} row${leads.length === 1 ? '' : 's'} — ${affiliateCount} classified as affiliate, ${errorCount} fetch failed, ${skippedCount} skipped.`,
+    message: `Enqueued ${enqueueable.length} fetch job${enqueueable.length === 1 ? '' : 's'}${skippedCount > 0 ? ` (${skippedCount} skipped)` : ''}. VM workers will process and score them within ~30 s.`,
   }
 }
 

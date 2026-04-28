@@ -46,9 +46,13 @@ export type LeadDetail = {
     has_contact_details: boolean | null
     has_s_tags: boolean | null
     s_tags_checked_at: string | null
+    screenshot_content_link: string | null
   } | null
   contact: ContactDetail | null
   stags: StagDetail[]
+  /** Pre-signed URL to the screenshot PNG, valid ~1h. Null when no
+   *  screenshot exists or it's been deleted. */
+  screenshot_url: string | null
 }
 
 export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
@@ -66,6 +70,7 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
           'affiliate_external_links, affiliate_indicators',
           'is_rooster_partner, brand, rooster_brands',
           'has_contact_details, has_s_tags, s_tags_checked_at',
+          'screenshot_content_link',
         ].join(', '),
       )
       .eq('id', leadId)
@@ -90,9 +95,20 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
   if (contactRes.error) throw new Error(contactRes.error.message)
   if (stagsRes.error) throw new Error(stagsRes.error.message)
 
+  const lead = (leadRes.data ?? null) as LeadDetail['lead']
+
+  let screenshotUrl: string | null = null
+  if (lead?.screenshot_content_link) {
+    const { data: signed } = await svc.storage
+      .from('lead-screenshots')
+      .createSignedUrl(lead.screenshot_content_link, 60 * 60)
+    screenshotUrl = signed?.signedUrl ?? null
+  }
+
   return {
-    lead: (leadRes.data ?? null) as LeadDetail['lead'],
+    lead,
     contact: (contactRes.data ?? null) as ContactDetail | null,
     stags: (stagsRes.data ?? []) as StagDetail[],
+    screenshot_url: screenshotUrl,
   }
 }

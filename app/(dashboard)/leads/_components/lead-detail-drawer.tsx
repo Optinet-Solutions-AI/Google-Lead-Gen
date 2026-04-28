@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { X, ExternalLink, Mail, Phone, Tag } from 'lucide-react'
+import { useEffect, useState, useTransition } from 'react'
+import { X, ExternalLink, Mail, Phone, Tag, Trash2 } from 'lucide-react'
 import type { LeadDetail } from '../_lib/detail-query'
+import { deleteLeadScreenshot } from '../actions'
 
 type Detail = LeadDetail
 
@@ -169,6 +170,14 @@ function DetailBody({ detail }: { detail: Detail }) {
         )}
       </Section>
 
+      {(detail.screenshot_url || lead.result_type === 'PPC') && (
+        <ScreenshotSection
+          leadId={lead.id}
+          url={detail.screenshot_url}
+          isPPC={lead.result_type === 'PPC'}
+        />
+      )}
+
       <Section title="Affiliate detection">
         <KV
           label="Is affiliate?"
@@ -314,6 +323,81 @@ function DetailBody({ detail }: { detail: Detail }) {
         )}
       </Section>
     </div>
+  )
+}
+
+function ScreenshotSection({
+  leadId,
+  url,
+  isPPC,
+}: {
+  leadId: number
+  url: string | null
+  isPPC: boolean
+}) {
+  const [pending, startTransition] = useTransition()
+  function onDelete() {
+    if (!confirm('Delete this screenshot? You can re-run affiliate detection to capture a fresh one.')) return
+    const fd = new FormData()
+    fd.set('lead_id', String(leadId))
+    startTransition(async () => {
+      try {
+        await deleteLeadScreenshot(fd)
+      } catch (e) {
+        alert(e instanceof Error ? e.message : String(e))
+      }
+    })
+  }
+
+  return (
+    <section className="flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+          Screenshot{isPPC ? ' · PPC' : ''}
+        </h3>
+        {url && (
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={pending}
+            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-0.5 text-[10px] font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+          >
+            <Trash2 className="h-3 w-3" />
+            {pending ? 'Deleting…' : 'Delete'}
+          </button>
+        )}
+      </div>
+      <div className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-2">
+        {url ? (
+          <>
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mb-1.5 inline-flex items-center gap-1 text-[11px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Open full size
+            </a>
+            <div className="overflow-hidden rounded-sm border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={url}
+                alt="Lead page screenshot"
+                className="w-full"
+                loading="lazy"
+              />
+            </div>
+          </>
+        ) : (
+          <p className="text-[11px] text-[color:var(--color-text-secondary)]">
+            {isPPC
+              ? 'No screenshot yet — run affiliate detection on this batch and the worker will capture one.'
+              : 'No screenshot.'}
+          </p>
+        )}
+      </div>
+    </section>
   )
 }
 

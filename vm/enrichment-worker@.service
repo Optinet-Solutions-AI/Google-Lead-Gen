@@ -1,0 +1,47 @@
+# ============================================================
+# Systemd template unit for the enrichment fetch worker.
+#
+# Install (as root):
+#   sudo cp enrichment-worker@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#
+# Start three workers on ports 9225 / 9226 / 9227 (avoid 9222-9224
+# which the scrape workers use — same VM, different GoLogin debugger
+# ports). Country lock is shared with scrape via active_profile_locks
+# so a country never has both a scrape AND an enrichment running at
+# the same time.
+#   sudo systemctl enable --now enrichment-worker@9225
+#   sudo systemctl enable --now enrichment-worker@9226
+#   sudo systemctl enable --now enrichment-worker@9227
+#
+# Logs:
+#   sudo journalctl -u enrichment-worker@9225 -f
+#
+# Required env vars in /home/ubuntu/.env:
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  (already set for scrape)
+#   GOLOGIN_API_TOKEN                        (already set)
+#   APP_URL              = https://google-lead-gen.vercel.app
+#   INTERNAL_API_TOKEN   = matches the same env var on Vercel
+#   SCREENSHOT_BUCKET    = lead-screenshots  (default if unset)
+# ============================================================
+
+[Unit]
+Description=Enrichment Fetch Worker (port %i)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+EnvironmentFile=/home/ubuntu/.env
+Environment=WORKER_ID=enrich-vm1-%i
+Environment=GOLOGIN_PORT=%i
+Environment=DISPLAY=:1
+ExecStart=/usr/bin/python3 /home/ubuntu/enrichment_worker.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
