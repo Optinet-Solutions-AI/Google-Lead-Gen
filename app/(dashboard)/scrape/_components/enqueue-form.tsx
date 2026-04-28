@@ -125,6 +125,34 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
         </label>
       </div>
 
+      <div className="mt-3 flex flex-wrap items-end gap-4 border-t border-[color:var(--color-border)] pt-3">
+        <label className="flex cursor-pointer items-center gap-2 text-[12px] text-[color:var(--color-text-primary)]">
+          <input
+            type="checkbox"
+            name="with_enrichment"
+            className="h-4 w-4 rounded border-[color:var(--color-border)] text-[color:var(--color-accent)] focus:ring-[color:var(--color-accent)]"
+          />
+          <span>
+            Run full enrichment pipeline after scrape
+            <span className="block text-[10px] text-[color:var(--color-text-secondary)]">
+              Auto-runs Monday dup check, affiliate detection, Rooster check, contact extraction, S-tag extraction + verify.
+            </span>
+          </span>
+        </label>
+
+        <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
+          <span>
+            Schedule for{' '}
+            <span className="text-[10px]">(optional — leave empty to run now)</span>
+          </span>
+          <input
+            type="datetime-local"
+            name="scheduled_at"
+            className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-1.5 text-[12px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none"
+          />
+        </label>
+      </div>
+
       <div className="mt-3 flex items-center justify-between gap-3">
         <p className="text-[11px] text-[color:var(--color-text-secondary)]">
           Each keyword runs as a separate scrape. One per line.

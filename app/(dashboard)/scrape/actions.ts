@@ -68,6 +68,15 @@ export async function enqueueScrape(
   const country_code = String(formData.get('country_code') ?? '').trim().toUpperCase()
   const pages = clampInt(formData.get('pages'), 1, 10, 1)
   const priority = clampInt(formData.get('priority'), 0, 100, 0)
+  const withEnrichment = formData.get('with_enrichment') === 'on'
+  const scheduledAtRaw = String(formData.get('scheduled_at') ?? '').trim()
+  let scheduledAtIso: string | null = null
+  if (scheduledAtRaw) {
+    const d = new Date(scheduledAtRaw)
+    if (Number.isFinite(d.getTime())) {
+      scheduledAtIso = d.toISOString()
+    }
+  }
 
   // Parse the textarea — one keyword per line, trim whitespace,
   // dedupe exact duplicates, drop blanks.
@@ -105,17 +114,29 @@ export async function enqueueScrape(
     return { status: 'error', error: `Country ${country_code} has no GoLogin profile configured.` }
   }
 
-  const rows = keywords.map(keyword => ({ keyword, country_code, pages, priority }))
+  const rows = keywords.map(keyword => ({
+    keyword,
+    country_code,
+    pages,
+    priority,
+    with_enrichment: withEnrichment,
+    scheduled_at: scheduledAtIso,
+  }))
   const { error: insertError } = await svc.from('scrape_queue').insert(rows)
   if (insertError) return { status: 'error', error: insertError.message }
+
+  const flag = withEnrichment ? ' with full enrichment pipeline' : ''
+  const when = scheduledAtIso
+    ? ` to run at ${new Date(scheduledAtIso).toLocaleString()}`
+    : ''
 
   revalidatePath('/scrape')
   return {
     status: 'ok',
     message:
       keywords.length === 1
-        ? `Added "${keywords[0]}" to the queue for ${country_code}.`
-        : `Added ${keywords.length} keywords to the queue for ${country_code}.`,
+        ? `Added "${keywords[0]}" to the queue for ${country_code}${flag}${when}.`
+        : `Added ${keywords.length} keywords to the queue for ${country_code}${flag}${when}.`,
   }
 }
 

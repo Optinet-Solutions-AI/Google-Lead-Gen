@@ -21,6 +21,7 @@ type Props =
         cron: string | null
         is_active: boolean
         default_pages: number
+        run_enrichment: boolean
       }
     }
 
@@ -119,6 +120,21 @@ export function SetForm(props: Props) {
           className="h-4 w-4"
         />
         Active (the scheduler only picks up active sets)
+      </label>
+
+      <label className="flex items-start gap-2 text-[12px] text-[color:var(--color-text-primary)]">
+        <input
+          name="run_enrichment"
+          type="checkbox"
+          defaultChecked={props.mode === 'edit' ? props.set.run_enrichment : false}
+          className="mt-0.5 h-4 w-4"
+        />
+        <span>
+          Run full enrichment after each scheduled scrape
+          <span className="block text-[10px] text-[color:var(--color-text-secondary)]">
+            Auto-runs Monday dup check, affiliate detection, Rooster check, contact extraction, S-tag extraction + verify on each batch the cron creates.
+          </span>
+        </span>
       </label>
 
       {state?.status === 'ok' && (

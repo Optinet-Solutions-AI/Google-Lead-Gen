@@ -70,6 +70,7 @@ export async function createScheduledSet(
   const cron = cronRaw.length > 0 ? cronRaw : null
   const defaultPages = clampInt(formData.get('default_pages'), 1, 10, 1)
   const isActive = formData.get('is_active') === 'on' || formData.get('is_active') === 'true'
+  const runEnrichment = formData.get('run_enrichment') === 'on' || formData.get('run_enrichment') === 'true'
 
   if (!name) return { status: 'error', error: 'Name is required.' }
   if (cron && !validCron(cron)) return { status: 'error', error: `Invalid cron: ${cron}` }
@@ -83,6 +84,7 @@ export async function createScheduledSet(
       cron,
       default_pages: defaultPages,
       is_active: isActive,
+      run_enrichment: runEnrichment,
       next_run_at: computeNextRun(cron),
     })
     .select('id')
@@ -118,6 +120,7 @@ export async function updateScheduledSet(
   const cron = cronRaw.length > 0 ? cronRaw : null
   const defaultPages = clampInt(formData.get('default_pages'), 1, 10, 1)
   const isActive = formData.get('is_active') === 'on' || formData.get('is_active') === 'true'
+  const runEnrichment = formData.get('run_enrichment') === 'on' || formData.get('run_enrichment') === 'true'
 
   if (!name) return { status: 'error', error: 'Name is required.' }
   if (cron && !validCron(cron)) return { status: 'error', error: `Invalid cron: ${cron}` }
@@ -131,6 +134,7 @@ export async function updateScheduledSet(
       cron,
       default_pages: defaultPages,
       is_active: isActive,
+      run_enrichment: runEnrichment,
       next_run_at: computeNextRun(cron),
       updated_at: new Date().toISOString(),
     })

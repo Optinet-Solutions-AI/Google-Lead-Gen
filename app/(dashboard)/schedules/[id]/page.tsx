@@ -74,6 +74,7 @@ export default async function ScheduleDetailPage({ params }: Props) {
             cron: set.cron,
             is_active: set.is_active,
             default_pages: set.default_pages,
+            run_enrichment: set.run_enrichment,
           }}
         />
       </section>

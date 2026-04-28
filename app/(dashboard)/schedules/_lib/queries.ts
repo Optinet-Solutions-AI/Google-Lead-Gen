@@ -8,6 +8,7 @@ export type ScheduledSet = {
   cron: string | null
   is_active: boolean
   default_pages: number
+  run_enrichment: boolean
   last_run_at: string | null
   next_run_at: string | null
   created_at: string
@@ -31,7 +32,7 @@ export async function listScheduledSets(): Promise<ScheduledSet[]> {
   const { data, error } = await svc
     .from('scheduled_keyword_sets')
     .select(
-      'id, name, description, cron, is_active, default_pages, last_run_at, next_run_at, created_at, updated_at',
+      'id, name, description, cron, is_active, default_pages, run_enrichment, last_run_at, next_run_at, created_at, updated_at',
     )
     .order('created_at', { ascending: false })
   if (error) throw error
@@ -66,7 +67,7 @@ export async function getScheduledSet(id: string): Promise<{
     svc
       .from('scheduled_keyword_sets')
       .select(
-        'id, name, description, cron, is_active, default_pages, last_run_at, next_run_at, created_at, updated_at',
+        'id, name, description, cron, is_active, default_pages, run_enrichment, last_run_at, next_run_at, created_at, updated_at',
       )
       .eq('id', id)
       .maybeSingle(),

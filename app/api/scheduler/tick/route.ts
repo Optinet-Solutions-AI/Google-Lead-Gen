@@ -2,6 +2,11 @@ import type { NextRequest } from 'next/server'
 import { CronExpressionParser } from 'cron-parser'
 import { createServiceClient } from '@/lib/supabase/service'
 
+// Vercel cron sends GET — alias to the same handler as manual POSTs.
+export async function GET(request: NextRequest) {
+  return POST(request)
+}
+
 /**
  * Called by Vercel cron every minute. See vercel.json.
  *
@@ -31,7 +36,7 @@ export async function POST(request: NextRequest) {
   // Find sets that are due
   const { data: due, error: dueError } = await svc
     .from('scheduled_keyword_sets')
-    .select('id, name, cron, default_pages, next_run_at')
+    .select('id, name, cron, default_pages, next_run_at, run_enrichment')
     .eq('is_active', true)
     .or(`next_run_at.is.null,next_run_at.lte.${now.toISOString()}`)
     .limit(50)
@@ -59,6 +64,7 @@ export async function POST(request: NextRequest) {
         pages: i.pages ?? set.default_pages ?? 1,
         priority: i.priority ?? 0,
         scheduled_run_id: set.id,
+        with_enrichment: (set as { run_enrichment?: boolean }).run_enrichment ?? false,
       }))
       const { error: insertError } = await svc.from('scrape_queue').insert(rows)
       if (insertError) {
@@ -105,5 +111,36 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  return Response.json({ ok: true, now: now.toISOString(), runs })
+  // ----------------------------------------------------------------
+  // Orchestrator pass — advance the enrichment chain for any scrape
+  // that has with_enrichment=true and isn't yet 'complete'.
+  // ----------------------------------------------------------------
+  const { data: pending, error: pendingErr } = await svc
+    .from('scrape_queue')
+    .select('id')
+    .eq('with_enrichment', true)
+    .eq('status', 'completed')
+    .or('enrichment_status.is.null,enrichment_status.in.(pending,affiliate_running,all_running)')
+    .order('completed_at', { ascending: true })
+    .limit(50)
+
+  const advances: Array<{ id: string; status: string | null; error?: string }> = []
+  if (!pendingErr && pending) {
+    for (const row of pending) {
+      const id = (row as { id: string }).id
+      const { data, error } = await svc.rpc('advance_enrichment_chain', { p_job_id: id })
+      if (error) {
+        advances.push({ id, status: null, error: error.message })
+      } else {
+        advances.push({ id, status: typeof data === 'string' ? data : null })
+      }
+    }
+  }
+
+  return Response.json({
+    ok: true,
+    now: now.toISOString(),
+    runs,
+    enrichment_advances: advances,
+  })
 }
