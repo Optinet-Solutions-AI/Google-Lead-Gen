@@ -1,8 +1,14 @@
 /**
- * Regex-based contact extractor. First-iteration replacement for the
- * legacy GPT-4o + web_search pipeline. Catches ~80% of the easy cases
- * (mailto: links, plain emails, tel: links). Future iteration can
- * layer Claude on top for the harder ones.
+ * Regex-based contact extractor with anti-obfuscation pre-pass.
+ *
+ * Catches the common casino-affiliate patterns:
+ *   - mailto: + tel: links from anchor tags
+ *   - Plain-text emails / phones
+ *   - Obfuscated emails: "support [at] example dot com",
+ *     "&#64;" entity, "(at)", "{dot}" — see deobfuscate() below
+ *
+ * Returns null/empty arrays when it can't find anything; the
+ * enrichment cascade then escalates to GPT-4o + Hunter.io.
  */
 
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi
@@ -34,15 +40,53 @@ export type ContactResult = {
   }
 }
 
+/**
+ * Reverse common anti-bot email obfuscations.
+ *
+ * Targeted rules — bracketed [at]/(at)/{at} are unambiguous, so we
+ * replace them anywhere. The bare-word " at "/" dot " replacement
+ * is gated by an email-shaped surrounding context to avoid corrupting
+ * normal sentences like "Meet us at the office".
+ */
+function deobfuscate(html: string): string {
+  let s = html
+    // HTML numeric entities (decimal + hex)
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(parseInt(n, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    // Common named entities relevant to contacts
+    .replace(/&amp;/gi, '&')
+    .replace(/&commat;/gi, '@')
+    .replace(/&period;/gi, '.')
+    // Bracketed obfuscations — safe to replace globally
+    .replace(/\s*\[\s*at\s*\]\s*/gi, '@')
+    .replace(/\s*\(\s*at\s*\)\s*/gi, '@')
+    .replace(/\s*\{\s*at\s*\}\s*/gi, '@')
+    .replace(/\s*\[\s*dot\s*\]\s*/gi, '.')
+    .replace(/\s*\(\s*dot\s*\)\s*/gi, '.')
+    .replace(/\s*\{\s*dot\s*\}\s*/gi, '.')
+
+  // Bare-word " at " / " dot " — only when surrounded by email-shape:
+  //   user(spaces)at(spaces)domain(spaces)dot(spaces)tld[(space)dot(space)tld]
+  s = s.replace(
+    /\b([A-Za-z0-9._-]+)\s+at\s+([A-Za-z0-9-]+(?:\s+dot\s+[A-Za-z0-9-]+)+)\b/gi,
+    (_, user, rest) => `${user}@${rest.replace(/\s+dot\s+/gi, '.')}`,
+  )
+
+  return s
+}
+
 export function extractContacts(html: string, baseUrl: string): ContactResult {
   if (!html) {
     return { emails: [], phones: [], contactPageUrl: null, raw: { emailCandidates: 0, phoneCandidates: 0, mailtoCount: 0 } }
   }
 
+  // Run the de-obfuscation pre-pass before any regex extraction.
+  const decoded = deobfuscate(html)
+
   const emails = new Set<string>()
   let mailtoCount = 0
 
-  for (const m of html.matchAll(MAILTO_RE)) {
+  for (const m of decoded.matchAll(MAILTO_RE)) {
     if (m[1]) {
       const e = m[1].trim().toLowerCase()
       if (isPlausibleEmail(e)) emails.add(e)
@@ -51,7 +95,7 @@ export function extractContacts(html: string, baseUrl: string): ContactResult {
   }
 
   // Plain-text emails — strip script/style/comment chunks first to cut noise
-  const stripped = html
+  const stripped = decoded
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '')
@@ -64,7 +108,7 @@ export function extractContacts(html: string, baseUrl: string): ContactResult {
   }
 
   const phones = new Set<string>()
-  for (const m of html.matchAll(TEL_RE)) {
+  for (const m of decoded.matchAll(TEL_RE)) {
     if (m[1]) phones.add(normalizePhone(m[1]))
   }
   let phoneCandidates = 0
@@ -75,7 +119,7 @@ export function extractContacts(html: string, baseUrl: string): ContactResult {
   }
 
   let contactPageUrl: string | null = null
-  for (const m of html.matchAll(CONTACT_LINK_RE)) {
+  for (const m of decoded.matchAll(CONTACT_LINK_RE)) {
     if (m[1]) {
       contactPageUrl = absolutize(m[1], baseUrl)
       break

@@ -31,6 +31,9 @@ import sys
 import time
 from typing import Any
 
+import re
+from urllib.parse import urljoin, urlparse
+
 import requests
 from dotenv import load_dotenv
 from supabase import Client, create_client
@@ -167,9 +170,84 @@ def connect_chrome(debugger_address: str) -> webdriver.Chrome:
     return webdriver.Chrome(service=service, options=opts)
 
 
-def fetch_with_browser(profile_id: str, url: str, want_screenshot: bool
-                       ) -> tuple[str | None, bytes | None, str | None]:
-    """Open URL in the GoLogin profile, return (html, screenshot_bytes, error)."""
+CONTACT_LINK_RE = re.compile(
+    r'href=["\']([^"\']*\b(?:contact|kontakt|about|impressum)\b[^"\']*)["\']',
+    re.IGNORECASE,
+)
+CONTACT_PATH_FALLBACKS = ("/contact", "/contact-us", "/about", "/about-us", "/impressum")
+MAX_EXTRA_PAGES = 3
+
+
+def _navigate(driver: webdriver.Chrome, url: str, settle_s: int = PAGE_SETTLE_S) -> str | None:
+    """Navigate + return page_source, or None on failure."""
+    try:
+        driver.get(url)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("nav %s failed: %s", url, exc)
+        return None
+    try:
+        WebDriverWait(driver, PAGE_LOAD_TIMEOUT_S).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    time.sleep(settle_s)
+    try:
+        return driver.page_source
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _pick_contact_pages(html: str, base_url: str) -> list[str]:
+    """Find contact-shaped URLs on the homepage to visit."""
+    if not html:
+        return []
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for m in CONTACT_LINK_RE.finditer(html):
+        href = m.group(1)
+        if not href:
+            continue
+        try:
+            absolute = urljoin(base_url, href)
+        except Exception:  # noqa: BLE001
+            continue
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        # Same-host only (skip /contact links pointing at a third party)
+        try:
+            if urlparse(absolute).netloc != urlparse(base_url).netloc:
+                continue
+        except Exception:  # noqa: BLE001
+            continue
+        candidates.append(absolute)
+        if len(candidates) >= MAX_EXTRA_PAGES:
+            break
+    if candidates:
+        return candidates
+    # Nothing useful in the HTML — try the obvious paths blindly
+    out: list[str] = []
+    for path in CONTACT_PATH_FALLBACKS[:MAX_EXTRA_PAGES]:
+        try:
+            out.append(urljoin(base_url, path))
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
+def fetch_with_browser(
+    profile_id: str,
+    url: str,
+    want_screenshot: bool,
+    multi_page: bool = False,
+) -> tuple[str | None, bytes | None, str | None]:
+    """Open URL in the GoLogin profile, return (html, screenshot_bytes, error).
+
+    If multi_page=True, also navigates to up to MAX_EXTRA_PAGES contact-shaped
+    links on the homepage and concatenates their HTML into one blob (with
+    page-break markers) so the score-row endpoint can extract from all of them.
+    """
     gl = GoLogin({"token": GOLOGIN_TOKEN, "profile_id": profile_id, "port": GOLOGIN_PORT})
     driver = None
     try:
@@ -177,26 +255,29 @@ def fetch_with_browser(profile_id: str, url: str, want_screenshot: bool
         time.sleep(2)
         driver = connect_chrome(debugger)
         driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_S)
-        try:
-            driver.get(url)
-        except Exception as exc:  # noqa: BLE001
-            return None, None, f"navigation: {exc}"
-        # Let JS-rendered content settle
-        try:
-            WebDriverWait(driver, PAGE_LOAD_TIMEOUT_S).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-        except Exception:  # noqa: BLE001
-            pass
-        time.sleep(PAGE_SETTLE_S)
-        html = driver.page_source
+
+        homepage = _navigate(driver, url)
+        if homepage is None:
+            return None, None, "navigation failed on homepage"
+
         screenshot_bytes: bytes | None = None
         if want_screenshot:
             try:
                 screenshot_bytes = driver.get_screenshot_as_png()
             except Exception as exc:  # noqa: BLE001
                 log.warning("screenshot capture failed: %s", exc)
-        return html, screenshot_bytes, None
+
+        if not multi_page:
+            return homepage, screenshot_bytes, None
+
+        chunks = [f"<!-- PAGE: {url} -->", homepage]
+        for extra in _pick_contact_pages(homepage, url):
+            extra_html = _navigate(driver, extra, settle_s=2)
+            if extra_html:
+                chunks.append(f"<!-- PAGE: {extra} -->")
+                chunks.append(extra_html)
+
+        return "\n".join(chunks), screenshot_bytes, None
     except Exception as exc:  # noqa: BLE001
         return None, None, str(exc)
     finally:
@@ -242,8 +323,11 @@ def process_job(job: dict[str, Any]) -> None:
         )
         return
 
+    # Multi-page navigation only useful for the contact stage right now.
+    multi_page = "contact" in process_stages
+
     html, png, err = fetch_with_browser(
-        profile["gologin_profile_id"], url, want_screenshot,
+        profile["gologin_profile_id"], url, want_screenshot, multi_page,
     )
 
     screenshot_path: str | None = None

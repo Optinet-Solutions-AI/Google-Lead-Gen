@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { scoreAffiliate, shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { findRoosterBrandLinks } from '@/lib/affiliate-detection/rooster'
+import { extractContacts } from '@/lib/contact-extraction/extract'
+import { findContactsWithOpenAI } from '@/lib/contact-extraction/llm-fallback'
+import { findContactsWithHunter } from '@/lib/contact-extraction/hunter'
+import { validatePhones } from '@/lib/contact-extraction/phone-validate'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,7 +39,7 @@ export async function POST(req: Request): Promise<Response> {
   const svc = createServiceClient()
   const { data: lead, error: leadErr } = await svc
     .from('google_lead_gen_table')
-    .select('id, url, domain, country_code, result_type')
+    .select('id, url, domain, country_code, result_type, is_contact_overridden_at')
     .eq('id', leadId)
     .maybeSingle()
   if (leadErr) return NextResponse.json({ error: leadErr.message }, { status: 500 })
@@ -53,12 +57,17 @@ export async function POST(req: Request): Promise<Response> {
   const html = cache?.html ?? ''
   const url = (lead as { url: string | null }).url ?? ''
   const domain = (lead as { domain: string | null }).domain ?? null
+  const countryCode = (lead as { country_code: string | null }).country_code ?? null
+  const contactOverridden =
+    (lead as { is_contact_overridden_at: string | null }).is_contact_overridden_at !== null
 
   switch (stage) {
     case 'affiliate':
       return await scoreAffiliateStage()
     case 'rooster':
       return await scoreRoosterStage()
+    case 'contact':
+      return await scoreContactStage()
     default:
       return NextResponse.json(
         { ok: false, error: `Stage '${stage}' not yet wired through the enrichment queue.` },
@@ -163,5 +172,141 @@ export async function POST(req: Request): Promise<Response> {
       .eq('id', leadId)
 
     return NextResponse.json({ ok: true, partner: isPartner, match_count: matches.length })
+  }
+
+  /**
+   * Contact-extraction cascade (matches user-spec):
+   *   1. Regex on the cached multi-page HTML (homepage + /contact etc.)
+   *   2. If empty, escalate to GPT-4o + web_search
+   *   3. If still empty, fall back to Hunter.io domain-search
+   *   4. Validate any phone numbers via libphonenumber-js
+   *   5. Persist via upsert_contact_for_lead RPC (preserves manual rows)
+   */
+  async function scoreContactStage(): Promise<Response> {
+    if (contactOverridden) {
+      return NextResponse.json({ ok: true, status: 'manually_overridden' })
+    }
+
+    if (fetchError) {
+      // Even on fetch failure we still try the LLM + Hunter — they can find
+      // contacts from public sources independent of the lead's site.
+      const tier = await runLlmThenHunter()
+      await persistContact(tier)
+      return NextResponse.json({ ok: true, ...tier.summary })
+    }
+
+    if (shouldSkipDomain(domain)) {
+      await svc
+        .from('google_lead_gen_table')
+        .update({ has_contact_details: false, contact_checked_at: now })
+        .eq('id', leadId)
+      return NextResponse.json({ ok: true, status: 'skipped' })
+    }
+
+    // Tier 1 — regex on the multi-page HTML
+    const regex = extractContacts(html, url)
+    let emails = regex.emails
+    let phones = regex.phones
+    let contactPageUrl = regex.contactPageUrl
+    let source: 'regex' | 'multi_page' | 'openai' | 'hunter' = 'regex'
+    let raw: Record<string, unknown> = { regex: regex.raw }
+    // The HTML blob from the worker has page-break markers when multi_page
+    // was on. Detect that and tag the source accordingly so the audit trail
+    // shows whether we read more than just the homepage.
+    if (html.includes('<!-- PAGE: ')) source = 'multi_page'
+
+    const tier1Productive = emails.length > 0 || phones.length > 0 || contactPageUrl !== null
+
+    if (!tier1Productive) {
+      // Tier 2 — OpenAI + web_search
+      const llm = await findContactsWithOpenAI(domain ?? '', url)
+      if (llm) {
+        emails = llm.emails
+        phones = llm.phones
+        contactPageUrl = llm.contactPageUrl ?? contactPageUrl
+        source = 'openai'
+        raw = { ...raw, openai: { reasoning: llm.reasoning } }
+      }
+
+      // Tier 3 — Hunter.io (only if LLM still produced no emails)
+      if (emails.length === 0) {
+        const hunter = await findContactsWithHunter(domain ?? '')
+        if (hunter && hunter.emails.length > 0) {
+          emails = hunter.emails
+          source = 'hunter'
+          raw = { ...raw, hunter: hunter.raw }
+        }
+      }
+    }
+
+    // Tier 4 — phone validation (drops false positives, normalises format)
+    phones = validatePhones(phones, countryCode)
+
+    await svc.rpc('upsert_contact_for_lead', {
+      p_lead_id: leadId,
+      p_emails: emails,
+      p_phones: phones,
+      p_contact_page_url: contactPageUrl,
+      p_source: source,
+      p_raw: raw,
+    })
+
+    return NextResponse.json({
+      ok: true,
+      source,
+      emails: emails.length,
+      phones: phones.length,
+      contact_page: contactPageUrl !== null,
+    })
+
+    async function runLlmThenHunter() {
+      let emails: string[] = []
+      let phones: string[] = []
+      let contactPageUrl: string | null = null
+      let source: 'openai' | 'hunter' | 'regex' = 'regex'
+      const raw: Record<string, unknown> = { fetch_error: fetchError }
+
+      const llm = await findContactsWithOpenAI(domain ?? '', url)
+      if (llm) {
+        emails = llm.emails
+        phones = llm.phones
+        contactPageUrl = llm.contactPageUrl
+        source = 'openai'
+        raw.openai = { reasoning: llm.reasoning }
+      }
+      if (emails.length === 0) {
+        const hunter = await findContactsWithHunter(domain ?? '')
+        if (hunter && hunter.emails.length > 0) {
+          emails = hunter.emails
+          source = 'hunter'
+          raw.hunter = hunter.raw
+        }
+      }
+      return {
+        summary: { source, emails: emails.length, phones: phones.length },
+        emails,
+        phones: validatePhones(phones, countryCode),
+        contactPageUrl,
+        source,
+        raw,
+      }
+    }
+
+    async function persistContact(tier: {
+      emails: string[]
+      phones: string[]
+      contactPageUrl: string | null
+      source: 'openai' | 'hunter' | 'regex' | 'multi_page'
+      raw: Record<string, unknown>
+    }) {
+      await svc.rpc('upsert_contact_for_lead', {
+        p_lead_id: leadId,
+        p_emails: tier.emails,
+        p_phones: tier.phones,
+        p_contact_page_url: tier.contactPageUrl,
+        p_source: tier.source,
+        p_raw: tier.raw,
+      })
+    }
   }
 }

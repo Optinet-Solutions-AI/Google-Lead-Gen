@@ -5,7 +5,6 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { fetchHtml, runWithConcurrency } from '@/lib/affiliate-detection/fetch'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
-import { extractContacts } from '@/lib/contact-extraction/extract'
 import { extractStagsFromHtml } from '@/lib/stag-extraction/extract'
 
 const STAGE_FETCH_CONCURRENCY = 5
@@ -156,21 +155,6 @@ type LeadForFetch = {
   url: string | null
   domain: string | null
   is_affiliate: boolean | null
-}
-
-async function fetchLeadsForStage(
-  jobId: string,
-  selectCols: string,
-  overrideColumn: string,
-): Promise<LeadForFetch[]> {
-  const svc = createServiceClient()
-  const { data, error } = await svc
-    .from('google_lead_gen_table')
-    .select(selectCols)
-    .eq('scrape_job_id', jobId)
-    .is(overrideColumn, null)
-  if (error) throw new Error(error.message)
-  return (data ?? []) as unknown as LeadForFetch[]
 }
 
 export async function runAffiliateDetection(
@@ -340,6 +324,12 @@ export async function runRoosterCheck(
 
 // ============================================================
 // Epic 7.4 — Contact Extraction
+//
+// Enqueues into enrichment_fetch_queue with multi_page navigation
+// turned on. The VM worker visits the homepage AND any contact-shaped
+// pages (/contact, /about, /impressum) in one browser session, then
+// the score-row endpoint runs the cascade:
+//   regex → GPT-4o + web_search → Hunter.io
 // ============================================================
 export async function runContactExtraction(
   _prev: StageRunState,
@@ -351,45 +341,62 @@ export async function runContactExtraction(
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
 
   const svc = createServiceClient()
-  const leads = await fetchLeadsForStage(
-    jobId,
-    'id, url, domain, is_affiliate',
-    'is_contact_overridden_at',
-  )
+  const { data: leads, error: leadsErr } = await svc
+    .from('google_lead_gen_table')
+    .select('id, url, domain, country_code')
+    .eq('scrape_job_id', jobId)
+    .is('is_contact_overridden_at', null)
+  if (leadsErr) return { status: 'error', error: leadsErr.message }
 
-  let contactCount = 0
-  let errorCount = 0
-
-  await runWithConcurrency(leads, STAGE_FETCH_CONCURRENCY, async lead => {
+  let skippedCount = 0
+  const enqueueable: Array<{
+    lead_id: number
+    country_code: string
+    url: string
+    want_html: boolean
+    want_screenshot: boolean
+    process_stages: string[]
+  }> = []
+  for (const lead of (leads ?? []) as Array<{
+    id: number
+    url: string | null
+    domain: string | null
+    country_code: string | null
+  }>) {
     const url = lead.url ?? ''
-    if (!url || !url.startsWith('http')) return
-
-    const fetched = await fetchHtml(url)
-    if (!fetched.ok) {
-      errorCount++
-      return
+    if (!url || !url.startsWith('http')) continue
+    if (!lead.country_code) continue
+    if (shouldSkipDomain(lead.domain)) {
+      skippedCount++
+      continue
     }
-    const result = extractContacts(fetched.html, fetched.finalUrl)
-    const found =
-      result.emails.length > 0 ||
-      result.phones.length > 0 ||
-      (result.contactPageUrl ?? '') !== ''
-    if (found) contactCount++
-
-    await svc.rpc('upsert_contact_for_lead', {
-      p_lead_id: lead.id,
-      p_emails: result.emails,
-      p_phones: result.phones,
-      p_contact_page_url: result.contactPageUrl,
-      p_source: 'regex',
-      p_raw: result.raw,
+    enqueueable.push({
+      lead_id: lead.id,
+      country_code: lead.country_code,
+      url,
+      want_html: true,
+      want_screenshot: false,
+      process_stages: ['contact'],
     })
-  })
+  }
+
+  if (enqueueable.length === 0) {
+    revalidatePath(`/scrape/${jobId}`)
+    return {
+      status: 'ok',
+      message: skippedCount > 0
+        ? `${skippedCount} skipped — nothing else to enqueue.`
+        : 'No leads to process.',
+    }
+  }
+
+  const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
+  if (qErr) return { status: 'error', error: qErr.message }
 
   revalidatePath(`/scrape/${jobId}`)
   return {
     status: 'ok',
-    message: `Checked ${leads.length} row${leads.length === 1 ? '' : 's'} — ${contactCount} with contact details, ${errorCount} fetch failed.`,
+    message: `Enqueued ${enqueueable.length} contact-extraction job${enqueueable.length === 1 ? '' : 's'}${skippedCount > 0 ? ` (${skippedCount} skipped)` : ''}. VM workers will visit homepage + contact pages, then escalate to GPT-4o / Hunter.io if regex finds nothing.`,
   }
 }
 
