@@ -5,7 +5,6 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { fetchHtml, runWithConcurrency } from '@/lib/affiliate-detection/fetch'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
-import { findRoosterBrandLinks } from '@/lib/affiliate-detection/rooster'
 import { extractContacts } from '@/lib/contact-extraction/extract'
 import { extractStagsFromHtml } from '@/lib/stag-extraction/extract'
 
@@ -262,6 +261,12 @@ export async function runAffiliateDetection(
 
 // ============================================================
 // Epic 7.3 — Rooster Partner Brand Check
+//
+// Routed through the VM enrichment queue (same as affiliate). The
+// VM worker fetches HTML through GoLogin (real browser, real
+// proxy), writes to fetched_html_cache, then calls the score-row
+// API with stage='rooster' which reads the cache + the active
+// rooster_brands list and writes results back to the lead.
 // ============================================================
 export async function runRoosterCheck(
   _prev: StageRunState,
@@ -273,50 +278,63 @@ export async function runRoosterCheck(
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
 
   const svc = createServiceClient()
-  const { data: brandRows, error: brandErr } = await svc.rpc('list_rooster_brand_domains')
-  if (brandErr) return { status: 'error', error: `Loading brand list failed: ${brandErr.message}` }
-  const brandList = (brandRows ?? []) as Array<{
-    domain: string
-    brand_name: string | null
-    monday_item_id: string | null
-  }>
+  const { data: leads, error: leadsErr } = await svc
+    .from('google_lead_gen_table')
+    .select('id, url, domain, country_code, result_type')
+    .eq('scrape_job_id', jobId)
+    .is('is_rooster_overridden_at', null)
+  if (leadsErr) return { status: 'error', error: leadsErr.message }
 
-  const leads = await fetchLeadsForStage(
-    jobId,
-    'id, url, domain, is_affiliate',
-    'is_rooster_overridden_at',
-  )
-
-  let matchCount = 0
-  let errorCount = 0
-
-  await runWithConcurrency(leads, STAGE_FETCH_CONCURRENCY, async lead => {
+  let skippedCount = 0
+  const enqueueable: Array<{
+    lead_id: number
+    country_code: string
+    url: string
+    want_html: boolean
+    want_screenshot: boolean
+    process_stages: string[]
+  }> = []
+  for (const lead of (leads ?? []) as Array<{
+    id: number
+    url: string | null
+    domain: string | null
+    country_code: string | null
+    result_type: string | null
+  }>) {
     const url = lead.url ?? ''
-    if (!url || !url.startsWith('http') || shouldSkipDomain(lead.domain)) return
-
-    const fetched = await fetchHtml(url)
-    if (!fetched.ok) {
-      errorCount++
-      return
+    if (!url || !url.startsWith('http')) continue
+    if (!lead.country_code) continue
+    if (shouldSkipDomain(lead.domain)) {
+      skippedCount++
+      continue
     }
-    const matches = findRoosterBrandLinks(fetched.html, brandList)
-    const isPartner = matches.length > 0
-    if (isPartner) matchCount++
-    await svc
-      .from('google_lead_gen_table')
-      .update({
-        is_rooster_partner: isPartner,
-        brand: matches[0]?.brand_name ?? null,
-        rooster_brands: matches.length > 0 ? matches : null,
-        rooster_checked_at: new Date().toISOString(),
-      })
-      .eq('id', lead.id)
-  })
+    enqueueable.push({
+      lead_id: lead.id,
+      country_code: lead.country_code,
+      url,
+      want_html: true,
+      want_screenshot: false,
+      process_stages: ['rooster'],
+    })
+  }
+
+  if (enqueueable.length === 0) {
+    revalidatePath(`/scrape/${jobId}`)
+    return {
+      status: 'ok',
+      message: skippedCount > 0
+        ? `${skippedCount} skipped — nothing else to enqueue.`
+        : 'No leads to process.',
+    }
+  }
+
+  const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
+  if (qErr) return { status: 'error', error: qErr.message }
 
   revalidatePath(`/scrape/${jobId}`)
   return {
     status: 'ok',
-    message: `Checked ${leads.length} row${leads.length === 1 ? '' : 's'} — ${matchCount} promote a Rooster brand, ${errorCount} fetch failed.`,
+    message: `Enqueued ${enqueueable.length} fetch job${enqueueable.length === 1 ? '' : 's'}${skippedCount > 0 ? ` (${skippedCount} skipped)` : ''}. VM workers will check brand mentions within ~30 s.`,
   }
 }
 

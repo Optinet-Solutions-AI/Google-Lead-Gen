@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { scoreAffiliate, shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
+import { findRoosterBrandLinks } from '@/lib/affiliate-detection/rooster'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,6 +57,8 @@ export async function POST(req: Request): Promise<Response> {
   switch (stage) {
     case 'affiliate':
       return await scoreAffiliateStage()
+    case 'rooster':
+      return await scoreRoosterStage()
     default:
       return NextResponse.json(
         { ok: false, error: `Stage '${stage}' not yet wired through the enrichment queue.` },
@@ -110,5 +113,55 @@ export async function POST(req: Request): Promise<Response> {
       classification: result.classification,
       confidence: result.confidence,
     })
+  }
+
+  async function scoreRoosterStage(): Promise<Response> {
+    if (fetchError) {
+      await svc
+        .from('google_lead_gen_table')
+        .update({
+          is_rooster_partner: null,
+          rooster_brands: null,
+          rooster_checked_at: now,
+        })
+        .eq('id', leadId)
+      return NextResponse.json({ ok: true, status: 'fetch_error_recorded' })
+    }
+    if (shouldSkipDomain(domain)) {
+      await svc
+        .from('google_lead_gen_table')
+        .update({
+          is_rooster_partner: false,
+          brand: null,
+          rooster_brands: null,
+          rooster_checked_at: now,
+        })
+        .eq('id', leadId)
+      return NextResponse.json({ ok: true, status: 'skipped' })
+    }
+
+    // Pull the active brand list fresh on every call so brand additions
+    // / removals from /brands take effect immediately.
+    const { data: brandRows, error: brandErr } = await svc.rpc('list_rooster_brand_domains')
+    if (brandErr) return NextResponse.json({ error: brandErr.message }, { status: 500 })
+    const brandList = (brandRows ?? []) as Array<{
+      domain: string
+      brand_name: string | null
+      monday_item_id: string | null
+    }>
+
+    const matches = findRoosterBrandLinks(html, brandList)
+    const isPartner = matches.length > 0
+    await svc
+      .from('google_lead_gen_table')
+      .update({
+        is_rooster_partner: isPartner,
+        brand: matches[0]?.brand_name ?? null,
+        rooster_brands: matches.length > 0 ? matches : null,
+        rooster_checked_at: now,
+      })
+      .eq('id', leadId)
+
+    return NextResponse.json({ ok: true, partner: isPartner, match_count: matches.length })
   }
 }

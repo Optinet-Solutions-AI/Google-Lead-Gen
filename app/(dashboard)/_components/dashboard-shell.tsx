@@ -14,6 +14,7 @@ import {
   LogOut,
   Menu,
   Search,
+  Star,
   X,
 } from 'lucide-react'
 import { signOutAction } from '../_actions/auth'
@@ -54,6 +55,12 @@ const NAV_ITEMS = [
     href: '/profiles',
     icon: Globe,
     match: (p: string) => p.startsWith('/profiles'),
+  },
+  {
+    label: 'Rooster Brands',
+    href: '/brands',
+    icon: Star,
+    match: (p: string) => p.startsWith('/brands'),
   },
   {
     label: 'Change Password',
