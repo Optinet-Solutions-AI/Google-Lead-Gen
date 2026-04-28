@@ -3,11 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { fetchHtml, runWithConcurrency } from '@/lib/affiliate-detection/fetch'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
-import { extractStagsFromHtml } from '@/lib/stag-extraction/extract'
-
-const STAGE_FETCH_CONCURRENCY = 5
 
 export type EnqueueState =
   | { status: 'ok'; message: string }
@@ -150,12 +146,6 @@ function jobIdFrom(fd: FormData): string {
   return String(fd.get('job_id') ?? '').trim()
 }
 
-type LeadForFetch = {
-  id: number
-  url: string | null
-  domain: string | null
-  is_affiliate: boolean | null
-}
 
 export async function runAffiliateDetection(
   _prev: StageRunState,
@@ -402,6 +392,15 @@ export async function runContactExtraction(
 
 // ============================================================
 // Epic 7.5 — S-Tag Extraction (only on affiliate rows)
+//
+// Enqueues into enrichment_fetch_queue with process_stages: ['stag'].
+// The VM worker takes over from there, owning the Chromium for the
+// full lifecycle: load homepage + casino-listing pages, three-path
+// link extraction, browser-side redirect resolution per tracking
+// link (so geo-routed redirects use the correct country profile),
+// screenshot of each landing page, then ships the resolved tags to
+// /api/enrichment/score-row which calls replace_and_verify_s_tags
+// (auto-runs the dup-check + Rooster cross-reference inline).
 // ============================================================
 export async function runStagExtraction(
   _prev: StageRunState,
@@ -413,46 +412,64 @@ export async function runStagExtraction(
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
 
   const svc = createServiceClient()
-  const { data, error } = await svc
+  const { data: leads, error: leadsErr } = await svc
     .from('google_lead_gen_table')
-    .select('id, url, domain, is_affiliate')
+    .select('id, url, domain, country_code, is_affiliate')
     .eq('scrape_job_id', jobId)
     .eq('is_affiliate', true)
     .is('is_stag_overridden_at', null)
-  if (error) return { status: 'error', error: error.message }
-  const leads = (data ?? []) as LeadForFetch[]
+  if (leadsErr) return { status: 'error', error: leadsErr.message }
 
-  let totalTags = 0
-  let leadsWithTags = 0
-  let errorCount = 0
-
-  await runWithConcurrency(leads, STAGE_FETCH_CONCURRENCY, async lead => {
+  let skippedCount = 0
+  const enqueueable: Array<{
+    lead_id: number
+    country_code: string
+    url: string
+    want_html: boolean
+    want_screenshot: boolean
+    process_stages: string[]
+  }> = []
+  for (const lead of (leads ?? []) as Array<{
+    id: number
+    url: string | null
+    domain: string | null
+    country_code: string | null
+  }>) {
     const url = lead.url ?? ''
-    if (!url || !url.startsWith('http')) return
-
-    const fetched = await fetchHtml(url)
-    if (!fetched.ok) {
-      errorCount++
-      return
+    if (!url || !url.startsWith('http')) continue
+    if (!lead.country_code) continue
+    if (shouldSkipDomain(lead.domain)) {
+      skippedCount++
+      continue
     }
-    const tags = await extractStagsFromHtml(fetched.html, fetched.finalUrl)
-    if (tags.length > 0) {
-      leadsWithTags++
-      totalTags += tags.length
-    }
-    await svc.rpc('replace_s_tags_for_lead', {
-      p_lead_id: lead.id,
-      p_tags: tags,
+    enqueueable.push({
+      lead_id: lead.id,
+      country_code: lead.country_code,
+      url,
+      want_html: true,
+      want_screenshot: false,
+      process_stages: ['stag'],
     })
-  })
+  }
+
+  if (enqueueable.length === 0) {
+    revalidatePath(`/scrape/${jobId}`)
+    return {
+      status: 'ok',
+      message:
+        skippedCount > 0
+          ? `${skippedCount} skipped — nothing else to enqueue.`
+          : 'No affiliate rows to process — run affiliate detection first.',
+    }
+  }
+
+  const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
+  if (qErr) return { status: 'error', error: qErr.message }
 
   revalidatePath(`/scrape/${jobId}`)
   return {
     status: 'ok',
-    message:
-      leads.length === 0
-        ? 'No affiliate rows yet — run affiliate detection first.'
-        : `Processed ${leads.length} affiliate row${leads.length === 1 ? '' : 's'} — found ${totalTags} s-tag${totalTags === 1 ? '' : 's'} across ${leadsWithTags} lead${leadsWithTags === 1 ? '' : 's'}, ${errorCount} fetch failed.`,
+    message: `Enqueued ${enqueueable.length} s-tag job${enqueueable.length === 1 ? '' : 's'}${skippedCount > 0 ? ` (${skippedCount} skipped)` : ''}. VM workers will crawl listing pages, follow tracking redirects in the country profile, and verify each tag against Monday.`,
   }
 }
 

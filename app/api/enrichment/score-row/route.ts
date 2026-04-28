@@ -25,14 +25,28 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  let body: { lead_id?: number; stage?: string }
+  type StagExtra = {
+    s_tag?: string
+    source_param?: string | null
+    brand?: string | null
+    tracking_url?: string | null
+    final_url?: string | null
+    redirect_chain?: unknown
+    screenshot_path?: string | null
+  }
+  let body: {
+    lead_id?: number
+    stage?: string
+    extras?: { tags?: StagExtra[] }
+  }
   try {
-    body = (await req.json()) as { lead_id?: number; stage?: string }
+    body = await req.json()
   } catch {
     return NextResponse.json({ error: 'invalid JSON' }, { status: 400 })
   }
   const leadId = Number(body.lead_id)
   const stage = String(body.stage ?? '').trim()
+  const extras = body.extras ?? null
   if (!Number.isFinite(leadId)) return NextResponse.json({ error: 'lead_id missing' }, { status: 400 })
   if (!stage) return NextResponse.json({ error: 'stage missing' }, { status: 400 })
 
@@ -68,6 +82,8 @@ export async function POST(req: Request): Promise<Response> {
       return await scoreRoosterStage()
     case 'contact':
       return await scoreContactStage()
+    case 'stag':
+      return await scoreStagStage()
     default:
       return NextResponse.json(
         { ok: false, error: `Stage '${stage}' not yet wired through the enrichment queue.` },
@@ -308,5 +324,44 @@ export async function POST(req: Request): Promise<Response> {
         p_raw: tier.raw,
       })
     }
+  }
+
+  /**
+   * S-tag stage: the worker did the full extract + redirect-resolve in
+   * the country profile's Chromium and shipped us the resolved tags
+   * via the extras payload. We just normalise + persist via the
+   * combined replace_and_verify RPC (which also runs the on-Monday
+   * dup-check + Rooster-brand cross-reference inline).
+   */
+  async function scoreStagStage(): Promise<Response> {
+    const tagsRaw = extras?.tags ?? []
+    const tags = tagsRaw
+      .filter(t => typeof t?.s_tag === 'string' && t.s_tag.length > 0)
+      .map(t => ({
+        s_tag: t.s_tag,
+        source_param: t.source_param ?? null,
+        brand: t.brand ?? null,
+        tracking_url: t.tracking_url ?? null,
+        final_url: t.final_url ?? null,
+        redirect_chain: t.redirect_chain ?? null,
+        screenshot_path: t.screenshot_path ?? null,
+      }))
+
+    const { data, error } = await svc.rpc('replace_and_verify_s_tags_for_lead', {
+      p_lead_id: leadId,
+      p_tags: tags,
+    })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    const row = (Array.isArray(data) ? data[0] : data) as
+      | { inserted: number; matched: number; rooster: number }
+      | null
+
+    return NextResponse.json({
+      ok: true,
+      inserted: row?.inserted ?? 0,
+      matched_on_monday: row?.matched ?? 0,
+      rooster_brand_tags: row?.rooster ?? 0,
+    })
   }
 }

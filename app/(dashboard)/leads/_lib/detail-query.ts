@@ -18,6 +18,11 @@ export type StagDetail = {
   is_existing_on_monday: boolean | null
   monday_match_kind: string | null
   monday_match_item_id: string | null
+  redirect_chain: string[] | null
+  screenshot_path: string | null
+  /** Pre-signed URL for the per-tag landing-page screenshot. */
+  screenshot_url?: string | null
+  is_rooster_brand: boolean | null
 }
 
 export type LeadDetail = {
@@ -85,7 +90,12 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
     svc
       .from('s_tags_table')
       .select(
-        's_tag, source_param, brand, tracking_url, final_url, is_existing_on_monday, monday_match_kind, monday_match_item_id',
+        [
+          's_tag, source_param, brand',
+          'tracking_url, final_url',
+          'is_existing_on_monday, monday_match_kind, monday_match_item_id',
+          'redirect_chain, screenshot_path, is_rooster_brand',
+        ].join(', '),
       )
       .eq('lead_id', leadId)
       .order('id', { ascending: true }),
@@ -105,10 +115,25 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
     screenshotUrl = signed?.signedUrl ?? null
   }
 
+  const stags = (stagsRes.data ?? []) as unknown as StagDetail[]
+  // Sign per-tag screenshot URLs in parallel
+  await Promise.all(
+    stags.map(async tag => {
+      if (!tag.screenshot_path) {
+        tag.screenshot_url = null
+        return
+      }
+      const { data: signed } = await svc.storage
+        .from('lead-screenshots')
+        .createSignedUrl(tag.screenshot_path, 60 * 60)
+      tag.screenshot_url = signed?.signedUrl ?? null
+    }),
+  )
+
   return {
     lead,
     contact: (contactRes.data ?? null) as ContactDetail | null,
-    stags: (stagsRes.data ?? []) as StagDetail[],
+    stags,
     screenshot_url: screenshotUrl,
   }
 }

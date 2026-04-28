@@ -280,19 +280,26 @@ function DetailBody({ detail }: { detail: Detail }) {
           <ul className="space-y-2">
             {detail.stags.map((t, i) => (
               <li key={i} className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] p-2 text-[11px]">
-                <div className="flex items-center gap-1.5 font-mono font-semibold text-[color:var(--color-text-primary)]">
+                <div className="flex flex-wrap items-center gap-1.5 font-mono font-semibold text-[color:var(--color-text-primary)]">
                   <Tag className="h-3 w-3" />
                   <span>{t.source_param ?? 'tag'}={t.s_tag}</span>
-                  {t.is_existing_on_monday === true && (
-                    <span className="ml-auto rounded-full bg-sky-100 px-2 py-0.5 text-[10px] text-sky-800">
-                      on Monday
-                    </span>
-                  )}
-                  {t.is_existing_on_monday === false && (
-                    <span className="ml-auto rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-800">
-                      new
-                    </span>
-                  )}
+                  <span className="ml-auto flex flex-wrap items-center gap-1">
+                    {t.is_rooster_brand && (
+                      <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-medium text-rose-800">
+                        Rooster brand
+                      </span>
+                    )}
+                    {t.is_existing_on_monday === true && (
+                      <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] text-sky-800">
+                        on Monday
+                      </span>
+                    )}
+                    {t.is_existing_on_monday === false && (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-800">
+                        new
+                      </span>
+                    )}
+                  </span>
                 </div>
                 {t.brand && (
                   <p className="mt-0.5 text-[color:var(--color-text-secondary)]">
@@ -316,6 +323,29 @@ function DetailBody({ detail }: { detail: Detail }) {
                   <p className="mt-0.5 truncate text-[color:var(--color-text-secondary)]" title={t.tracking_url}>
                     Tracking: {t.tracking_url.length > 60 ? t.tracking_url.slice(0, 60) + '…' : t.tracking_url}
                   </p>
+                )}
+                {Array.isArray(t.redirect_chain) && t.redirect_chain.length > 1 && (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]">
+                      Redirect chain ({t.redirect_chain.length} hops)
+                    </summary>
+                    <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-[10px] text-[color:var(--color-text-secondary)]">
+                      {t.redirect_chain.map((step, j) => (
+                        <li key={j} className="break-all">{step}</li>
+                      ))}
+                    </ol>
+                  </details>
+                )}
+                {t.screenshot_url && (
+                  <a
+                    href={t.screenshot_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    View landing-page screenshot
+                  </a>
                 )}
               </li>
             ))}
