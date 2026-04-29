@@ -77,7 +77,7 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
   return (
     <>
       {/* Toolbar — select-mode toggle. Hidden by default; flipping it on
-       *  reveals a checkbox column + the floating bulk-action bar. */}
+       *  reveals a checkbox column + the bulk-action bar above the table. */}
       <div className="flex items-center justify-end">
         <button
           type="button"
@@ -97,6 +97,14 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
           {selectMode ? 'Selecting' : 'Select rows'}
         </button>
       </div>
+
+      {/* Bulk-action bar — sits above the table when 1+ rows are selected. */}
+      {selectMode && selectedIds.size > 0 && (
+        <BulkActionsBar
+          selectedIds={Array.from(selectedIds)}
+          onClear={() => setSelectedIds(new Set())}
+        />
+      )}
 
       {/* Desktop — table */}
       <div className="hidden overflow-x-auto rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
@@ -391,13 +399,6 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
           </div>
         ))}
       </div>
-
-      {selectMode && selectedIds.size > 0 && (
-        <BulkActionsBar
-          selectedIds={Array.from(selectedIds)}
-          onClear={() => setSelectedIds(new Set())}
-        />
-      )}
 
       <LeadDetailDrawer leadId={openLeadId} onClose={() => setOpenLeadId(null)} />
     </>

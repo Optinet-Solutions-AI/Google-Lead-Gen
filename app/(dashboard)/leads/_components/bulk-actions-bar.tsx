@@ -36,7 +36,7 @@ export function BulkActionsBar({ selectedIds, onClear }: Props) {
   const expectedConfirm = `delete ${selectedIds.length}`
 
   return (
-    <div className="sticky bottom-3 z-30 mt-3 flex flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 shadow-lg">
+    <div className="sticky top-3 z-30 flex flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 shadow-md">
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-full bg-[color:var(--color-accent)]/20 px-2 py-0.5 text-[11px] font-semibold text-[color:var(--color-text-primary)]">
           {selectedIds.length} selected
