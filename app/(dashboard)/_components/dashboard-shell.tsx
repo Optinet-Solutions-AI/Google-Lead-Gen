@@ -10,6 +10,7 @@ import {
   Clock,
   Database,
   Globe,
+  HelpCircle,
   KeyRound,
   LayoutDashboard,
   ListChecks,
@@ -75,6 +76,12 @@ const NAV_ITEMS = [
     href: '/onboarding',
     icon: BookOpen,
     match: (p: string) => p.startsWith('/onboarding'),
+  },
+  {
+    label: 'Help & Docs',
+    href: '/help',
+    icon: HelpCircle,
+    match: (p: string) => p.startsWith('/help'),
   },
   {
     label: 'Change Password',
