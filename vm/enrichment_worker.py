@@ -521,9 +521,44 @@ def fetch_with_browser(
     links on the homepage and concatenates their HTML into one blob (with
     page-break markers) so the score-row endpoint can extract from all of them.
     """
+    return _open_and_fetch(profile_id, url, want_screenshot, multi_page)
+
+
+def _ensure_profile_idle(gl: "GoLogin") -> None:
+    """
+    Belt-and-braces cleanup before opening a profile.
+
+    Stops any active session for the profile — covers all of:
+      - this worker's previous run that didn't tear down cleanly
+      - an orphan from a crashed run on this VM
+      - a session opened from the user's GoLogin desktop app
+      - a session left running on another VM that points at the
+        same profile
+
+    `gl.stop()` is idempotent: if nothing is running it's a no-op.
+    The brief sleep gives GoLogin's cloud sync time to flush cookies
+    back to the profile bundle BEFORE we open a fresh session — this
+    is what prevents Google from signing out when the worker opens on
+    top of an in-flight session that hadn't synced its cookies yet.
+    """
+    try:
+        gl.stop()
+        log.debug("pre-start gl.stop() ok")
+    except Exception as exc:  # noqa: BLE001
+        log.debug("pre-start gl.stop() (expected if idle): %s", exc)
+    time.sleep(3)
+
+
+def _open_and_fetch(
+    profile_id: str,
+    url: str,
+    want_screenshot: bool,
+    multi_page: bool,
+) -> tuple[str | None, bytes | None, str | None]:
     gl = GoLogin({"token": GOLOGIN_TOKEN, "profile_id": profile_id, "port": GOLOGIN_PORT})
     driver = None
     try:
+        _ensure_profile_idle(gl)
         debugger = gl.start()
         time.sleep(2)
         driver = connect_chrome(debugger)
@@ -697,6 +732,7 @@ def run_rooster_deep_session(
     driver = None
     resolved: list[str] = []
     try:
+        _ensure_profile_idle(gl)
         debugger = gl.start()
         time.sleep(2)
         driver = connect_chrome(debugger)
@@ -752,6 +788,7 @@ def run_full_browser_session(
     gl = GoLogin({"token": GOLOGIN_TOKEN, "profile_id": profile_id, "port": GOLOGIN_PORT})
     driver = None
     try:
+        _ensure_profile_idle(gl)
         debugger = gl.start()
         time.sleep(2)
         driver = connect_chrome(debugger)
