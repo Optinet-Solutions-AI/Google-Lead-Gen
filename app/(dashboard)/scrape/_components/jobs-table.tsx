@@ -12,6 +12,58 @@ const STATUS_STYLES: Record<ScrapeJob['status'], string> = {
   captcha: 'bg-amber-100 text-amber-800',
 }
 
+/** Effective status that folds the enrichment-chain state into the badge.
+ *  Without this, scrape-completed jobs flip to green "completed" the instant
+ *  scraping ends — which is misleading when enrichment is still running. */
+function displayStatus(job: ScrapeJob): { label: string; style: string; title?: string } {
+  if (job.status !== 'completed') {
+    const attempts = job.attempts > 1 ? ` · ${job.attempts}` : ''
+    return { label: `${job.status}${attempts}`, style: STATUS_STYLES[job.status] }
+  }
+  if (!job.with_enrichment) {
+    return { label: 'completed', style: STATUS_STYLES.completed }
+  }
+  switch (job.enrichment_status) {
+    case 'complete':
+      return { label: 'completed', style: STATUS_STYLES.completed }
+    case 'affiliate_running':
+      return {
+        label: 'enriching · affiliate',
+        style: 'bg-sky-100 text-sky-800',
+        title: 'Scrape done; affiliate-detection stage running',
+      }
+    case 'all_running':
+      return {
+        label: 'enriching · all stages',
+        style: 'bg-sky-100 text-sky-800',
+        title: 'Scrape done; rooster, contact, and s-tag stages running',
+      }
+    case 'pending':
+    case null:
+    default:
+      return {
+        label: 'enrichment queued',
+        style: 'bg-amber-100 text-amber-800',
+        title: 'Scrape done; orchestrator will start enrichment within ~1 min',
+      }
+  }
+}
+
+function StatusBadge({ job }: { job: ScrapeJob }) {
+  const { label, style, title } = displayStatus(job)
+  return (
+    <span
+      title={title}
+      className={[
+        'inline-block rounded-full px-2 py-0.5 text-[10px] font-medium',
+        style,
+      ].join(' ')}
+    >
+      {label}
+    </span>
+  )
+}
+
 function PipelineBadges({
   status,
   enrichment,
@@ -87,15 +139,7 @@ export function JobsTable({ jobs }: Props) {
                 <LinkTd href={href}>{job.country_code}</LinkTd>
                 <LinkTd href={href}>{job.pages}</LinkTd>
                 <LinkTd href={href}>
-                  <span
-                    className={[
-                      'inline-block rounded-full px-2 py-0.5 text-[10px] font-medium',
-                      STATUS_STYLES[job.status],
-                    ].join(' ')}
-                  >
-                    {job.status}
-                    {job.attempts > 1 ? ` · ${job.attempts}` : ''}
-                  </span>
+                  <StatusBadge job={job} />
                 </LinkTd>
                 <LinkTd href={href} className="text-[color:var(--color-text-secondary)]">
                   {job.claimed_by ?? '—'}
@@ -141,14 +185,7 @@ export function JobsCardList({ jobs }: Props) {
             <p className="truncate text-[13px] font-medium text-[color:var(--color-text-primary)]">
               {job.keyword}
             </p>
-            <span
-              className={[
-                'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium',
-                STATUS_STYLES[job.status],
-              ].join(' ')}
-            >
-              {job.status}
-            </span>
+            <StatusBadge job={job} />
           </div>
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-text-secondary)]">
             <span>{job.country_code}</span>

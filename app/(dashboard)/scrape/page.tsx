@@ -11,7 +11,17 @@ export default async function ScrapePage() {
     listRecentJobs(30),
   ])
 
-  const hasActive = jobs.some(j => j.status === 'pending' || j.status === 'running')
+  // Auto-refresh stays on while either the scrape itself OR a follow-on
+  // enrichment chain is still in flight, so the badge can transition from
+  // "enriching" to "completed" without a manual reload.
+  const hasActive = jobs.some(
+    j =>
+      j.status === 'pending' ||
+      j.status === 'running' ||
+      (j.status === 'completed' &&
+        j.with_enrichment &&
+        j.enrichment_status !== 'complete'),
+  )
 
   return (
     <div className="flex min-w-0 flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
