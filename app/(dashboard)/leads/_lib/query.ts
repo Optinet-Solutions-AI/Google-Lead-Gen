@@ -99,7 +99,16 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
   if (opts.countryCode) query = query.eq('country_code', opts.countryCode)
   if (opts.resultType) query = query.eq('result_type', opts.resultType)
 
-  query = query.order(opts.sort, { ascending: opts.order === 'asc', nullsFirst: false })
+  // PPC always groups above Organic regardless of the user's column-click sort.
+  // PPC > Organic alphabetically, so DESC puts PPC first; nullsFirst:false
+  // keeps null result_type rows at the very bottom.
+  query = query.order('result_type', { ascending: false, nullsFirst: false })
+
+  // User's column-click sort acts as the secondary key within each group.
+  // Skip if they explicitly chose result_type (avoid double-sort).
+  if (opts.sort !== 'result_type') {
+    query = query.order(opts.sort, { ascending: opts.order === 'asc', nullsFirst: false })
+  }
 
   const from = Math.max(0, (opts.page - 1) * opts.size)
   query = query.range(from, from + opts.size - 1)
