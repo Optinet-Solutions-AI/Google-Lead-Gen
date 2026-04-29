@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import {
+  BookOpen,
   CalendarClock,
   ChevronLeft,
   Clock,
@@ -68,6 +69,12 @@ const NAV_ITEMS = [
     href: '/activity',
     icon: Clock,
     match: (p: string) => p.startsWith('/activity'),
+  },
+  {
+    label: 'Onboarding',
+    href: '/onboarding',
+    icon: BookOpen,
+    match: (p: string) => p.startsWith('/onboarding'),
   },
   {
     label: 'Change Password',
