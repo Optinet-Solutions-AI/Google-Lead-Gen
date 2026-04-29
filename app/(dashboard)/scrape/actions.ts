@@ -732,6 +732,65 @@ export async function resumeEnrichmentForJob(
   }
 }
 
+/** Queues a fresh scrape for the same keyword/country/pages, but with
+ *  result_type_filter set so only PPC (or Organic) rows are inserted.
+ *  Useful when one result type fails or comes back malformed and you
+ *  don't want to re-pay for a full re-scrape that includes the type
+ *  that already worked. */
+export async function rerunScrapeFiltered(
+  _prev: EnqueueState,
+  fd: FormData,
+): Promise<EnqueueState> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const filterRaw = String(fd.get('result_type_filter') ?? '').trim()
+  if (filterRaw !== 'PPC' && filterRaw !== 'Organic') {
+    return { status: 'error', error: 'Invalid filter (expected "PPC" or "Organic").' }
+  }
+
+  const svc = createServiceClient()
+  const { data: job, error: readErr } = await svc
+    .from('scrape_queue')
+    .select('keyword, country_code, pages, priority, with_enrichment')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (readErr) return { status: 'error', error: readErr.message }
+  if (!job) return { status: 'error', error: 'Original job not found.' }
+  const j = job as {
+    keyword: string
+    country_code: string
+    pages: number
+    priority: number
+    with_enrichment: boolean
+  }
+
+  const { error: insertError } = await svc.from('scrape_queue').insert({
+    keyword: j.keyword,
+    country_code: j.country_code,
+    pages: j.pages,
+    priority: j.priority,
+    with_enrichment: j.with_enrichment,
+    result_type_filter: filterRaw,
+  })
+  if (insertError) return { status: 'error', error: insertError.message }
+
+  await logActivity({
+    action: 'scrape.rerun_filtered',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { keyword: j.keyword, filter: filterRaw },
+  })
+
+  revalidatePath('/scrape')
+  return {
+    status: 'ok',
+    message: `Queued a ${filterRaw}-only re-run for "${j.keyword}". Workers will pick it up within ~5 s.`,
+  }
+}
+
 async function checkConfirmation(
   jobId: string,
   confirmationText: string,

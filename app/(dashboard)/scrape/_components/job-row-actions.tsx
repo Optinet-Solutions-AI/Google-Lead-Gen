@@ -8,6 +8,7 @@ import {
   MoreVertical,
   Pause,
   Play,
+  RotateCcw,
   Trash2,
   X,
 } from 'lucide-react'
@@ -17,8 +18,10 @@ import {
   forceCompleteEnrichment,
   pauseEnrichmentForJob,
   pauseScrapeJob,
+  rerunScrapeFiltered,
   resumeEnrichmentForJob,
   resumeScrapeJob,
+  type EnqueueState,
   type JobActionState,
 } from '../actions'
 import type { ScrapeJob } from '../_lib/queries'
@@ -94,6 +97,7 @@ function ActionsModal({ job, onClose }: { job: ScrapeJob; onClose: () => void })
         <div className="flex flex-col gap-3 p-4">
           <ScrapeLifecycleSection job={job} />
           {enrichmentInFlight && <EnrichmentLifecycleSection job={job} />}
+          <RerunSection job={job} />
           <DangerZone job={job} onDeleted={onClose} />
         </div>
       </div>
@@ -200,6 +204,64 @@ function EnrichmentLifecycleSection({ job }: { job: ScrapeJob }) {
         </form>
       </div>
       <FlashMessage state={pauseState ?? resumeState ?? forceState} />
+    </Section>
+  )
+}
+
+function RerunSection({ job }: { job: ScrapeJob }) {
+  const initialEnq: EnqueueState = null
+  const [state, action, pending] = useActionState(rerunScrapeFiltered, initialEnq)
+
+  // Re-running mid-flight would race with the worker, so only offer
+  // it once the original job is in a terminal state.
+  const allowed = ['completed', 'failed', 'captcha', 'cancelled'] as const
+  if (!(allowed as readonly string[]).includes(job.status)) return null
+
+  return (
+    <Section title="Re-run">
+      <p className="text-[11px] text-[color:var(--color-text-secondary)]">
+        Queue a fresh scrape for the same keyword/country/pages but only
+        keep one result type. Useful when the original PPC capture failed
+        — no need to re-pay for the organic side that already worked.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <form action={action}>
+          <input type="hidden" name="job_id" value={job.id} />
+          <input type="hidden" name="result_type_filter" value="PPC" />
+          <button
+            type="submit"
+            disabled={pending}
+            className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Queue a new scrape that only keeps PPC ads"
+          >
+            {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+            Re-run — PPC only
+          </button>
+        </form>
+        <form action={action}>
+          <input type="hidden" name="job_id" value={job.id} />
+          <input type="hidden" name="result_type_filter" value="Organic" />
+          <button
+            type="submit"
+            disabled={pending}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
+            title="Queue a new scrape that only keeps organic results"
+          >
+            {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+            Re-run — Organic only
+          </button>
+        </form>
+      </div>
+      {state && (
+        <p
+          className={[
+            'rounded-md px-2 py-1 text-[11px]',
+            state.status === 'ok' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
+          ].join(' ')}
+        >
+          {state.status === 'ok' ? state.message : state.error}
+        </p>
+      )}
     </Section>
   )
 }

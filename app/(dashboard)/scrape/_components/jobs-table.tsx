@@ -118,8 +118,6 @@ export function JobsTable({ jobs }: Props) {
             <Th>Country</Th>
             <Th>Pages</Th>
             <Th>Status</Th>
-            <Th>Worker</Th>
-            <Th>Queued / scheduled</Th>
             <Th>Started</Th>
             <Th>Duration</Th>
             <Th>Results</Th>
@@ -145,15 +143,11 @@ export function JobsTable({ jobs }: Props) {
                 <LinkTd href={href}>
                   <StatusBadge job={job} />
                 </LinkTd>
-                <LinkTd href={href} className="text-[color:var(--color-text-secondary)]">
-                  {job.claimed_by ?? '—'}
-                </LinkTd>
-                <LinkTd href={href} className="text-[color:var(--color-text-secondary)]">
-                  <QueuedAt createdAt={job.created_at} scheduledAt={job.scheduled_at} />
-                </LinkTd>
                 <LinkTd href={href}>{formatDateTime(job.started_at)}</LinkTd>
                 <LinkTd href={href}>{formatDuration(job.started_at, job.completed_at)}</LinkTd>
-                <LinkTd href={href}>{totalResults(job.result_summary) ?? '—'}</LinkTd>
+                <LinkTd href={href}>
+                  <ResultsCell summary={job.result_summary} />
+                </LinkTd>
                 <LinkTd href={href}>
                   <PipelineBadges status={job.status} enrichment={job.enrichment} />
                 </LinkTd>
@@ -200,11 +194,8 @@ export function JobsCardList({ jobs }: Props) {
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-text-secondary)]">
             <span>{job.country_code}</span>
             <span>{job.pages} {job.pages === 1 ? 'page' : 'pages'}</span>
-            {job.claimed_by && <span>worker {job.claimed_by}</span>}
             <span>{formatDuration(job.started_at, job.completed_at)}</span>
-            {totalResults(job.result_summary) !== null && (
-              <span>{totalResults(job.result_summary)} results</span>
-            )}
+            <ResultsCell summary={job.result_summary} mobile />
           </div>
           {job.status === 'completed' && (
             <div className="mt-1.5">
@@ -267,6 +258,49 @@ function totalResults(summary: Record<string, unknown> | null): number | null {
   return null
 }
 
+function asNumber(summary: Record<string, unknown> | null, key: string): number | null {
+  if (!summary) return null
+  const v = summary[key]
+  return typeof v === 'number' ? v : null
+}
+
+function ResultsCell({
+  summary,
+  mobile = false,
+}: {
+  summary: Record<string, unknown> | null
+  mobile?: boolean
+}) {
+  const total = totalResults(summary)
+  if (total === null) return <span>—</span>
+  const ppc = asNumber(summary, 'ppc')
+  const organic = asNumber(summary, 'organic')
+
+  if (mobile) {
+    return (
+      <span>
+        {total} results
+        {(ppc !== null || organic !== null) && (
+          <span className="text-[color:var(--color-text-secondary)]">
+            {' · '}
+            {ppc ?? 0} PPC · {organic ?? 0} Org
+          </span>
+        )}
+      </span>
+    )
+  }
+  return (
+    <span className="whitespace-nowrap">
+      {total}
+      {(ppc !== null || organic !== null) && (
+        <span className="ml-1 text-[10px] text-[color:var(--color-text-secondary)]">
+          ({ppc ?? 0} PPC · {organic ?? 0} Org)
+        </span>
+      )}
+    </span>
+  )
+}
+
 /** Full date + time, e.g. "Apr 29, 14:32" — preferred for table cells. */
 function formatDateTime(iso: string | null): string {
   if (!iso) return '—'
@@ -282,29 +316,6 @@ function formatDateTime(iso: string | null): string {
   } catch {
     return iso
   }
-}
-
-/** Show scheduled-at when in the future, otherwise the queue-creation time. */
-function QueuedAt({
-  createdAt,
-  scheduledAt,
-}: {
-  createdAt: string
-  scheduledAt: string | null
-}) {
-  // eslint-disable-next-line react-hooks/purity -- server-rendered cell, Date.now() is fine
-  const now = Date.now()
-  if (scheduledAt) {
-    const t = new Date(scheduledAt).getTime()
-    if (!Number.isNaN(t) && t > now) {
-      return (
-        <span title={`Scheduled for ${new Date(scheduledAt).toLocaleString()}`}>
-          ⏰ {formatDateTime(scheduledAt)}
-        </span>
-      )
-    }
-  }
-  return <span title={`Queued at ${new Date(createdAt).toLocaleString()}`}>{formatDateTime(createdAt)}</span>
 }
 
 function formatDuration(startedAt: string | null, completedAt: string | null): string {
