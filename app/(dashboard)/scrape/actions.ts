@@ -77,6 +77,9 @@ export async function enqueueScrape(
   const pages = clampInt(formData.get('pages'), 1, 10, 1)
   const priority = clampInt(formData.get('priority'), 0, 100, 0)
   const withEnrichment = formData.get('with_enrichment') === 'on'
+  const languageRaw = String(formData.get('language') ?? '').trim().toLowerCase()
+  // Allow only 2-letter ISO 639-1 codes; default to English.
+  const language = /^[a-z]{2}$/.test(languageRaw) ? languageRaw : 'en'
   const scheduledAtRaw = String(formData.get('scheduled_at') ?? '').trim()
   let scheduledAtIso: string | null = null
   if (scheduledAtRaw) {
@@ -112,7 +115,7 @@ export async function enqueueScrape(
   // Verify the country has a configured GoLogin profile
   const { data: profile, error: profileError } = await svc
     .from('gologin_profiles')
-    .select('country_code, is_active, gologin_profile_id')
+    .select('country_code, is_active, gologin_profile_id, languages')
     .eq('country_code', country_code)
     .maybeSingle()
   if (profileError) return { status: 'error', error: profileError.message }
@@ -121,6 +124,10 @@ export async function enqueueScrape(
   if (!profile.gologin_profile_id) {
     return { status: 'error', error: `Country ${country_code} has no GoLogin profile configured.` }
   }
+  // Reject a language that isn't valid for this country (UI filters but
+  // a hand-crafted POST could still slip through).
+  const allowedLangs = (profile as { languages: string[] | null }).languages ?? ['en']
+  const finalLang = allowedLangs.includes(language) || language === 'en' ? language : 'en'
 
   const rows = keywords.map(keyword => ({
     keyword,
@@ -129,6 +136,7 @@ export async function enqueueScrape(
     priority,
     with_enrichment: withEnrichment,
     scheduled_at: scheduledAtIso,
+    language: finalLang,
   }))
   const { error: insertError } = await svc.from('scrape_queue').insert(rows)
   if (insertError) return { status: 'error', error: insertError.message }
@@ -148,6 +156,7 @@ export async function enqueueScrape(
       priority,
       with_enrichment: withEnrichment,
       scheduled_at: scheduledAtIso,
+      language: finalLang,
     },
   })
 

@@ -135,6 +135,7 @@ def run_scrape(
     keyword: str,
     country_name: str,
     pages: int,
+    language: str = "en",
 ) -> tuple[int, str, Path, Path]:
     """
     Invoke the scraper as a subprocess.
@@ -161,6 +162,7 @@ def run_scrape(
         "--pages", str(pages),
         "--port", str(GOLOGIN_PORT),
         "--output", str(output_path),
+        "--language", language,
     ]
 
     env = {**os.environ, "DISPLAY": ":1"}
@@ -190,9 +192,12 @@ def process_job(job: dict[str, Any]) -> None:
     country_code = job["country_code"]
     keyword = job["keyword"]
     pages = int(job.get("pages") or 1)
+    # Accept missing `language` for backwards compatibility with old rows
+    # that pre-date the migration that added the column.
+    language = (job.get("language") or "en").strip().lower() or "en"
 
-    log.info("claimed job %s | country=%s keyword=%r pages=%d",
-             job_id, country_code, keyword, pages)
+    log.info("claimed job %s | country=%s keyword=%r pages=%d lang=%s",
+             job_id, country_code, keyword, pages, language)
 
     # Look up the GoLogin profile ID for this country
     profile = fetch_profile(country_code)
@@ -210,7 +215,7 @@ def process_job(job: dict[str, Any]) -> None:
 
     try:
         exit_code, combined_log, output_path, log_path = run_scrape(
-            profile_id, keyword, country_name, pages,
+            profile_id, keyword, country_name, pages, language=language,
         )
     except subprocess.TimeoutExpired:
         _kill_port()

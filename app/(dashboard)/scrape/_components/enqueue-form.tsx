@@ -9,11 +9,28 @@ type Profile = {
   country_name: string
   requires_google_login: boolean
   is_google_logged_in: boolean
+  languages: string[]
 }
 
 function loginBadge(p: Profile): string {
   if (!p.requires_google_login) return ''
   return p.is_google_logged_in ? ' ✓' : ' ⚠ needs login'
+}
+
+const LANG_NAMES: Record<string, string> = {
+  en: 'English',
+  ar: 'Arabic',
+  de: 'German',
+  it: 'Italian',
+  fr: 'French',
+  da: 'Danish',
+  no: 'Norwegian',
+}
+
+function langOptions(profile: Profile | null): string[] {
+  // Always include 'en' as a fallback even if a profile is missing it.
+  const base = profile?.languages?.length ? profile.languages : ['en']
+  return base.includes('en') ? base : [...base, 'en']
 }
 
 const initial: EnqueueState = null
@@ -33,11 +50,21 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
 
   const [keywordsText, setKeywordsText] = useState('')
   const [selectedCountry, setSelectedCountry] = useState('')
+  const [selectedLang, setSelectedLang] = useState('en')
   const count = useMemo(() => countKeywords(keywordsText), [keywordsText])
   const selectedProfile = useMemo(
     () => profiles.find(p => p.country_code === selectedCountry) ?? null,
     [profiles, selectedCountry],
   )
+  const availableLangs = useMemo(() => langOptions(selectedProfile), [selectedProfile])
+  // If the user picks a country that doesn't have the currently-selected
+  // language, fall back to the first available (preferring 'en').
+  useEffect(() => {
+    if (!availableLangs.includes(selectedLang)) {
+      setSelectedLang(availableLangs.includes('en') ? 'en' : availableLangs[0]!)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableLangs.join(',')])
   const loginWarning =
     selectedProfile?.requires_google_login && !selectedProfile.is_google_logged_in
 
@@ -47,7 +74,7 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
       // Clearing the controlled textarea state after a successful submit
       // is a legitimate pattern; the lint rule fires because it can't
       // tell this only runs on a state change, not on every render.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setKeywordsText('')
       // Refresh the jobs table to show the new rows immediately
       router.refresh()
@@ -60,7 +87,7 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
       action={formAction}
       className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-4"
     >
-      <div className="grid gap-3 md:grid-cols-[1fr_160px_100px_100px] md:items-start">
+      <div className="grid gap-3 md:grid-cols-[1fr_160px_140px_100px_100px] md:items-start">
         <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
           <span className="flex items-baseline justify-between">
             <span>Keywords</span>
@@ -94,6 +121,28 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
             {profiles.map(p => (
               <option key={p.country_code} value={p.country_code}>
                 {p.country_name} ({p.country_code}){loginBadge(p)}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
+          Search language
+          <select
+            name="language"
+            value={selectedLang}
+            onChange={e => setSelectedLang(e.target.value)}
+            disabled={!selectedCountry}
+            title={
+              selectedCountry
+                ? 'Sets the &hl= param on Google search to force local-language results'
+                : 'Pick a country first'
+            }
+            className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)] disabled:opacity-60"
+          >
+            {availableLangs.map(code => (
+              <option key={code} value={code}>
+                {LANG_NAMES[code] ?? code.toUpperCase()} ({code})
               </option>
             ))}
           </select>

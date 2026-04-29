@@ -6,6 +6,9 @@ export type GoLoginProfile = {
   country_name: string
   requires_google_login: boolean
   is_google_logged_in: boolean
+  /** ISO 639-1 codes valid for this country. The enqueue form filters
+   *  the language dropdown to this list (plus 'en' as a fallback). */
+  languages: string[]
 }
 
 export async function listActiveProfiles(): Promise<GoLoginProfile[]> {
@@ -13,13 +16,16 @@ export async function listActiveProfiles(): Promise<GoLoginProfile[]> {
   const { data, error } = await svc
     .from('gologin_profiles')
     .select(
-      'country_code, country_name, requires_google_login, is_google_logged_in',
+      'country_code, country_name, requires_google_login, is_google_logged_in, languages',
     )
     .eq('is_active', true)
     .not('gologin_profile_id', 'is', null)
     .order('country_name', { ascending: true })
   if (error) throw error
-  return (data ?? []) as GoLoginProfile[]
+  return ((data ?? []) as Array<GoLoginProfile & { languages: string[] | null }>).map(p => ({
+    ...p,
+    languages: p.languages ?? ['en'],
+  }))
 }
 
 /** Enrichment pipeline stages we currently know about. Add new keys here
