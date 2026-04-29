@@ -265,8 +265,21 @@ Phase 3  (all_running → complete)
               <Code>claim_enrichment_fetch_job</Code>, opens GoLogin (multi-page
               navigation for contact + s-tag), then POSTs to{' '}
               <Code>/api/enrichment/score-row</Code> with the stage name + HTML
-              (and any extras like resolved s-tags).
+              (and any extras like resolved s-tags or browser-resolved final
+              URLs).
             </p>
+            <Tip>
+              <strong>Rooster cheap → deep escalation.</strong> Stage 3 first
+              runs three cheap signals on cached HTML: outgoing{' '}
+              <Code>href</Code> domain match, <Code>&lt;img alt&gt;</Code>{' '}
+              brand-name match, and image-filename token match
+              (logo-spinjo.svg). If all three miss, score-row enqueues a{' '}
+              <Code>rooster_deep</Code> follow-up that opens the page in
+              Chromium, follows tracking redirects, and checks the resolved
+              hostnames. This catches affiliates that cloak brand links
+              behind /go/ redirects, without paying browser cost on
+              first-pass hits.
+            </Tip>
             <p>
               The score-row endpoint runs the stage logic and writes back to{' '}
               <Code>google_lead_gen_table</Code> — including the relevant{' '}
@@ -486,6 +499,16 @@ Phase 3  (all_running → complete)
                 ],
               ]}
             />
+            <p>
+              <strong>Stage values that flow through the queue:</strong>{' '}
+              <Code>affiliate</Code>, <Code>rooster</Code>,{' '}
+              <Code>rooster_deep</Code> (auto-enqueued fallback when the
+              cheap rooster check misses), <Code>contact</Code>,{' '}
+              <Code>stag</Code>. The orchestrator advances the chain via{' '}
+              <Code>advance_enrichment_chain</Code>; rooster_deep does not
+              gate the chain — it runs alongside and silently corrects the
+              flag if a brand link is found behind redirects.
+            </p>
           </Section>
 
           <Section id="cron" title="Cron jobs" icon={Cog}>
@@ -720,6 +743,63 @@ PGPASSWORD=… psql "host=db.<ref>.supabase.co user=postgres dbname=postgres" \\
               <li>
                 On <Code>/profiles</Code>, flip <Code>is_google_logged_in</Code>{' '}
                 manually after the GoLogin session has the cookie.
+              </li>
+            </ul>
+            <p>
+              <strong>Manual Google-login flips back to logged-out on its own.</strong>
+            </p>
+            <ul>
+              <li>
+                Migration <Code>20260429080000</Code> protects manual TRUE
+                from auto-detect false positives. If you applied it,
+                manual confirmations now stick — <Code>complete_scrape_job</Code>{' '}
+                only auto-flips false→true (confirms sign-ins) and won&apos;t
+                drop a manual TRUE down to FALSE.
+              </li>
+              <li>
+                Real logouts still show as a stale{' '}
+                <Code>google_login_verified_at</Code> on{' '}
+                <Code>/profiles</Code> — re-sign-in via GoLogin and re-flip
+                the toggle.
+              </li>
+            </ul>
+            <p>
+              <strong>Rooster brand says NO on a site that lists our brands.</strong>
+            </p>
+            <ul>
+              <li>
+                The page might hide brand links behind tracking redirects
+                (/go/, ?dest=). With migration <Code>20260429070000</Code>{' '}
+                applied + the latest enrichment_worker.py on the VMs,{' '}
+                <Code>rooster_deep</Code> auto-enqueues on every
+                cheap-check miss and resolves redirects in browser to
+                check the final hostnames.
+              </li>
+              <li>
+                Stage 3 also catches brand mentions in{' '}
+                <Code>&lt;img alt=&quot;Brand&quot;&gt;</Code> attributes
+                and image filenames (e.g. <Code>logo-spinjo.svg</Code>).
+              </li>
+              <li>
+                If still no — verify the brand is in the{' '}
+                <Code>rooster_brands</Code> table with{' '}
+                <Code>is_active=true</Code> and the right{' '}
+                <Code>domain</Code>.
+              </li>
+            </ul>
+            <p>
+              <strong>Filter / sort URL stops working after refactor.</strong>
+            </p>
+            <ul>
+              <li>
+                Advanced filters live in <Code>?f=</Code> and <Code>?s=</Code>{' '}
+                URL params. If you copied a URL before the filter widget
+                landed (anything before commit <Code>9beec22</Code>), the
+                old <Code>?country_code=</Code> /{' '}
+                <Code>?result_type=</Code> params still work as a
+                preserve-list — the new widget reads / writes{' '}
+                <Code>?f=</Code>/<Code>?s=</Code> but old URLs aren&apos;t
+                broken.
               </li>
             </ul>
             <p>

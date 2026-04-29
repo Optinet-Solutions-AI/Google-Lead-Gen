@@ -472,9 +472,16 @@ export default function OnboardingPage() {
                 Sets <Code>is_affiliate</Code> + confidence.
               </li>
               <li>
-                <strong>3. Rooster partner check</strong> — searches the page
-                content + outgoing links for any of the 28 Rooster brand
-                domains.
+                <strong>3. Rooster partner check</strong> — runs three
+                cheap signals against the cached HTML: outgoing{' '}
+                <Code>href</Code> match against brand domains,{' '}
+                <Code>&lt;img alt=&quot;Brand&quot;&gt;</Code> match,
+                and image filename token match (logo-spinjo.svg). If
+                none of those hit, escalates to a{' '}
+                <Code>rooster_deep</Code> follow-up that opens the page in
+                Chromium, follows tracking redirects, and checks the
+                resolved hostnames against the brand list — catching
+                affiliates that hide brand links behind /go/ redirects.
               </li>
               <li>
                 <strong>4. Contact extraction</strong> — visits homepage,{' '}
@@ -511,8 +518,8 @@ export default function OnboardingPage() {
             <p>
               <Code>/leads</Code> is the one-table view of every scraped lead.
               It mirrors the <Code>google_lead_gen_table</Code> with all
-              enrichment columns, sortable headers, search, and per-row
-              actions.
+              enrichment columns, monday.com-style advanced filters, multi-key
+              sort, search, and per-row actions.
             </p>
             <ul>
               <li>
@@ -521,8 +528,27 @@ export default function OnboardingPage() {
                 group, the column you click sorts.
               </li>
               <li>
-                <strong>Filters</strong> — country, result type, plus a
-                free-text search across keyword / URL / domain / country.
+                <strong>Search</strong> — free-text across keyword / URL /
+                domain / country (Enter or blur to commit).
+              </li>
+              <li>
+                <strong>Filter button</strong> — popover with multi-row
+                conditions: column dropdown, type-aware operator (text gets
+                contains / starts-with / is-empty; numbers get =/{'≠'}/{'>'}/between;
+                dates get is-before/is-after/between; booleans + selects get
+                a value picker). All conditions are AND-joined. Active
+                filters appear as removable chips above the table.
+              </li>
+              <li>
+                <strong>Sort button</strong> — multi-key priority sort. First
+                key is primary, subsequent keys are tiebreakers. Each key has
+                its own asc/desc toggle.
+              </li>
+              <li>
+                <strong>Bookmarkable URLs</strong> — every filter, sort, and
+                search persists in{' '}
+                <Code>?f=</Code> /<Code>?s=</Code> /<Code>?q=</Code> URL
+                params, so you can share a saved view by copy-pasting the link.
               </li>
               <li>
                 <strong>Domain link</strong> — clicking a domain opens the lead
@@ -531,13 +557,14 @@ export default function OnboardingPage() {
               </li>
               <li>
                 <strong>Select rows</strong> — toggle in the toolbar reveals a
-                checkbox column. Once 1+ are selected, a sticky bottom bar
-                appears.
+                checkbox column. Once 1+ are selected, a sticky action bar
+                appears at the top of the table.
               </li>
               <li>
-                <strong>Bulk retry</strong> — the bottom bar&apos;s buttons
-                re-enqueue the selected leads for any single enrichment stage.
-                Great for retrying a handful of failed domains.
+                <strong>Bulk retry</strong> — the bar&apos;s Affiliate /
+                Rooster / Contact / S-tags buttons re-enqueue the selected
+                leads for any single enrichment stage. Great for retrying a
+                handful of failed domains.
               </li>
               <li>
                 <strong>Bulk delete</strong> — wipes the selected leads + their
@@ -545,6 +572,12 @@ export default function OnboardingPage() {
                 <Code>delete N</Code> (where N = the count) to confirm.
               </li>
             </ul>
+            <Tip>
+              Same advanced filter widget lives on{' '}
+              <Code>/scrape</Code> (filter the jobs table) and{' '}
+              <Code>/scrape/[id]</Code> (filter that job&apos;s leads), so the
+              workflow is identical wherever you have a table.
+            </Tip>
             <TryItRow>
               <TryIt href="/leads" label="Open Leads" />
             </TryItRow>
@@ -644,9 +677,10 @@ export default function OnboardingPage() {
               </li>
               <li>
                 <strong>Is logged in</strong> — flip to <Code>true</Code> after
-                you&apos;ve signed in via the GoLogin app on the VM. Until
-                ticked, the scrape form shows a warning when you pick that
-                country.
+                you&apos;ve signed in via the GoLogin app on the VM. The
+                scrape form&apos;s country dropdown shows{' '}
+                <span className="text-amber-700">⚠ needs login</span> until
+                this is true.
               </li>
               <li>
                 <strong>Languages</strong> — array of ISO 639-1 codes valid for
@@ -654,6 +688,14 @@ export default function OnboardingPage() {
                 scrape form. EN is included as a fallback everywhere.
               </li>
             </ul>
+            <Tip>
+              Manual TRUE is sticky against false-positive auto-detections.
+              If a scrape&apos;s login detector misreads a logged-in session as
+              logged-out (layout variants, cookie banners), it can no longer
+              wipe your manual confirmation. Real logouts still surface via
+              the <Code>google_login_verified_at</Code> timestamp on this
+              page.
+            </Tip>
             <TryItRow>
               <TryIt href="/profiles" label="Manage profiles" />
             </TryItRow>
