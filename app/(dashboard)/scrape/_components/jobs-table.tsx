@@ -114,6 +114,7 @@ export function JobsTable({ jobs }: Props) {
       <table className="w-full border-collapse text-[11px]">
         <thead className="bg-[color:var(--color-bg-secondary)]">
           <tr>
+            <Th>{''}</Th>
             <Th>Keyword</Th>
             <Th>Country</Th>
             <Th>Pages</Th>
@@ -124,7 +125,6 @@ export function JobsTable({ jobs }: Props) {
             <Th>Pipeline</Th>
             <Th>Batch</Th>
             <Th>Error</Th>
-            <Th>{''}</Th>
           </tr>
         </thead>
         <tbody>
@@ -135,6 +135,9 @@ export function JobsTable({ jobs }: Props) {
                 key={job.id}
                 className="group border-b border-[color:var(--color-border)] last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]"
               >
+                <td className="w-8 px-1 py-1 align-middle">
+                  <JobActionsButton job={job} />
+                </td>
                 <LinkTd href={href} className="max-w-[280px] truncate" title={job.keyword}>
                   {job.keyword}
                 </LinkTd>
@@ -159,9 +162,6 @@ export function JobsTable({ jobs }: Props) {
                 >
                   {job.error_message ?? ''}
                 </LinkTd>
-                <td className="w-8 px-1 py-1 align-middle text-right">
-                  <JobActionsButton job={job} />
-                </td>
               </tr>
             )
           })}
@@ -183,13 +183,13 @@ export function JobsCardList({ jobs }: Props) {
           className="block rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 transition-colors hover:bg-[color:var(--color-bg-secondary)]"
         >
           <div className="mb-1.5 flex items-start justify-between gap-2">
-            <p className="truncate text-[13px] font-medium text-[color:var(--color-text-primary)]">
-              {job.keyword}
-            </p>
-            <div className="flex shrink-0 items-center gap-1">
-              <StatusBadge job={job} />
+            <div className="flex min-w-0 items-start gap-1">
               <JobActionsButton job={job} />
+              <p className="truncate pt-0.5 text-[13px] font-medium text-[color:var(--color-text-primary)]">
+                {job.keyword}
+              </p>
             </div>
+            <StatusBadge job={job} />
           </div>
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-text-secondary)]">
             <span>{job.country_code}</span>
