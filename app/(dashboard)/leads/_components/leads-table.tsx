@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { CheckSquare, Square } from 'lucide-react'
 import { SortHeader } from '../../monday/_components/sort-header'
 import type { LeadRow } from '../_lib/query'
 import {
@@ -12,6 +13,7 @@ import {
   setStagVerifiedLabel,
 } from '../actions'
 import { BooleanLabelEditor } from './boolean-label-editor'
+import { BulkActionsBar } from './bulk-actions-bar'
 import { LeadDetailDrawer } from './lead-detail-drawer'
 import { MondayLabelEditor } from './monday-label-editor'
 
@@ -24,6 +26,46 @@ type Props = {
 
 export function LeadsTable({ rows, jobContext = false }: Props) {
   const [openLeadId, setOpenLeadId] = useState<number | null>(null)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+
+  // When the user pages or filters, the row set changes — drop any
+  // selected ids that aren't on screen anymore so we don't keep stale
+  // selections across navigations.
+  const rowIdSig = useMemo(() => rows.map(r => r.id).join(','), [rows])
+  useEffect(() => {
+    setSelectedIds(prev => {
+      const valid = new Set(rows.map(r => r.id))
+      const next = new Set<number>()
+      for (const id of prev) if (valid.has(id)) next.add(id)
+      return next.size === prev.size ? prev : next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowIdSig])
+
+  const visibleIds = useMemo(() => rows.map(r => r.id), [rows])
+  const allChecked = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
+  const toggleAll = () => {
+    setSelectedIds(prev => {
+      if (allChecked) {
+        const next = new Set(prev)
+        for (const id of visibleIds) next.delete(id)
+        return next
+      }
+      const next = new Set(prev)
+      for (const id of visibleIds) next.add(id)
+      return next
+    })
+  }
+  const toggleOne = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   if (rows.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-10 text-center text-[12px] text-[color:var(--color-text-secondary)]">
@@ -34,11 +76,44 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
 
   return (
     <>
+      {/* Toolbar — select-mode toggle. Hidden by default; flipping it on
+       *  reveals a checkbox column + the floating bulk-action bar. */}
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => {
+            setSelectMode(s => !s)
+            if (selectMode) setSelectedIds(new Set())
+          }}
+          className={[
+            'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors',
+            selectMode
+              ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/15 text-[color:var(--color-text-primary)]'
+              : 'border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]',
+          ].join(' ')}
+          title={selectMode ? 'Hide selection checkboxes' : 'Show selection checkboxes for bulk actions'}
+        >
+          {selectMode ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+          {selectMode ? 'Selecting' : 'Select rows'}
+        </button>
+      </div>
+
       {/* Desktop — table */}
       <div className="hidden overflow-x-auto rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
           <thead className="bg-[color:var(--color-bg-secondary)]">
             <tr>
+              {selectMode && (
+                <Th className="w-8 px-2">
+                  <input
+                    type="checkbox"
+                    aria-label={allChecked ? 'Deselect all visible' : 'Select all visible'}
+                    checked={allChecked}
+                    onChange={toggleAll}
+                    className="h-3.5 w-3.5 cursor-pointer accent-[color:var(--color-accent)]"
+                  />
+                </Th>
+              )}
               {jobContext ? (
                 <>
                   <Th><SortHeader columnKey="domain" label="Domain" sortable /></Th>
@@ -70,8 +145,24 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
             {rows.map(row => (
               <tr
                 key={row.id}
-                className="border-b border-[color:var(--color-border)] transition-colors last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]"
+                className={[
+                  'border-b border-[color:var(--color-border)] transition-colors last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]',
+                  selectMode && selectedIds.has(row.id)
+                    ? 'bg-[color:var(--color-accent)]/10'
+                    : '',
+                ].join(' ')}
               >
+                {selectMode && (
+                  <Td className="w-8 px-2">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select lead ${row.id}`}
+                      checked={selectedIds.has(row.id)}
+                      onChange={() => toggleOne(row.id)}
+                      className="h-3.5 w-3.5 cursor-pointer accent-[color:var(--color-accent)]"
+                    />
+                  </Td>
+                )}
                 {jobContext ? (
                   <>
                     <Td className="max-w-[220px] truncate p-0" title={row.domain ?? ''}>
@@ -184,16 +275,32 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
         {rows.map(row => (
           <div
             key={row.id}
-            className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3"
+            className={[
+              'rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3',
+              selectMode && selectedIds.has(row.id)
+                ? 'ring-2 ring-[color:var(--color-accent)]'
+                : '',
+            ].join(' ')}
           >
             <div className="mb-1.5 flex items-start justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => setOpenLeadId(row.id)}
-                className="truncate text-left text-[13px] font-medium text-[color:var(--color-text-primary)] underline-offset-2 hover:underline"
-              >
-                {jobContext ? (row.domain ?? '—') : (row.keyword ?? '—')}
-              </button>
+              <div className="flex min-w-0 items-center gap-2">
+                {selectMode && (
+                  <input
+                    type="checkbox"
+                    aria-label={`Select lead ${row.id}`}
+                    checked={selectedIds.has(row.id)}
+                    onChange={() => toggleOne(row.id)}
+                    className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[color:var(--color-accent)]"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setOpenLeadId(row.id)}
+                  className="truncate text-left text-[13px] font-medium text-[color:var(--color-text-primary)] underline-offset-2 hover:underline"
+                >
+                  {jobContext ? (row.domain ?? '—') : (row.keyword ?? '—')}
+                </button>
+              </div>
               <TypeBadge type={row.result_type} />
             </div>
             <dl className="space-y-1 text-[12px]">
@@ -285,6 +392,13 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
         ))}
       </div>
 
+      {selectMode && selectedIds.size > 0 && (
+        <BulkActionsBar
+          selectedIds={Array.from(selectedIds)}
+          onClear={() => setSelectedIds(new Set())}
+        />
+      )}
+
       <LeadDetailDrawer leadId={openLeadId} onClose={() => setOpenLeadId(null)} />
     </>
   )
@@ -308,11 +422,14 @@ function DomainButton({
   )
 }
 
-function Th({ children }: { children: React.ReactNode }) {
+function Th({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <th
       scope="col"
-      className="whitespace-nowrap border-b border-[color:var(--color-border)] px-3 py-2 text-left align-middle"
+      className={[
+        'whitespace-nowrap border-b border-[color:var(--color-border)] px-3 py-2 text-left align-middle',
+        className ?? '',
+      ].join(' ')}
     >
       {children}
     </th>

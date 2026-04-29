@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { Check } from 'lucide-react'
 import { PIPELINE_STAGES, type EnrichmentStatus, type ScrapeJob } from '../_lib/queries'
+import { JobActionsButton } from './job-row-actions'
 
 type Props = { jobs: ScrapeJob[] }
 
@@ -10,6 +11,8 @@ const STATUS_STYLES: Record<ScrapeJob['status'], string> = {
   completed: 'bg-green-100 text-green-800',
   failed: 'bg-red-100 text-red-800',
   captcha: 'bg-amber-100 text-amber-800',
+  paused: 'bg-purple-100 text-purple-800',
+  cancelled: 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)] line-through',
 }
 
 /** Effective status that folds the enrichment-chain state into the badge.
@@ -123,6 +126,7 @@ export function JobsTable({ jobs }: Props) {
             <Th>Pipeline</Th>
             <Th>Batch</Th>
             <Th>Error</Th>
+            <Th>{''}</Th>
           </tr>
         </thead>
         <tbody>
@@ -161,6 +165,9 @@ export function JobsTable({ jobs }: Props) {
                 >
                   {job.error_message ?? ''}
                 </LinkTd>
+                <td className="w-8 px-1 py-1 align-middle text-right">
+                  <JobActionsButton job={job} />
+                </td>
               </tr>
             )
           })}
@@ -185,7 +192,10 @@ export function JobsCardList({ jobs }: Props) {
             <p className="truncate text-[13px] font-medium text-[color:var(--color-text-primary)]">
               {job.keyword}
             </p>
-            <StatusBadge job={job} />
+            <div className="flex shrink-0 items-center gap-1">
+              <StatusBadge job={job} />
+              <JobActionsButton job={job} />
+            </div>
           </div>
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-text-secondary)]">
             <span>{job.country_code}</span>

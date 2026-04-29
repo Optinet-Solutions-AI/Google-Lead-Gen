@@ -26,7 +26,7 @@ type Job = {
   keyword: string
   country_code: string
   pages: number
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'captcha'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'captcha' | 'paused' | 'cancelled'
   attempts: number
   batch_id: number | null
   claimed_by: string | null
@@ -43,6 +43,8 @@ const STATUS_STYLES: Record<Job['status'], string> = {
   completed: 'bg-green-100 text-green-800',
   failed: 'bg-red-100 text-red-800',
   captcha: 'bg-amber-100 text-amber-800',
+  paused: 'bg-purple-100 text-purple-800',
+  cancelled: 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)] line-through',
 }
 
 export const dynamic = 'force-dynamic'

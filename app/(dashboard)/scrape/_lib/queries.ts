@@ -44,7 +44,7 @@ export type ScrapeJob = {
   country_code: string
   pages: number
   priority: number
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'captcha'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'captcha' | 'paused' | 'cancelled'
   attempts: number
   claimed_by: string | null
   started_at: string | null

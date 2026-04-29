@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { logActivity } from '@/lib/activity-log'
 
 // getLeadDetails used to live here as a server action but server actions
@@ -239,6 +240,197 @@ export async function setStagLabel(formData: FormData): Promise<void> {
     overrideColumn: 'is_stag_overridden_at',
     logAction: 'override.stag',
   })
+}
+
+// ============================================================
+// Bulk-select actions on /leads:
+//   - retryEnrichmentForLeads — re-enqueue an enrichment stage for
+//     the selected lead ids only (used to retry failed domains
+//     without re-running the whole job).
+//   - deleteLeads             — typed-confirm wipe of selected leads.
+// ============================================================
+
+export type BulkActionState =
+  | { status: 'ok'; message: string }
+  | { status: 'error'; error: string }
+  | null
+
+const VALID_STAGES = new Set(['affiliate', 'rooster', 'contact', 'stag'])
+
+function parseLeadIds(fd: FormData): number[] {
+  const raw = String(fd.get('lead_ids') ?? '').trim()
+  if (!raw) return []
+  return Array.from(
+    new Set(
+      raw
+        .split(',')
+        .map(s => Number(s.trim()))
+        .filter(n => Number.isFinite(n) && n > 0),
+    ),
+  )
+}
+
+export async function retryEnrichmentForLeads(
+  _prev: BulkActionState,
+  fd: FormData,
+): Promise<BulkActionState> {
+  await assertSignedIn()
+
+  const stage = String(fd.get('stage') ?? '')
+  if (!VALID_STAGES.has(stage)) {
+    return { status: 'error', error: `Invalid stage "${stage}".` }
+  }
+  const leadIds = parseLeadIds(fd)
+  if (leadIds.length === 0) {
+    return { status: 'error', error: 'No leads selected.' }
+  }
+
+  const svc = createServiceClient()
+  const { data: leads, error: leadsErr } = await svc
+    .from('google_lead_gen_table')
+    .select('id, url, domain, country_code, result_type, is_affiliate')
+    .in('id', leadIds)
+  if (leadsErr) return { status: 'error', error: leadsErr.message }
+
+  let skipped = 0
+  let filtered = 0
+  const enqueueable: Array<{
+    lead_id: number
+    country_code: string
+    url: string
+    want_html: boolean
+    want_screenshot: boolean
+    process_stages: string[]
+  }> = []
+
+  for (const lead of (leads ?? []) as Array<{
+    id: number
+    url: string | null
+    domain: string | null
+    country_code: string | null
+    result_type: string | null
+    is_affiliate: boolean | null
+  }>) {
+    const url = lead.url ?? ''
+    if (!url || !url.startsWith('http') || !lead.country_code) {
+      skipped++
+      continue
+    }
+    if (shouldSkipDomain(lead.domain)) {
+      skipped++
+      continue
+    }
+    // S-tag stage only makes sense on affiliate rows.
+    if (stage === 'stag' && lead.is_affiliate !== true) {
+      filtered++
+      continue
+    }
+    enqueueable.push({
+      lead_id: lead.id,
+      country_code: lead.country_code,
+      url,
+      want_html: true,
+      want_screenshot: stage === 'affiliate' && lead.result_type === 'PPC',
+      process_stages: [stage],
+    })
+  }
+
+  if (enqueueable.length === 0) {
+    return {
+      status: 'ok',
+      message:
+        stage === 'stag'
+          ? `Nothing to enqueue — none of the selected leads are flagged as affiliates.`
+          : `Nothing to enqueue (${skipped} skipped, ${filtered} filtered).`,
+    }
+  }
+
+  const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
+  if (qErr) return { status: 'error', error: qErr.message }
+
+  await logActivity({
+    action: `enrichment.${stage}.retry`,
+    entity_type: 'leads_bulk',
+    details: {
+      requested: leadIds.length,
+      enqueued: enqueueable.length,
+      skipped,
+      filtered,
+    },
+  })
+
+  revalidatePath('/leads')
+  revalidatePath('/scrape', 'layout')
+  return {
+    status: 'ok',
+    message: `Re-queued ${enqueueable.length} lead${enqueueable.length === 1 ? '' : 's'} for ${stage} enrichment${skipped + filtered > 0 ? ` (${skipped + filtered} skipped)` : ''}.`,
+  }
+}
+
+export async function deleteLeads(
+  _prev: BulkActionState,
+  fd: FormData,
+): Promise<BulkActionState> {
+  await assertSignedIn()
+
+  const leadIds = parseLeadIds(fd)
+  if (leadIds.length === 0) {
+    return { status: 'error', error: 'No leads selected.' }
+  }
+
+  // Typed confirmation: user must type "delete <N>" where N is the count.
+  const confirmation = String(fd.get('confirmation_text') ?? '').trim()
+  const expected = `delete ${leadIds.length}`
+  if (confirmation !== expected) {
+    return {
+      status: 'error',
+      error: `Confirmation must be "${expected}" (got "${confirmation}").`,
+    }
+  }
+
+  const svc = createServiceClient()
+
+  // Best-effort screenshot cleanup — both lead-level and per-s-tag.
+  const { data: leadShots } = await svc
+    .from('google_lead_gen_table')
+    .select('screenshot_content_link')
+    .in('id', leadIds)
+    .not('screenshot_content_link', 'is', null)
+  const { data: stagShots } = await svc
+    .from('s_tags_table')
+    .select('screenshot_path')
+    .in('lead_id', leadIds)
+    .not('screenshot_path', 'is', null)
+  const paths = [
+    ...((leadShots ?? []) as { screenshot_content_link: string }[]).map(
+      r => r.screenshot_content_link,
+    ),
+    ...((stagShots ?? []) as { screenshot_path: string }[]).map(r => r.screenshot_path),
+  ].filter(p => typeof p === 'string' && p.length > 0)
+  if (paths.length > 0) {
+    try {
+      await svc.storage.from('lead-screenshots').remove(paths)
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  const { data, error } = await svc.rpc('delete_leads_cascade', { p_lead_ids: leadIds })
+  if (error) return { status: 'error', error: error.message }
+  const deleted = typeof data === 'number' ? data : 0
+
+  await logActivity({
+    action: 'leads.delete',
+    entity_type: 'leads_bulk',
+    details: { requested: leadIds.length, deleted, screenshots_deleted: paths.length },
+  })
+
+  revalidatePath('/leads')
+  revalidatePath('/scrape', 'layout')
+  return {
+    status: 'ok',
+    message: `Deleted ${deleted} lead${deleted === 1 ? '' : 's'} and all their enrichment data.`,
+  }
 }
 
 /**

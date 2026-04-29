@@ -544,6 +544,295 @@ export async function runStagExtraction(
 }
 
 // ============================================================
+// Epic 9 — Job lifecycle actions: pause / resume / cancel / delete
+//
+// Pause / resume = direct status flips on scrape_queue (and on the
+// follow-on enrichment_fetch_queue rows if any are still pending).
+// Workers naturally skip rows whose status isn't 'pending', so no
+// VM-side change is needed.
+//
+// Cancel + delete are gated by a typed-confirmation: the caller must
+// send `confirmation_text` matching the job's exact keyword. The server
+// computes the expected value itself so the form can't lie.
+// Cancel marks the job (and any pending enrichment) as cancelled but
+// keeps the rows for audit. Delete wipes everything via the cascade RPC.
+// ============================================================
+export type JobActionState =
+  | { status: 'ok'; message: string }
+  | { status: 'error'; error: string }
+  | null
+
+async function flipScrapeStatus(
+  jobId: string,
+  from: string[],
+  to: string,
+): Promise<{ ok: true; row: { id: string; keyword: string } } | { ok: false; error: string }> {
+  const svc = createServiceClient()
+  const { data, error } = await svc
+    .from('scrape_queue')
+    .update({ status: to, updated_at: new Date().toISOString() })
+    .eq('id', jobId)
+    .in('status', from)
+    .select('id, keyword')
+    .maybeSingle()
+  if (error) return { ok: false, error: error.message }
+  if (!data) return { ok: false, error: `Job is not in a ${from.join('/')} state.` }
+  return { ok: true, row: data as { id: string; keyword: string } }
+}
+
+export async function pauseScrapeJob(_prev: JobActionState, fd: FormData): Promise<JobActionState> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const r = await flipScrapeStatus(jobId, ['pending'], 'paused')
+  if (!r.ok) return { status: 'error', error: r.error }
+
+  await logActivity({
+    action: 'scrape.pause',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { keyword: r.row.keyword },
+  })
+  revalidatePath('/scrape')
+  revalidatePath(`/scrape/${jobId}`)
+  return { status: 'ok', message: `Paused "${r.row.keyword}". Workers will skip it.` }
+}
+
+export async function resumeScrapeJob(_prev: JobActionState, fd: FormData): Promise<JobActionState> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const r = await flipScrapeStatus(jobId, ['paused'], 'pending')
+  if (!r.ok) return { status: 'error', error: r.error }
+
+  await logActivity({
+    action: 'scrape.resume',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { keyword: r.row.keyword },
+  })
+  revalidatePath('/scrape')
+  revalidatePath(`/scrape/${jobId}`)
+  return { status: 'ok', message: `Resumed "${r.row.keyword}". Next free worker will pick it up.` }
+}
+
+export async function pauseEnrichmentForJob(
+  _prev: JobActionState,
+  fd: FormData,
+): Promise<JobActionState> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const svc = createServiceClient()
+  const { data: leadRows } = await svc
+    .from('google_lead_gen_table')
+    .select('id')
+    .eq('scrape_job_id', jobId)
+  const leadIds = ((leadRows ?? []) as { id: number }[]).map(r => r.id)
+  if (leadIds.length === 0) {
+    return { status: 'ok', message: 'No leads on this job — nothing to pause.' }
+  }
+
+  const { error, count } = await svc
+    .from('enrichment_fetch_queue')
+    .update({ status: 'paused', updated_at: new Date().toISOString() }, { count: 'exact' })
+    .eq('status', 'pending')
+    .in('lead_id', leadIds)
+  if (error) return { status: 'error', error: error.message }
+
+  await logActivity({
+    action: 'enrichment.pause',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { affected: count ?? 0 },
+  })
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message:
+      (count ?? 0) === 0
+        ? 'No pending enrichment rows to pause.'
+        : `Paused ${count} pending enrichment row${count === 1 ? '' : 's'}. Running rows will finish.`,
+  }
+}
+
+export async function resumeEnrichmentForJob(
+  _prev: JobActionState,
+  fd: FormData,
+): Promise<JobActionState> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const svc = createServiceClient()
+  const { data: leadRows } = await svc
+    .from('google_lead_gen_table')
+    .select('id')
+    .eq('scrape_job_id', jobId)
+  const leadIds = ((leadRows ?? []) as { id: number }[]).map(r => r.id)
+  if (leadIds.length === 0) {
+    return { status: 'ok', message: 'No leads on this job.' }
+  }
+
+  const { error, count } = await svc
+    .from('enrichment_fetch_queue')
+    .update({ status: 'pending', updated_at: new Date().toISOString() }, { count: 'exact' })
+    .eq('status', 'paused')
+    .in('lead_id', leadIds)
+  if (error) return { status: 'error', error: error.message }
+
+  await logActivity({
+    action: 'enrichment.resume',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { affected: count ?? 0 },
+  })
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message:
+      (count ?? 0) === 0
+        ? 'No paused enrichment rows to resume.'
+        : `Resumed ${count} enrichment row${count === 1 ? '' : 's'}.`,
+  }
+}
+
+async function checkConfirmation(
+  jobId: string,
+  confirmationText: string,
+): Promise<{ ok: true; keyword: string } | { ok: false; error: string }> {
+  const svc = createServiceClient()
+  const { data, error } = await svc
+    .from('scrape_queue')
+    .select('keyword')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (error) return { ok: false, error: error.message }
+  if (!data) return { ok: false, error: 'Job not found.' }
+  const keyword = (data as { keyword: string }).keyword
+  if (confirmationText.trim() !== keyword) {
+    return {
+      ok: false,
+      error: `Confirmation text doesn't match the keyword "${keyword}".`,
+    }
+  }
+  return { ok: true, keyword }
+}
+
+export async function cancelScrapeJob(_prev: JobActionState, fd: FormData): Promise<JobActionState> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const confirmation = String(fd.get('confirmation_text') ?? '')
+  const check = await checkConfirmation(jobId, confirmation)
+  if (!check.ok) return { status: 'error', error: check.error }
+
+  const svc = createServiceClient()
+  const { data, error } = await svc.rpc('cancel_scrape_job', { p_job_id: jobId })
+  if (error) return { status: 'error', error: error.message }
+
+  await logActivity({
+    action: 'scrape.cancel',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { keyword: check.keyword, prior_status: data ?? null },
+  })
+  revalidatePath('/scrape')
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message:
+      data === 'no-op'
+        ? 'Job already in a terminal state — nothing to cancel.'
+        : `Cancelled "${check.keyword}". Pending enrichment for this job is also cancelled.`,
+  }
+}
+
+export async function deleteScrapeJob(_prev: JobActionState, fd: FormData): Promise<JobActionState> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const confirmation = String(fd.get('confirmation_text') ?? '')
+  const check = await checkConfirmation(jobId, confirmation)
+  if (!check.ok) return { status: 'error', error: check.error }
+
+  const svc = createServiceClient()
+
+  // Pull screenshot paths first; storage cleanup is best-effort.
+  const { data: shotRows } = await svc
+    .from('google_lead_gen_table')
+    .select('screenshot_content_link')
+    .eq('scrape_job_id', jobId)
+    .not('screenshot_content_link', 'is', null)
+  const screenshotPaths = ((shotRows ?? []) as { screenshot_content_link: string }[])
+    .map(r => r.screenshot_content_link)
+    .filter(p => typeof p === 'string' && p.length > 0)
+  if (screenshotPaths.length > 0) {
+    try {
+      await svc.storage.from('lead-screenshots').remove(screenshotPaths)
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  // Also clean up s-tag screenshots if any.
+  const { data: stagShots } = await svc
+    .from('s_tags_table')
+    .select('screenshot_path')
+    .in(
+      'lead_id',
+      ((
+        await svc
+          .from('google_lead_gen_table')
+          .select('id')
+          .eq('scrape_job_id', jobId)
+      ).data ?? []).map((r: { id: number }) => r.id),
+    )
+    .not('screenshot_path', 'is', null)
+  const stagPaths = ((stagShots ?? []) as { screenshot_path: string }[])
+    .map(r => r.screenshot_path)
+    .filter(p => typeof p === 'string' && p.length > 0)
+  if (stagPaths.length > 0) {
+    try {
+      await svc.storage.from('lead-screenshots').remove(stagPaths)
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  const { data, error } = await svc.rpc('delete_scrape_job_cascade', { p_job_id: jobId })
+  if (error) return { status: 'error', error: error.message }
+  const leadCount = typeof data === 'number' ? data : 0
+
+  await logActivity({
+    action: 'scrape.delete',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: {
+      keyword: check.keyword,
+      leads_deleted: leadCount,
+      screenshots_deleted: screenshotPaths.length + stagPaths.length,
+    },
+  })
+  revalidatePath('/scrape')
+  return {
+    status: 'ok',
+    message: `Deleted "${check.keyword}" — ${leadCount} lead${leadCount === 1 ? '' : 's'} and all enrichment data wiped.`,
+  }
+}
+
+// ============================================================
 // Epic 7.6 — S-Tag Duplicate Check (Monday mirror)
 // ============================================================
 export async function runStagDuplicateCheck(
