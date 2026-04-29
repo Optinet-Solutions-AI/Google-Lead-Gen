@@ -1,9 +1,11 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
+import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
+import { parseFilters, parseSorts } from '@/lib/filters/serialize'
 import { createServiceClient } from '@/lib/supabase/service'
+import { AdvancedFilters } from '../../_components/advanced-filters'
 import { Pagination } from '../../monday/_components/pagination'
-import { SearchBar } from '../../monday/_components/search-bar'
 import { LeadsTable } from '../../leads/_components/leads-table'
 import {
   DEFAULT_LEAD_PAGE_SIZE,
@@ -72,6 +74,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const q = typeof sp.q === 'string' ? sp.q : ''
   const countryCode = typeof sp.country_code === 'string' ? sp.country_code : ''
   const resultType = typeof sp.result_type === 'string' ? sp.result_type : ''
+  const filters = parseFilters(sp.f)
+  const sorts = parseSorts(sp.s)
 
   const [{ rows, total }, stageSummary] = await Promise.all([
     queryLeads({
@@ -83,9 +87,17 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       countryCode,
       resultType,
       scrapeJobId: id,
+      filters,
+      sorts,
     }),
     fetchStageSummary(id),
   ])
+
+  // Country and batch are constant for one job, so drop them from the
+  // filter dropdowns; URL is constant so omitting them keeps the picker tidy.
+  const columns = LEADS_COLUMNS.filter(
+    c => c.key !== 'country_code' && c.key !== 'batch_id',
+  )
 
   return (
     <div className="flex min-w-0 flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
@@ -128,8 +140,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
 
       <EnrichmentStages jobId={job.id} summary={stageSummary} />
 
-      <div className="flex flex-wrap items-center gap-3 pt-2">
-        <SearchBar />
+      <div className="pt-2">
+        <AdvancedFilters columns={columns} />
       </div>
 
       <LeadsTable rows={rows} jobContext />
