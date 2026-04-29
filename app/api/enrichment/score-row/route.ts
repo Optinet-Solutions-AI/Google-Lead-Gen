@@ -37,7 +37,7 @@ export async function POST(req: Request): Promise<Response> {
   let body: {
     lead_id?: number
     stage?: string
-    extras?: { tags?: StagExtra[] }
+    extras?: { tags?: StagExtra[]; resolved_urls?: string[] }
   }
   try {
     body = await req.json()
@@ -80,6 +80,8 @@ export async function POST(req: Request): Promise<Response> {
       return await scoreAffiliateStage()
     case 'rooster':
       return await scoreRoosterStage()
+    case 'rooster_deep':
+      return await scoreRoosterDeepStage()
     case 'contact':
       return await scoreContactStage()
     case 'stag':
@@ -187,7 +189,108 @@ export async function POST(req: Request): Promise<Response> {
       })
       .eq('id', leadId)
 
-    return NextResponse.json({ ok: true, partner: isPartner, match_count: matches.length })
+    // If the cheap HTML-href check found nothing, escalate: enqueue a
+    // `rooster_deep` row so the VM worker can open the page in browser,
+    // follow any tracking redirects, and check the resolved final URLs
+    // against the brand list. This catches affiliate sites that hide
+    // brand links behind tracking redirects (/go/<brand>?affid=…).
+    let deepEnqueued = false
+    if (!isPartner && url && countryCode) {
+      const { error: enqErr } = await svc.from('enrichment_fetch_queue').insert({
+        lead_id: leadId,
+        country_code: countryCode,
+        url,
+        want_html: false,
+        want_screenshot: false,
+        process_stages: ['rooster_deep'],
+      })
+      if (!enqErr) deepEnqueued = true
+      else console.warn('rooster_deep enqueue failed:', enqErr.message)
+    }
+
+    return NextResponse.json({
+      ok: true,
+      partner: isPartner,
+      match_count: matches.length,
+      deep_check_enqueued: deepEnqueued,
+    })
+  }
+
+  /**
+   * Browser-resolved fallback for the Rooster check. The worker has
+   * extracted tracking links from the lead page, followed each in
+   * Chromium, and shipped us the final URLs via extras.resolved_urls.
+   * We match those against the active brand list — if any hit, flip
+   * the lead's is_rooster_partner to true (unless the user has
+   * manually overridden it).
+   */
+  async function scoreRoosterDeepStage(): Promise<Response> {
+    const resolvedUrls = (body.extras?.resolved_urls ?? []).filter(
+      u => typeof u === 'string' && u.length > 0,
+    )
+    if (resolvedUrls.length === 0) {
+      return NextResponse.json({ ok: true, partner: false, resolved_count: 0 })
+    }
+
+    const { data: brandRows, error: brandErr } = await svc.rpc('list_rooster_brand_domains')
+    if (brandErr) return NextResponse.json({ error: brandErr.message }, { status: 500 })
+    const brandList = (brandRows ?? []) as Array<{
+      domain: string
+      brand_name: string | null
+      monday_item_id: string | null
+    }>
+    const brandsByDomain = new Map<
+      string,
+      { brand_name: string | null; monday_item_id: string | null }
+    >()
+    for (const b of brandList) {
+      if (b.domain)
+        brandsByDomain.set(b.domain.toLowerCase(), {
+          brand_name: b.brand_name,
+          monday_item_id: b.monday_item_id,
+        })
+    }
+
+    const found = new Map<
+      string,
+      { domain: string; brand_name: string | null; monday_item_id: string | null }
+    >()
+    for (const u of resolvedUrls) {
+      let host = ''
+      try {
+        host = new URL(u).hostname.toLowerCase().replace(/^www\./, '')
+      } catch {
+        continue
+      }
+      for (const [brandDomain, meta] of brandsByDomain.entries()) {
+        if (host === brandDomain || host.endsWith('.' + brandDomain)) {
+          if (!found.has(brandDomain)) found.set(brandDomain, { domain: brandDomain, ...meta })
+          break
+        }
+      }
+    }
+    const matches = Array.from(found.values())
+    if (matches.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        partner: false,
+        resolved_count: resolvedUrls.length,
+      })
+    }
+
+    // Flip the lead — but never trample a manual override.
+    const { error: updErr } = await svc
+      .from('google_lead_gen_table')
+      .update({
+        is_rooster_partner: true,
+        brand: matches[0]?.brand_name ?? null,
+        rooster_brands: matches,
+      })
+      .eq('id', leadId)
+      .is('is_rooster_overridden_at', null)
+    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
+
+    return NextResponse.json({ ok: true, partner: true, match_count: matches.length })
   }
 
   /**

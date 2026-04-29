@@ -598,6 +598,29 @@ def process_job(job: dict[str, Any]) -> None:
 
     multi_page = "contact" in process_stages
     has_stag = "stag" in process_stages
+    has_rooster_deep = "rooster_deep" in process_stages
+
+    # Rooster-deep is a browser-side fallback when the cheap HTML
+    # href-check missed brand links hidden behind tracking redirects.
+    # Owns its own browser session (no HTML cache write, no screenshots);
+    # ships the resolved final URLs to score-row which decides match/no-match.
+    if has_rooster_deep:
+        resolved = run_rooster_deep_session(
+            profile["gologin_profile_id"],
+            lead_id,
+            url,
+        )
+        complete_job(job_id, None, None, None)
+        call_score_endpoint(
+            lead_id,
+            "rooster_deep",
+            extras={"resolved_urls": resolved},
+        )
+        log.info(
+            "enrichment job %s done (rooster_deep) | resolved=%d",
+            job_id, len(resolved),
+        )
+        return
 
     # When stag is involved we own the browser session for the full
     # extract+resolve loop, so we run a richer flow that does multi-page
@@ -651,6 +674,67 @@ def process_job(job: dict[str, Any]) -> None:
             continue
         call_score_endpoint(lead_id, stage)
     log.info("enrichment job %s done | err=%s screenshot=%s", job_id, err, screenshot_path)
+
+
+def run_rooster_deep_session(
+    profile_id: str,
+    lead_id: int,
+    url: str,
+) -> list[str]:
+    """
+    Browser-resolved fallback for the Rooster check.
+
+    Opens the lead URL in the country profile, runs the same 3-path
+    tracking-link extraction the s-tag stage uses, then follows each
+    tracking link in Chromium and collects the final URL. No s-tag
+    parsing, no screenshots, no HTML cache write — score-row will
+    just check the returned URLs against the brand list.
+
+    Capped at 30 tracking links per page to stay under reasonable
+    runtime when an aggregator page links to dozens of casinos.
+    """
+    gl = GoLogin({"token": GOLOGIN_TOKEN, "profile_id": profile_id, "port": GOLOGIN_PORT})
+    driver = None
+    resolved: list[str] = []
+    try:
+        debugger = gl.start()
+        time.sleep(2)
+        driver = connect_chrome(debugger)
+        driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT_S)
+
+        page_html = _navigate(driver, url)
+        if page_html is None:
+            log.info("rooster_deep: lead=%s navigation failed", lead_id)
+            return []
+
+        seen: set[str] = set()
+        for link in extract_tracking_links(page_html, url):
+            seen.add(link)
+        if not seen:
+            log.info("rooster_deep: lead=%s no tracking links to resolve", lead_id)
+            return []
+
+        log.info("rooster_deep: lead=%s resolving %d tracking links",
+                 lead_id, len(seen))
+        for tracking_url in list(seen)[:30]:
+            final_url, _chain, _screenshot = resolve_in_browser(driver, tracking_url)
+            if final_url:
+                resolved.append(final_url)
+        # Dedup while preserving order
+        return list(dict.fromkeys(resolved))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("rooster_deep: lead=%s failed: %s", lead_id, exc)
+        return resolved
+    finally:
+        try:
+            if driver is not None:
+                driver.quit()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            gl.stop()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def run_full_browser_session(
