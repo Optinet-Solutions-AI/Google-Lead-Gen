@@ -662,6 +662,34 @@ export async function pauseEnrichmentForJob(
   }
 }
 
+export async function forceCompleteEnrichment(
+  _prev: JobActionState,
+  fd: FormData,
+): Promise<JobActionState> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const svc = createServiceClient()
+  const { data, error } = await svc.rpc('force_complete_enrichment', { p_job_id: jobId })
+  if (error) return { status: 'error', error: error.message }
+
+  await logActivity({
+    action: 'enrichment.force_complete',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { result: data ?? null },
+  })
+  revalidatePath('/scrape')
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message:
+      'Marked enrichment as complete. Any pending queue rows were cancelled — re-enqueue from the leads page if you want to retry specific domains.',
+  }
+}
+
 export async function resumeEnrichmentForJob(
   _prev: JobActionState,
   fd: FormData,

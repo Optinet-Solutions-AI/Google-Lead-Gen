@@ -3,6 +3,7 @@
 import { useActionState, useState } from 'react'
 import {
   AlertTriangle,
+  CheckCircle2,
   Loader2,
   MoreVertical,
   Pause,
@@ -13,6 +14,7 @@ import {
 import {
   cancelScrapeJob,
   deleteScrapeJob,
+  forceCompleteEnrichment,
   pauseEnrichmentForJob,
   pauseScrapeJob,
   resumeEnrichmentForJob,
@@ -154,12 +156,14 @@ function ScrapeLifecycleSection({ job }: { job: ScrapeJob }) {
 function EnrichmentLifecycleSection({ job }: { job: ScrapeJob }) {
   const [pauseState, pauseAction, pausing] = useActionState(pauseEnrichmentForJob, initial)
   const [resumeState, resumeAction, resuming] = useActionState(resumeEnrichmentForJob, initial)
+  const [forceState, forceAction, forcing] = useActionState(forceCompleteEnrichment, initial)
 
   return (
     <Section title="Enrichment">
       <p className="text-[11px] text-[color:var(--color-text-secondary)]">
         Pausing flips every <em>pending</em> enrichment row to paused; rows already running
-        will finish naturally.
+        will finish naturally. Use <em>Force complete</em> if the chain is stuck on
+        permanently-failed domains.
       </p>
       <div className="flex flex-wrap gap-2">
         <form action={pauseAction}>
@@ -182,8 +186,20 @@ function EnrichmentLifecycleSection({ job }: { job: ScrapeJob }) {
             Resume enrichment
           </ActionButton>
         </form>
+        <form action={forceAction}>
+          <input type="hidden" name="job_id" value={job.id} />
+          <button
+            type="submit"
+            disabled={forcing}
+            className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Skip waiting on stalled rows and mark enrichment complete"
+          >
+            {forcing ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+            Force complete
+          </button>
+        </form>
       </div>
-      <FlashMessage state={pauseState ?? resumeState} />
+      <FlashMessage state={pauseState ?? resumeState ?? forceState} />
     </Section>
   )
 }
