@@ -1,26 +1,63 @@
+import { JOBS_COLUMNS } from '@/lib/filters/columns-jobs'
+import { parseFilters, parseSorts } from '@/lib/filters/serialize'
+import type { ColumnDef } from '@/lib/filters/types'
+import { AdvancedFilters } from '../_components/advanced-filters'
+import { Pagination } from '../monday/_components/pagination'
 import { AutoRefresh } from './_components/auto-refresh'
 import { EnqueueForm } from './_components/enqueue-form'
 import { JobsCardList, JobsTable } from './_components/jobs-table'
-import { listActiveProfiles, listRecentJobs } from './_lib/queries'
+import { listActiveProfiles, queryJobs } from './_lib/queries'
+
+type SearchParams = Record<string, string | string[] | undefined>
+
+const PAGE_SIZES = [25, 50, 100, 200] as const
+const DEFAULT_PAGE_SIZE = 25
 
 export const dynamic = 'force-dynamic'
 
-export default async function ScrapePage() {
-  const [profiles, jobs] = await Promise.all([
+export default async function ScrapePage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>
+}) {
+  const sp = await searchParams
+
+  const page = clampInt(sp.page, 1, 1_000_000, 1)
+  const size = clampEnum(sp.size, PAGE_SIZES, DEFAULT_PAGE_SIZE)
+  const q = typeof sp.q === 'string' ? sp.q : ''
+  const filters = parseFilters(sp.f)
+  const sorts = parseSorts(sp.s)
+  const hasAnyFilter = q.length > 0 || filters.length > 0 || sorts.length > 0
+
+  const [profiles, { rows, total }] = await Promise.all([
     listActiveProfiles(),
-    listRecentJobs(30),
+    queryJobs({ page, size, q, filters, sorts }),
   ])
 
   // Auto-refresh stays on while either the scrape itself OR a follow-on
   // enrichment chain is still in flight, so the badge can transition from
   // "enriching" to "completed" without a manual reload.
-  const hasActive = jobs.some(
+  const hasActive = rows.some(
     j =>
       j.status === 'pending' ||
       j.status === 'running' ||
       (j.status === 'completed' &&
         j.with_enrichment &&
         j.enrichment_status !== 'complete'),
+  )
+
+  // Inject the live country list into the column registry so the dropdown
+  // in the filter popover shows a useful set instead of an empty list.
+  const columns: ReadonlyArray<ColumnDef> = JOBS_COLUMNS.map(c =>
+    c.key === 'country_code'
+      ? {
+          ...c,
+          options: profiles.map(p => ({
+            value: p.country_code,
+            label: `${p.country_name} (${p.country_code})`,
+          })),
+        }
+      : c,
   )
 
   return (
@@ -38,20 +75,46 @@ export default async function ScrapePage() {
       <EnqueueForm profiles={profiles} />
 
       <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-[13px] font-semibold text-[color:var(--color-text-primary)]">
-            Recent jobs
+            {hasAnyFilter ? `${total.toLocaleString()} matching jobs` : 'Recent jobs'}
           </h2>
           <p className="text-[11px] text-[color:var(--color-text-secondary)]">
-            {hasActive ? 'auto-refreshing every 5 s' : 'showing last 30'}
+            {hasActive ? 'auto-refreshing every 5 s' : ''}
           </p>
         </div>
 
-        <JobsTable jobs={jobs} />
-        <JobsCardList jobs={jobs} />
+        <AdvancedFilters columns={columns} />
+
+        <JobsTable jobs={rows} />
+        <JobsCardList jobs={rows} />
       </section>
+
+      <Pagination page={page} size={size} total={total} pageSizeOptions={PAGE_SIZES} />
 
       <AutoRefresh enabled={hasActive} />
     </div>
   )
+}
+
+function clampInt(
+  raw: string | string[] | undefined,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  if (typeof raw !== 'string') return fallback
+  const n = Number.parseInt(raw, 10)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(Math.max(n, min), max)
+}
+
+function clampEnum<T extends number>(
+  raw: string | string[] | undefined,
+  allowed: readonly T[],
+  fallback: T,
+): T {
+  if (typeof raw !== 'string') return fallback
+  const n = Number.parseInt(raw, 10)
+  return (allowed as readonly number[]).includes(n) ? (n as T) : fallback
 }

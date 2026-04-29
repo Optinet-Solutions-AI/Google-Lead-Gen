@@ -1,4 +1,7 @@
 import 'server-only'
+import { applyFilters, applySorts } from '@/lib/filters/apply'
+import { JOBS_COLUMNS } from '@/lib/filters/columns-jobs'
+import type { Filter, Sort } from '@/lib/filters/types'
 import { createServiceClient } from '@/lib/supabase/service'
 
 export type GoLoginProfile = {
@@ -58,6 +61,7 @@ export type ScrapeJob = {
   scheduled_at: string | null
   with_enrichment: boolean
   enrichment_status: string | null
+  language: string | null
   error_message: string | null
   result_summary: Record<string, unknown> | null
   batch_id: number | null
@@ -202,26 +206,79 @@ function bump(target: StageStatus, ts: string | null, positive: boolean, errored
 }
 
 export async function listRecentJobs(limit = 30): Promise<ScrapeJob[]> {
+  return queryJobs({ limit, page: 1, size: limit }).then(r => r.rows)
+}
+
+export type JobsQueryOptions = {
+  page: number
+  size: number
+  /** Hard cap on rows returned. Used for the "recent N" callsite. */
+  limit?: number
+  /** Free-text search across keyword, country_code, error_message. */
+  q?: string
+  filters?: Filter[]
+  sorts?: Sort[]
+}
+
+export type JobsQueryResult = {
+  rows: ScrapeJob[]
+  total: number
+}
+
+const JOBS_SEARCH_COLUMNS = ['keyword', 'country_code', 'error_message']
+
+export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult> {
   const svc = createServiceClient()
-  const { data, error } = await svc
+  let query = svc
     .from('scrape_queue')
     .select(
       [
         'id, keyword, country_code, pages, priority, status, attempts',
         'claimed_by, started_at, completed_at, scheduled_at',
-        'with_enrichment, enrichment_status',
+        'with_enrichment, enrichment_status, language',
         'error_message, result_summary, batch_id, created_at',
       ].join(', '),
+      { count: 'exact' },
     )
-    .order('created_at', { ascending: false })
-    .limit(limit)
+
+  // Free-text search across a small set of columns.
+  if (opts.q && opts.q.trim().length > 0) {
+    const safe = opts.q.replace(/[,()*]/g, '').trim()
+    if (safe.length > 0) {
+      const or = JOBS_SEARCH_COLUMNS.map(c => `${c}.ilike.%${safe}%`).join(',')
+      query = query.or(or)
+    }
+  }
+
+  // Advanced filters from URL (`?f=`).
+  if (opts.filters && opts.filters.length > 0) {
+    query = applyFilters(query, opts.filters, JOBS_COLUMNS)
+  }
+
+  // Advanced multi-sort, falling back to created_at desc.
+  if (opts.sorts && opts.sorts.length > 0) {
+    query = applySorts(query, opts.sorts, JOBS_COLUMNS)
+  } else {
+    query = query.order('created_at', { ascending: false })
+  }
+
+  // Pagination: explicit page/size when given, else honour the legacy `limit`.
+  if (opts.limit && opts.limit > 0) {
+    query = query.range(0, opts.limit - 1)
+  } else {
+    const from = Math.max(0, (opts.page - 1) * opts.size)
+    query = query.range(from, from + opts.size - 1)
+  }
+
+  const { data, count, error } = await query
   if (error) throw error
   const jobs = (data ?? []) as unknown as Omit<ScrapeJob, 'enrichment'>[]
-
   const completedIds = jobs.filter(j => j.status === 'completed').map(j => j.id)
   const enrichmentByJob = await fetchEnrichmentStatus(completedIds)
-
-  return jobs.map(j => ({ ...j, enrichment: enrichmentByJob.get(j.id) ?? {} }))
+  return {
+    rows: jobs.map(j => ({ ...j, enrichment: enrichmentByJob.get(j.id) ?? {} })),
+    total: count ?? jobs.length,
+  }
 }
 
 /** One query, aggregated in TS — cheap for ~30 jobs × ~10 rows each. */

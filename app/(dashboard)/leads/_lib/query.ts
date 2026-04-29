@@ -1,4 +1,7 @@
 import 'server-only'
+import { applyFilters, applySorts } from '@/lib/filters/apply'
+import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
+import type { Filter, Sort } from '@/lib/filters/types'
 import { createServiceClient } from '@/lib/supabase/service'
 
 export const LEAD_PAGE_SIZES = [10, 25, 50, 100] as const
@@ -45,6 +48,7 @@ export type LeadRow = {
 export type LeadsQueryOptions = {
   page: number
   size: number
+  /** Legacy primary-sort + order — used when no `sorts[]` is provided. */
   sort: string
   order: 'asc' | 'desc'
   q: string
@@ -52,6 +56,10 @@ export type LeadsQueryOptions = {
   resultType: string
   /** If set, only rows whose scrape_job_id matches (single-job detail page). */
   scrapeJobId?: string
+  /** Advanced filter rows from the URL (parsed `?f=` params). */
+  filters?: Filter[]
+  /** Advanced sort priority list (parsed `?s=` params). */
+  sorts?: Sort[]
 }
 
 export type LeadsQueryResult = {
@@ -99,14 +107,22 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
   if (opts.countryCode) query = query.eq('country_code', opts.countryCode)
   if (opts.resultType) query = query.eq('result_type', opts.resultType)
 
+  // Advanced filter rows (`?f=col:op:val`). Validated against LEADS_COLUMNS.
+  if (opts.filters && opts.filters.length > 0) {
+    query = applyFilters(query, opts.filters, LEADS_COLUMNS)
+  }
+
   // PPC always groups above Organic regardless of the user's column-click sort.
   // PPC > Organic alphabetically, so DESC puts PPC first; nullsFirst:false
   // keeps null result_type rows at the very bottom.
   query = query.order('result_type', { ascending: false, nullsFirst: false })
 
-  // User's column-click sort acts as the secondary key within each group.
-  // Skip if they explicitly chose result_type (avoid double-sort).
-  if (opts.sort !== 'result_type') {
+  // Advanced multi-sort takes precedence over the legacy single-sort fields.
+  if (opts.sorts && opts.sorts.length > 0) {
+    query = applySorts(query, opts.sorts, LEADS_COLUMNS)
+  } else if (opts.sort !== 'result_type') {
+    // Legacy: user's column-click sort acts as the secondary key within
+    // each result_type group.
     query = query.order(opts.sort, { ascending: opts.order === 'asc', nullsFirst: false })
   }
 

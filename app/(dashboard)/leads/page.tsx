@@ -1,6 +1,8 @@
+import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
+import { parseFilters, parseSorts } from '@/lib/filters/serialize'
+import type { ColumnDef } from '@/lib/filters/types'
 import { Pagination } from '../monday/_components/pagination'
-import { SearchBar } from '../monday/_components/search-bar'
-import { LeadsFilters } from './_components/leads-filters'
+import { AdvancedFilters } from '../_components/advanced-filters'
 import { LeadsTable } from './_components/leads-table'
 import {
   DEFAULT_LEAD_PAGE_SIZE,
@@ -27,11 +29,37 @@ export default async function LeadsPage({
   const q = typeof sp.q === 'string' ? sp.q : ''
   const countryCode = typeof sp.country_code === 'string' ? sp.country_code : ''
   const resultType = typeof sp.result_type === 'string' ? sp.result_type : ''
+  const filters = parseFilters(sp.f)
+  const sorts = parseSorts(sp.s)
 
   const [{ rows, total }, countries] = await Promise.all([
-    queryLeads({ page, size, sort, order, q, countryCode, resultType }),
+    queryLeads({
+      page,
+      size,
+      sort,
+      order,
+      q,
+      countryCode,
+      resultType,
+      filters,
+      sorts,
+    }),
     listCountryFilters(),
   ])
+
+  // Inject the live country list into the column registry so the dropdown
+  // in the filter popover shows the same countries as the legacy filter.
+  const columns: ReadonlyArray<ColumnDef> = LEADS_COLUMNS.map(c =>
+    c.key === 'country_code'
+      ? {
+          ...c,
+          options: countries.map(co => ({
+            value: co.code,
+            label: `${co.name} (${co.code})`,
+          })),
+        }
+      : c,
+  )
 
   return (
     <div className="flex min-w-0 flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
@@ -46,10 +74,7 @@ export default async function LeadsPage({
         </p>
       </header>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <SearchBar />
-        <LeadsFilters countries={countries} />
-      </div>
+      <AdvancedFilters columns={columns} preserve={['country_code', 'result_type']} />
 
       <LeadsTable rows={rows} />
 
