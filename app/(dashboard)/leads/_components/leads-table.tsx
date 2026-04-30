@@ -124,7 +124,7 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
               )}
               {jobContext ? (
                 <>
-                  <Th><SortHeader columnKey="domain" label="Domain" sortable /></Th>
+                  <Th><SortHeader columnKey="domain" label="Clean domain" sortable /></Th>
                   <Th><SortHeader columnKey="result_type" label="Type" sortable /></Th>
                   <Th><SortHeader columnKey="overall_position" label="Pos" sortable /></Th>
                 </>
@@ -137,7 +137,7 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                   <Th><SortHeader columnKey="domain" label="Domain" sortable /></Th>
                 </>
               )}
-              <Th>URL</Th>
+              <Th>{jobContext ? 'Full URL' : 'URL'}</Th>
               <Th>Is on Monday?</Th>
               <Th>Is an affiliate?</Th>
               <Th>Rooster brand?</Th>
