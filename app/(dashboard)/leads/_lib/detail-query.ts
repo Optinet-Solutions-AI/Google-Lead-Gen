@@ -52,6 +52,9 @@ export type LeadDetail = {
     has_s_tags: boolean | null
     s_tags_checked_at: string | null
     screenshot_content_link: string | null
+    pushed_to_monday_at: string | null
+    monday_pushed_item_id: string | null
+    monday_pushed_by: string | null
   } | null
   contact: ContactDetail | null
   stags: StagDetail[]
@@ -76,6 +79,7 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
           'is_rooster_partner, brand, rooster_brands',
           'has_contact_details, has_s_tags, s_tags_checked_at',
           'screenshot_content_link',
+          'pushed_to_monday_at, monday_pushed_item_id, monday_pushed_by',
         ].join(', '),
       )
       .eq('id', leadId)

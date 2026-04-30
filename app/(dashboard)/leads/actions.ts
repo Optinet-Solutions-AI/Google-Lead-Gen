@@ -5,6 +5,7 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { logActivity } from '@/lib/activity-log'
+import { pushLeadToMonday } from '@/lib/monday/push-lead'
 
 // getLeadDetails used to live here as a server action but server actions
 // trigger a full page-tree re-render on every call, which made the drawer
@@ -240,6 +241,61 @@ export async function setStagLabel(formData: FormData): Promise<void> {
     overrideColumn: 'is_stag_overridden_at',
     logAction: 'override.stag',
   })
+}
+
+// ============================================================
+// Push to Monday — manual, per-lead.
+//
+// Distinct from the Monday duplicate-check stage (which only READS the
+// Monday replica). This actively CREATES a new item on the Leads board
+// using the legacy column-id mapping from the n8n workflow. Triggered
+// from the lead detail drawer so the user explicitly chooses which
+// leads land on Monday.
+// ============================================================
+
+export type PushToMondayState =
+  | { status: 'ok'; message: string; monday_item_id: string }
+  | { status: 'error'; error: string }
+  | null
+
+export async function pushLeadToMondayAction(
+  _prev: PushToMondayState,
+  formData: FormData,
+): Promise<PushToMondayState> {
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { status: 'error', error: 'Not signed in.' }
+
+  const leadId = Number(formData.get('lead_id'))
+  if (!Number.isFinite(leadId)) return { status: 'error', error: 'Missing lead id.' }
+
+  const result = await pushLeadToMonday(leadId, { pushedBy: user.email ?? user.id })
+  if (!result.ok) {
+    return { status: 'error', error: result.error }
+  }
+
+  await logActivity({
+    action: 'monday.push_lead',
+    entity_type: 'lead',
+    entity_id: leadId,
+    details: {
+      monday_item_id: result.monday_item_id,
+      attached_file: result.attached_file,
+      s_tag_update_posted: result.s_tag_update_posted,
+    },
+  })
+
+  revalidatePath('/leads')
+  revalidatePath('/scrape', 'layout')
+  return {
+    status: 'ok',
+    message: `Pushed to Monday (item ${result.monday_item_id}).${
+      result.attached_file ? ' Screenshot attached.' : ''
+    }${result.s_tag_update_posted ? ' S-tags posted as update.' : ''}`,
+    monday_item_id: result.monday_item_id,
+  }
 }
 
 // ============================================================

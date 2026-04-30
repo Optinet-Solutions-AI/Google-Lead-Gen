@@ -1,9 +1,19 @@
 'use client'
 
-import { useEffect, useState, useTransition } from 'react'
-import { X, ExternalLink, Mail, Phone, Tag, Trash2 } from 'lucide-react'
+import { useActionState, useEffect, useState, useTransition } from 'react'
+import {
+  CheckCircle2,
+  ExternalLink,
+  Loader2,
+  Mail,
+  Phone,
+  Send,
+  Tag,
+  Trash2,
+  X,
+} from 'lucide-react'
 import type { LeadDetail } from '../_lib/detail-query'
-import { deleteLeadScreenshot } from '../actions'
+import { deleteLeadScreenshot, pushLeadToMondayAction, type PushToMondayState } from '../actions'
 
 type Detail = LeadDetail
 
@@ -155,6 +165,13 @@ function DetailBody({ detail }: { detail: Detail }) {
 
   return (
     <div className="flex flex-col gap-4 p-4 text-[12px]">
+      <PushToMondayPanel
+        leadId={lead.id}
+        pushedAt={lead.pushed_to_monday_at}
+        pushedItemId={lead.monday_pushed_item_id}
+        pushedBy={lead.monday_pushed_by}
+      />
+
       <Section title="Context">
         <KV label="Keyword" value={lead.keyword ?? '—'} />
         <KV label="Country" value={[lead.country, lead.country_code].filter(Boolean).join(' · ') || '—'} />
@@ -450,5 +467,102 @@ function KV({ label, value }: { label: string; value: React.ReactNode }) {
       <dt className="shrink-0 text-[11px] text-[color:var(--color-text-secondary)]">{label}:</dt>
       <dd className="min-w-0 flex-1 text-[11px] text-[color:var(--color-text-primary)]">{value}</dd>
     </div>
+  )
+}
+
+function PushToMondayPanel({
+  leadId,
+  pushedAt,
+  pushedItemId,
+  pushedBy,
+}: {
+  leadId: number
+  pushedAt: string | null
+  pushedItemId: string | null
+  pushedBy: string | null
+}) {
+  const initial: PushToMondayState = null
+  const [state, action, pending] = useActionState(pushLeadToMondayAction, initial)
+  const [confirming, setConfirming] = useState(false)
+
+  // After a successful push the row's pushedAt won't reflect immediately
+  // (drawer fetches its own data via /api/leads/[id]) — but the action
+  // returns the new item_id so we can switch to "already pushed" UI right
+  // away.
+  const successItemId =
+    state?.status === 'ok' ? state.monday_item_id : null
+  const effectivePushedAt = pushedAt ?? (state?.status === 'ok' ? new Date().toISOString() : null)
+  const effectiveItemId = pushedItemId ?? successItemId
+
+  if (effectivePushedAt) {
+    return (
+      <section className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50/50 px-3 py-2">
+        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold text-emerald-800">
+            Pushed to Monday
+          </p>
+          <p className="truncate text-[10px] text-emerald-700/80">
+            Item {effectiveItemId} · {new Date(effectivePushedAt).toLocaleString()}
+            {pushedBy ? ` · by ${pushedBy}` : ''}
+          </p>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section className="flex flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+          Push to Monday
+        </p>
+        {!confirming && (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/15 px-2.5 py-1 text-[11px] font-semibold text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent)]/30"
+          >
+            <Send className="h-3 w-3" />
+            Push to Monday
+          </button>
+        )}
+      </div>
+      <p className="text-[10px] text-[color:var(--color-text-secondary)]">
+        Creates a new item on the <em>Leads</em> board with this lead&apos;s
+        keyword, country, URL, source, primary contact email, and (if
+        present) attaches the screenshot + posts s-tags as an item update.
+      </p>
+      {confirming && (
+        <form action={action} className="flex items-center gap-2">
+          <input type="hidden" name="lead_id" value={leadId} />
+          <button
+            type="submit"
+            disabled={pending}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/30 px-2.5 py-1 text-[11px] font-semibold hover:bg-[color:var(--color-accent)]/50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {pending ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Send className="h-3 w-3" />
+            )}
+            Confirm push
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirming(false)}
+            disabled={pending}
+            className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] hover:bg-[color:var(--color-bg-secondary)]"
+          >
+            Cancel
+          </button>
+        </form>
+      )}
+      {state?.status === 'error' && (
+        <p className="rounded-md bg-red-50 px-2 py-1 text-[11px] text-red-700">
+          {state.error}
+        </p>
+      )}
+    </section>
   )
 }
