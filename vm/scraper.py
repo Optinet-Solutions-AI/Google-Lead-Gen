@@ -498,49 +498,55 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
         check_for_captcha(driver)
         accept_bing_consent(driver)
 
-    # Wait for the results container, then for the FIRST b_algo block
-    # to materialize. Bing renders results progressively; grabbing
-    # page_source immediately after b_results appears can land in
-    # the middle of that paint.
+    # Bing now serves a JavaScript-rendered shell — page_source captured
+    # right after navigation has 0 result links because the result blocks
+    # (`[data-bm]` markers) hydrate from JS later. Wait for actual
+    # external links to populate, force lazy rendering with a scroll,
+    # then re-grab page_source. Up to 35s total.
     #
-    # `b_results` is the long-stable id but Bing has experimented with
-    # alternatives during redesigns — wait for any of the known ones
-    # before bailing.
-    container_found = False
-    try:
-        WebDriverWait(driver, 20).until(
-            lambda d: (
-                d.find_elements(By.ID, "b_results")
-                or d.find_elements(By.ID, "b_content")
-                or d.find_elements(By.CSS_SELECTOR, "main")
-            )
-        )
-        container_found = True
-    except Exception:
-        print("[WARN] Bing results container not found within 20s")
-    if not container_found:
-        # Fall through anyway — capture page_source for diagnostics so
-        # we can see what Bing actually returned. Better than failing
-        # silently.
-        landed = driver.current_url
-        print(f"[WARN] Landed at: {landed}")
+    # We don't wait for a specific container ID anymore (Bing has
+    # rotated through `b_results`, `b_content`, and several others).
+    # We wait for the result CONTENT to actually exist — at least 5
+    # outbound `<a>` tags pointing to non-bing/microsoft domains.
+
+    def _outbound_link_count(d):
         try:
-            page_source = driver.page_source
-        except Exception as exc:
-            print(f"[WARN] could not read page_source after timeout: {exc}")
-            return []
-        _maybe_save_bing_debug(page_source, driver.current_url)
-        return []
-    try:
-        WebDriverWait(driver, 8).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "li.b_algo"))
-        )
-    except Exception:
-        # Not fatal — some queries genuinely return zero organic.
-        # Continue and let the parser see what's there.
-        pass
-    # Give the rest of the SERP time to settle (lazy-loaded blocks,
-    # ad rendering, autosuggest panes shifting layout).
+            return d.execute_script("""
+                var anchors = document.querySelectorAll('a[href^="http"]');
+                var count = 0;
+                for (var i = 0; i < anchors.length; i++) {
+                  var h = anchors[i].href.toLowerCase();
+                  if (h.indexOf('bing.com') === -1
+                      && h.indexOf('microsoft.com') === -1
+                      && h.indexOf('msn.com') === -1
+                      && h.indexOf('live.com') === -1) {
+                    count++;
+                    if (count >= 5) return count;
+                  }
+                }
+                return count;
+            """)
+        except Exception:
+            return 0
+
+    deadline = time.time() + 35
+    scrolled = False
+    while time.time() < deadline:
+        if _outbound_link_count(driver) >= 5:
+            break
+        # Halfway through, force a scroll to trigger any lazy hydration.
+        if not scrolled and time.time() > deadline - 20:
+            try:
+                driver.execute_script(
+                    "window.scrollTo(0, document.body.scrollHeight / 2);"
+                )
+                scrolled = True
+                print("[DEBUG] Bing scrolled to force lazy rendering")
+            except Exception as exc:
+                print(f"[WARN] scroll failed: {exc}")
+        time.sleep(1)
+
+    # Final settle — even if links exist, give Bing a moment to finish.
     time.sleep(2)
 
     page_source = driver.page_source
@@ -553,6 +559,14 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     # than a real SERP.
     if len(page_source) < 5000:
         print(f"[WARN] Bing page_source is only {len(page_source)} bytes — likely an interstitial")
+    final_link_count = _outbound_link_count(driver)
+    print(f"[DEBUG] Bing final outbound-link count: {final_link_count}")
+    if final_link_count == 0:
+        print(
+            "[WARN] Bing returned a JS-only shell (no result links rendered). "
+            "Likely server-side bot detection on this proxy/fingerprint combination."
+        )
+        return []
     results = []
     position = 1
     overall_position = 1
@@ -590,12 +604,14 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     # ----- Organic -----
     # Bing uses a few wrappers depending on the result kind. b_algo is
     # the standard, b_algo_group is a grouped result, b_algoSlug shows
-    # up for some answer-style results. Iterate over all of them and
-    # rely on _bing_first_http_anchor + seen_hrefs to dedupe.
+    # up for some answer-style results, and the newest layouts wrap
+    # results in [data-bm] block markers without a b_algo class at all.
+    # Iterate over all of them and rely on _bing_first_http_anchor +
+    # seen_hrefs to dedupe.
     organic_blocks = soup.select(
         "li.b_algo, li.b_algo_group, li.b_algoSlug, "
         "ol#b_results > li.b_ans, "
-        "li[data-bm]"
+        "li[data-bm], div[data-bm]"
     )
     print(f"[DEBUG] Bing organic-like blocks found: {len(organic_blocks)}")
     for algo in organic_blocks:
