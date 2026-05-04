@@ -87,7 +87,7 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
       action={formAction}
       className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-4"
     >
-      <div className="grid gap-3 md:grid-cols-[1fr_160px_140px_100px_100px] md:items-start">
+      <div className="grid gap-3 md:grid-cols-[1fr_120px_160px_140px_100px_100px] md:items-start">
         <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
           <span className="flex items-baseline justify-between">
             <span>Keywords</span>
@@ -104,6 +104,19 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
             placeholder={'best online casinos\ntop 10 casinos 2026\nneue online casinos'}
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-secondary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
           />
+        </label>
+
+        <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
+          Search engine
+          <select
+            name="search_engine"
+            defaultValue="google"
+            title="Bing only changes the SERP capture step. Enrichment, redirect resolution, and screenshots all run in Chromium regardless."
+            className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
+          >
+            <option value="google">Google</option>
+            <option value="bing">Bing</option>
+          </select>
         </label>
 
         <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">

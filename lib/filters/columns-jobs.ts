@@ -17,6 +17,11 @@ const ENRICHMENT_STATUS_OPTIONS = [
   { value: 'complete', label: 'Complete' },
 ] as const
 
+const SEARCH_ENGINE_OPTIONS = [
+  { value: 'google', label: 'Google' },
+  { value: 'bing', label: 'Bing' },
+] as const
+
 /** Registry for the /scrape jobs table. Country options are injected at
  *  render time from the DB. */
 export const JOBS_COLUMNS: ReadonlyArray<ColumnDef> = [
@@ -29,6 +34,7 @@ export const JOBS_COLUMNS: ReadonlyArray<ColumnDef> = [
   { key: 'priority', label: 'Priority', type: 'number', filterable: true, sortable: true },
   { key: 'attempts', label: 'Attempts', type: 'number', filterable: true, sortable: true },
   { key: 'language', label: 'Language', type: 'text', filterable: true, sortable: true },
+  { key: 'search_engine', label: 'Search engine', type: 'select', filterable: true, sortable: true, options: [...SEARCH_ENGINE_OPTIONS] },
   { key: 'batch_id', label: 'Batch', type: 'number', filterable: true, sortable: true },
   { key: 'created_at', label: 'Queued at', type: 'date', filterable: true, sortable: true },
   { key: 'started_at', label: 'Started at', type: 'date', filterable: true, sortable: true },

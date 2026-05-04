@@ -62,6 +62,7 @@ export type ScrapeJob = {
   with_enrichment: boolean
   enrichment_status: string | null
   language: string | null
+  search_engine: 'google' | 'bing' | null
   error_message: string | null
   result_summary: Record<string, unknown> | null
   batch_id: number | null
@@ -235,7 +236,7 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
       [
         'id, keyword, country_code, pages, priority, status, attempts',
         'claimed_by, started_at, completed_at, scheduled_at',
-        'with_enrichment, enrichment_status, language',
+        'with_enrichment, enrichment_status, language, search_engine',
         'error_message, result_summary, batch_id, created_at',
       ].join(', '),
       { count: 'exact' },

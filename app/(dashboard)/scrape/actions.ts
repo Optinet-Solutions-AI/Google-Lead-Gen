@@ -80,6 +80,8 @@ export async function enqueueScrape(
   const languageRaw = String(formData.get('language') ?? '').trim().toLowerCase()
   // Allow only 2-letter ISO 639-1 codes; default to English.
   const language = /^[a-z]{2}$/.test(languageRaw) ? languageRaw : 'en'
+  const engineRaw = String(formData.get('search_engine') ?? '').trim().toLowerCase()
+  const searchEngine: 'google' | 'bing' = engineRaw === 'bing' ? 'bing' : 'google'
   const scheduledAtRaw = String(formData.get('scheduled_at') ?? '').trim()
   let scheduledAtIso: string | null = null
   if (scheduledAtRaw) {
@@ -137,6 +139,7 @@ export async function enqueueScrape(
     with_enrichment: withEnrichment,
     scheduled_at: scheduledAtIso,
     language: finalLang,
+    search_engine: searchEngine,
   }))
   const { error: insertError } = await svc.from('scrape_queue').insert(rows)
   if (insertError) return { status: 'error', error: insertError.message }
@@ -157,6 +160,7 @@ export async function enqueueScrape(
       with_enrichment: withEnrichment,
       scheduled_at: scheduledAtIso,
       language: finalLang,
+      search_engine: searchEngine,
     },
   })
 
@@ -763,7 +767,7 @@ export async function rerunScrapeFiltered(
   const svc = createServiceClient()
   const { data: job, error: readErr } = await svc
     .from('scrape_queue')
-    .select('keyword, country_code, pages, priority, with_enrichment')
+    .select('keyword, country_code, pages, priority, with_enrichment, language, search_engine')
     .eq('id', jobId)
     .maybeSingle()
   if (readErr) return { status: 'error', error: readErr.message }
@@ -774,6 +778,8 @@ export async function rerunScrapeFiltered(
     pages: number
     priority: number
     with_enrichment: boolean
+    language: string | null
+    search_engine: 'google' | 'bing' | null
   }
 
   const { error: insertError } = await svc.from('scrape_queue').insert({
@@ -782,6 +788,8 @@ export async function rerunScrapeFiltered(
     pages: j.pages,
     priority: j.priority,
     with_enrichment: j.with_enrichment,
+    language: j.language ?? 'en',
+    search_engine: j.search_engine ?? 'google',
     result_type_filter: filterRaw,
   })
   if (insertError) return { status: 'error', error: insertError.message }
