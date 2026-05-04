@@ -464,6 +464,17 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
                 time.sleep(random.uniform(0.03, 0.12))
             time.sleep(random.uniform(0.4, 0.9))
             search_input.send_keys(Keys.RETURN)
+            # Wait until the URL contains /search? — confirms the form
+            # actually submitted and we're on a SERP, not still on the
+            # homepage. Bing's submit can be slow when the proxy is
+            # cold; wait up to 15s.
+            try:
+                WebDriverWait(driver, 15).until(
+                    lambda d: "/search" in d.current_url
+                )
+                print(f"[INFO] Bing post-submit URL: {driver.current_url}")
+            except Exception:
+                print("[WARN] Bing did not navigate to /search after submit; URL still " + driver.current_url)
         except Exception as exc:
             # Fallback: if the search box vanished or moved, fall
             # back to direct URL nav so we still get something.
@@ -491,12 +502,34 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     # to materialize. Bing renders results progressively; grabbing
     # page_source immediately after b_results appears can land in
     # the middle of that paint.
+    #
+    # `b_results` is the long-stable id but Bing has experimented with
+    # alternatives during redesigns — wait for any of the known ones
+    # before bailing.
+    container_found = False
     try:
-        WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.ID, "b_results"))
+        WebDriverWait(driver, 20).until(
+            lambda d: (
+                d.find_elements(By.ID, "b_results")
+                or d.find_elements(By.ID, "b_content")
+                or d.find_elements(By.CSS_SELECTOR, "main")
+            )
         )
+        container_found = True
     except Exception:
-        print("[WARN] Bing results container not found")
+        print("[WARN] Bing results container not found within 20s")
+    if not container_found:
+        # Fall through anyway — capture page_source for diagnostics so
+        # we can see what Bing actually returned. Better than failing
+        # silently.
+        landed = driver.current_url
+        print(f"[WARN] Landed at: {landed}")
+        try:
+            page_source = driver.page_source
+        except Exception as exc:
+            print(f"[WARN] could not read page_source after timeout: {exc}")
+            return []
+        _maybe_save_bing_debug(page_source, driver.current_url)
         return []
     try:
         WebDriverWait(driver, 8).until(
@@ -511,7 +544,9 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     time.sleep(2)
 
     page_source = driver.page_source
-    _maybe_save_bing_debug(page_source, url)
+    landed_url = driver.current_url
+    print(f"[INFO] Bing landed URL: {landed_url}")
+    _maybe_save_bing_debug(page_source, landed_url)
     soup = BeautifulSoup(page_source, "html.parser")
     # Crude size sanity check — if the page is suspiciously small, we
     # probably hit a consent banner / interstitial / redirect rather
