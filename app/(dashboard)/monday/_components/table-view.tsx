@@ -11,6 +11,7 @@ import { DataTable } from './data-table'
 import { ItemDrawer } from './item-drawer'
 import { Pagination } from './pagination'
 import { SearchBar } from './search-bar'
+import { SyncNowButton } from './sync-now-button'
 import { TableKindTabs } from './table-kind-tabs'
 import { TableNav } from './table-nav'
 
@@ -63,9 +64,11 @@ export async function TableView({ boardSlug, kind, searchParams }: Props) {
             {config.label}
           </h1>
           <p className="mt-0.5 text-[12px] text-[color:var(--color-text-secondary)]">
-            {total.toLocaleString()} row{total === 1 ? '' : 's'}
+            {total.toLocaleString()} row{total === 1 ? '' : 's'} · webhook keeps
+            this in sync; press the button if you need to force a full re-sync.
           </p>
         </div>
+        <SyncNowButton />
       </header>
 
       <div className="mb-3">

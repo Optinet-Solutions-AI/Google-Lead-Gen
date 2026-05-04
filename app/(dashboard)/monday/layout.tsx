@@ -1,3 +1,9 @@
+// The manual "Sync from Monday" server action runs a full re-sync of
+// all 4 boards which can take 3-5 minutes. Server actions inherit the
+// max execution time of their hosting segment, so bump the limit here
+// to match /api/monday/sync (Vercel Pro caps this at 300s).
+export const maxDuration = 300
+
 export default function MondayLayout({
   children,
 }: Readonly<{
