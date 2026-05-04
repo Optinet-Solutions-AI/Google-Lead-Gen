@@ -369,6 +369,10 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     driver.get(url)
     check_for_captcha(driver)
 
+    # Wait for the results container, then for the FIRST b_algo block
+    # to materialize. Bing renders results progressively; grabbing
+    # page_source immediately after b_results appears can land in
+    # the middle of that paint.
     try:
         WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.ID, "b_results"))
@@ -376,8 +380,25 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     except Exception:
         print("[WARN] Bing results container not found")
         return []
+    try:
+        WebDriverWait(driver, 8).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "li.b_algo"))
+        )
+    except Exception:
+        # Not fatal — some queries genuinely return zero organic.
+        # Continue and let the parser see what's there.
+        pass
+    # Give the rest of the SERP time to settle (lazy-loaded blocks,
+    # ad rendering, autosuggest panes shifting layout).
+    time.sleep(2)
 
-    soup = BeautifulSoup(driver.page_source, "html.parser")
+    page_source = driver.page_source
+    soup = BeautifulSoup(page_source, "html.parser")
+    # Crude size sanity check — if the page is suspiciously small, we
+    # probably hit a consent banner / interstitial / redirect rather
+    # than a real SERP.
+    if len(page_source) < 5000:
+        print(f"[WARN] Bing page_source is only {len(page_source)} bytes — likely an interstitial")
     results = []
     position = 1
     overall_position = 1

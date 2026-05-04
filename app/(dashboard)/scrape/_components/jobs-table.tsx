@@ -67,6 +67,22 @@ function StatusBadge({ job }: { job: ScrapeJob }) {
   )
 }
 
+function EngineBadge({ engine }: { engine: ScrapeJob['search_engine'] }) {
+  const e = engine ?? 'google'
+  const styles =
+    e === 'bing'
+      ? 'bg-cyan-100 text-cyan-800'
+      : 'bg-blue-100 text-blue-800'
+  return (
+    <span
+      title={`Scraped on ${e === 'bing' ? 'Bing' : 'Google'}`}
+      className={['inline-block rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide', styles].join(' ')}
+    >
+      {e === 'bing' ? 'Bing' : 'Google'}
+    </span>
+  )
+}
+
 function PipelineBadges({
   status,
   enrichment,
@@ -117,6 +133,7 @@ export function JobsTable({ jobs }: Props) {
             <Th>{''}</Th>
             <Th>Keyword</Th>
             <Th>Country</Th>
+            <Th>Engine</Th>
             <Th>Pages</Th>
             <Th>Status</Th>
             <Th>Started</Th>
@@ -142,6 +159,9 @@ export function JobsTable({ jobs }: Props) {
                   {job.keyword}
                 </LinkTd>
                 <LinkTd href={href}>{job.country_code}</LinkTd>
+                <LinkTd href={href}>
+                  <EngineBadge engine={job.search_engine} />
+                </LinkTd>
                 <LinkTd href={href}>{job.pages}</LinkTd>
                 <LinkTd href={href}>
                   <StatusBadge job={job} />
@@ -191,8 +211,9 @@ export function JobsCardList({ jobs }: Props) {
             </div>
             <StatusBadge job={job} />
           </div>
-          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-text-secondary)]">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-text-secondary)]">
             <span>{job.country_code}</span>
+            <EngineBadge engine={job.search_engine} />
             <span>{job.pages} {job.pages === 1 ? 'page' : 'pages'}</span>
             <span>{formatDuration(job.started_at, job.completed_at)}</span>
             <ResultsCell summary={job.result_summary} mobile />

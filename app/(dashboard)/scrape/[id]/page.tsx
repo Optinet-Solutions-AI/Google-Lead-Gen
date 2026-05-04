@@ -36,6 +36,8 @@ type Job = {
   completed_at: string | null
   error_message: string | null
   result_summary: Record<string, unknown> | null
+  search_engine: 'google' | 'bing' | null
+  language: string | null
   created_at: string
 }
 
@@ -59,7 +61,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const { data: jobRaw, error: jobError } = await svc
     .from('scrape_queue')
     .select(
-      'id, keyword, country_code, pages, status, attempts, batch_id, claimed_by, started_at, completed_at, error_message, result_summary, created_at',
+      'id, keyword, country_code, pages, status, attempts, batch_id, claimed_by, started_at, completed_at, error_message, result_summary, search_engine, language, created_at',
     )
     .eq('id', id)
     .maybeSingle()
@@ -112,11 +114,13 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
 
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="truncate text-[16px] font-semibold text-[color:var(--color-text-primary)]">
-              {job.keyword}
+            <h1 className="flex flex-wrap items-center gap-2 text-[16px] font-semibold text-[color:var(--color-text-primary)]">
+              <span className="truncate">{job.keyword}</span>
+              <EngineBadge engine={job.search_engine} />
             </h1>
             <p className="mt-0.5 text-[12px] text-[color:var(--color-text-secondary)]">
               {job.country_code} · {job.pages} page{job.pages === 1 ? '' : 's'}
+              {job.language && job.language !== 'en' && <> · lang {job.language}</>}
               {job.batch_id !== null && <> · batch {job.batch_id}</>}
               {' · '}
               <span className="text-[color:var(--color-text-primary)]">
@@ -159,6 +163,23 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         }
       />
     </div>
+  )
+}
+
+function EngineBadge({ engine }: { engine: 'google' | 'bing' | null }) {
+  const e = engine ?? 'google'
+  const styles =
+    e === 'bing' ? 'bg-cyan-100 text-cyan-800' : 'bg-blue-100 text-blue-800'
+  return (
+    <span
+      title={`Scraped on ${e === 'bing' ? 'Bing' : 'Google'}`}
+      className={[
+        'inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+        styles,
+      ].join(' ')}
+    >
+      {e === 'bing' ? 'Bing' : 'Google'}
+    </span>
   )
 }
 
