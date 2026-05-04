@@ -79,7 +79,13 @@ alter table public.google_lead_gen_table
 --      in priority: affiliates → leads → not_relevant → email_undelivered
 --   2. Same registered domain (catches subdomain variants) across the
 --      4 boards in the same priority order
+--
+-- Note: must DROP first because we're adding `match_kind` to the
+-- return table — Postgres treats that as a different return type and
+-- CREATE OR REPLACE rejects it.
 -- ------------------------------------------------------------
+drop function if exists public.search_website_on_monday(text);
+
 create or replace function public.search_website_on_monday(p_domain text)
 returns table(board text, item_id text, item_name text, match_kind text)
 language sql
