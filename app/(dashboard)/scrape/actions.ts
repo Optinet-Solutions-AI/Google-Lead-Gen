@@ -81,7 +81,14 @@ export async function enqueueScrape(
   // Allow only 2-letter ISO 639-1 codes; default to English.
   const language = /^[a-z]{2}$/.test(languageRaw) ? languageRaw : 'en'
   const engineRaw = String(formData.get('search_engine') ?? '').trim().toLowerCase()
-  const searchEngine: 'google' | 'bing' = engineRaw === 'bing' ? 'bing' : 'google'
+  // The form lets the user pick a single engine OR "both" — the latter
+  // fans out to two queue rows per keyword (one Google, one Bing).
+  const enginesToRun: Array<'google' | 'bing'> =
+    engineRaw === 'both'
+      ? ['google', 'bing']
+      : engineRaw === 'bing'
+        ? ['bing']
+        : ['google']
   const scheduledAtRaw = String(formData.get('scheduled_at') ?? '').trim()
   let scheduledAtIso: string | null = null
   if (scheduledAtRaw) {
@@ -131,16 +138,19 @@ export async function enqueueScrape(
   const allowedLangs = (profile as { languages: string[] | null }).languages ?? ['en']
   const finalLang = allowedLangs.includes(language) || language === 'en' ? language : 'en'
 
-  const rows = keywords.map(keyword => ({
-    keyword,
-    country_code,
-    pages,
-    priority,
-    with_enrichment: withEnrichment,
-    scheduled_at: scheduledAtIso,
-    language: finalLang,
-    search_engine: searchEngine,
-  }))
+  // Cross-product: one row per (keyword × engine).
+  const rows = keywords.flatMap(keyword =>
+    enginesToRun.map(engine => ({
+      keyword,
+      country_code,
+      pages,
+      priority,
+      with_enrichment: withEnrichment,
+      scheduled_at: scheduledAtIso,
+      language: finalLang,
+      search_engine: engine,
+    })),
+  )
   const { error: insertError } = await svc.from('scrape_queue').insert(rows)
   if (insertError) return { status: 'error', error: insertError.message }
 
@@ -148,6 +158,12 @@ export async function enqueueScrape(
   const when = scheduledAtIso
     ? ` to run at ${new Date(scheduledAtIso).toLocaleString()}`
     : ''
+  const engineDescription =
+    enginesToRun.length === 2
+      ? ' on Google + Bing'
+      : enginesToRun[0] === 'bing'
+        ? ' on Bing'
+        : ''
 
   await logActivity({
     action: 'scrape.enqueue',
@@ -160,17 +176,22 @@ export async function enqueueScrape(
       with_enrichment: withEnrichment,
       scheduled_at: scheduledAtIso,
       language: finalLang,
-      search_engine: searchEngine,
+      engines: enginesToRun,
+      rows_inserted: rows.length,
     },
   })
 
   revalidatePath('/scrape')
+  const rowsLabel =
+    enginesToRun.length === 2
+      ? ` (${rows.length} jobs total — one per keyword per engine)`
+      : ''
   return {
     status: 'ok',
     message:
       keywords.length === 1
-        ? `Added "${keywords[0]}" to the queue for ${country_code}${flag}${when}.`
-        : `Added ${keywords.length} keywords to the queue for ${country_code}${flag}${when}.`,
+        ? `Added "${keywords[0]}" to the queue for ${country_code}${engineDescription}${flag}${when}${rowsLabel}.`
+        : `Added ${keywords.length} keyword${keywords.length === 1 ? '' : 's'} to the queue for ${country_code}${engineDescription}${flag}${when}${rowsLabel}.`,
   }
 }
 

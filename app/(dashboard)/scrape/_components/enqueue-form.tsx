@@ -111,11 +111,12 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
           <select
             name="search_engine"
             defaultValue="google"
-            title="Bing only changes the SERP capture step. Enrichment, redirect resolution, and screenshots all run in Chromium regardless."
+            title="Bing only changes the SERP capture step. Enrichment, redirect resolution, and screenshots all run in Chromium regardless. 'Both' queues one Google job + one Bing job per keyword."
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
           >
             <option value="google">Google</option>
             <option value="bing">Bing</option>
+            <option value="both">Both</option>
           </select>
         </label>
 
