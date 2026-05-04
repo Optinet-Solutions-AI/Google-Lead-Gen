@@ -227,6 +227,19 @@ function RerunSection({ job }: { job: ScrapeJob }) {
       <div className="flex flex-wrap gap-2">
         <form action={action}>
           <input type="hidden" name="job_id" value={job.id} />
+          <input type="hidden" name="result_type_filter" value="both" />
+          <button
+            type="submit"
+            disabled={pending}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/15 px-2.5 py-1 text-[11px] font-semibold text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent)]/30 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Queue a new scrape and keep all result types (PPC + organic)"
+          >
+            {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+            Re-run — both
+          </button>
+        </form>
+        <form action={action}>
+          <input type="hidden" name="job_id" value={job.id} />
           <input type="hidden" name="result_type_filter" value="PPC" />
           <button
             type="submit"

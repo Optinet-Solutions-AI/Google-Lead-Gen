@@ -12,7 +12,7 @@ const STATUS_STYLES: Record<ScrapeJob['status'], string> = {
   failed: 'bg-red-100 text-red-800',
   captcha: 'bg-amber-100 text-amber-800',
   paused: 'bg-purple-100 text-purple-800',
-  cancelled: 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)] line-through',
+  cancelled: 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]',
 }
 
 /** Effective status that folds the enrichment-chain state into the badge.

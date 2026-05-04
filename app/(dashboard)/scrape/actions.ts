@@ -780,9 +780,18 @@ export async function rerunScrapeFiltered(
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
 
-  const filterRaw = String(fd.get('result_type_filter') ?? '').trim()
-  if (filterRaw !== 'PPC' && filterRaw !== 'Organic') {
-    return { status: 'error', error: 'Invalid filter (expected "PPC" or "Organic").' }
+  // result_type_filter accepts:
+  //   'PPC'     → only PPC rows land in the table
+  //   'Organic' → only Organic rows land
+  //   'both' / '' → no filter; full SERP is captured (a normal re-run)
+  const filterRawIn = String(fd.get('result_type_filter') ?? '').trim()
+  let filterValue: 'PPC' | 'Organic' | null
+  if (filterRawIn === 'PPC' || filterRawIn === 'Organic') {
+    filterValue = filterRawIn
+  } else if (filterRawIn === '' || filterRawIn === 'both') {
+    filterValue = null
+  } else {
+    return { status: 'error', error: 'Invalid filter (expected "PPC", "Organic", or "both").' }
   }
 
   const svc = createServiceClient()
@@ -811,7 +820,7 @@ export async function rerunScrapeFiltered(
     with_enrichment: j.with_enrichment,
     language: j.language ?? 'en',
     search_engine: j.search_engine ?? 'google',
-    result_type_filter: filterRaw,
+    result_type_filter: filterValue,
   })
   if (insertError) return { status: 'error', error: insertError.message }
 
@@ -819,13 +828,14 @@ export async function rerunScrapeFiltered(
     action: 'scrape.rerun_filtered',
     entity_type: 'scrape_job',
     entity_id: jobId,
-    details: { keyword: j.keyword, filter: filterRaw },
+    details: { keyword: j.keyword, filter: filterValue ?? 'both' },
   })
 
   revalidatePath('/scrape')
+  const label = filterValue ?? 'both result types'
   return {
     status: 'ok',
-    message: `Queued a ${filterRaw}-only re-run for "${j.keyword}". Workers will pick it up within ~5 s.`,
+    message: `Queued a ${label} re-run for "${j.keyword}". Workers will pick it up within ~5 s.`,
   }
 }
 
