@@ -19,6 +19,25 @@ const STATUS_STYLES: Record<ScrapeJob['status'], string> = {
  *  Without this, scrape-completed jobs flip to green "completed" the instant
  *  scraping ends — which is misleading when enrichment is still running. */
 function displayStatus(job: ScrapeJob): { label: string; style: string; title?: string } {
+  // Captcha auto-retrying: status is 'pending' (re-queued by the RPC)
+  // but captcha_attempts > 0 means previous runs hit captcha. Show
+  // the progress so users see something is happening.
+  if (job.status === 'pending' && (job.captcha_attempts ?? 0) > 0) {
+    return {
+      label: `captcha · retrying ${job.captcha_attempts}/10`,
+      style: 'bg-amber-100 text-amber-800',
+      title:
+        'Auto-retrying after a captcha hit; the proxy IP rotates per session so the next attempt may succeed.',
+    }
+  }
+  if (job.status === 'captcha') {
+    return {
+      label: `captcha · ${job.captcha_attempts ?? 0} retries`,
+      style: STATUS_STYLES.captcha,
+      title:
+        'Captcha hit the auto-retry cap (10). Open the kebab → Try again to reset and retry.',
+    }
+  }
   if (job.status !== 'completed') {
     const attempts = job.attempts > 1 ? ` · ${job.attempts}` : ''
     return { label: `${job.status}${attempts}`, style: STATUS_STYLES[job.status] }

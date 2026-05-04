@@ -19,6 +19,7 @@ import {
   pauseEnrichmentForJob,
   pauseScrapeJob,
   rerunScrapeFiltered,
+  resetCaptchaRetries,
   resumeEnrichmentForJob,
   resumeScrapeJob,
   type EnqueueState,
@@ -96,6 +97,7 @@ function ActionsModal({ job, onClose }: { job: ScrapeJob; onClose: () => void })
 
         <div className="flex flex-col gap-3 p-4">
           <ScrapeLifecycleSection job={job} />
+          {job.status === 'captcha' && <CaptchaResetSection job={job} />}
           {enrichmentInFlight && <EnrichmentLifecycleSection job={job} />}
           <RerunSection job={job} />
           <DangerZone job={job} onDeleted={onClose} />
@@ -204,6 +206,32 @@ function EnrichmentLifecycleSection({ job }: { job: ScrapeJob }) {
         </form>
       </div>
       <FlashMessage state={pauseState ?? resumeState ?? forceState} />
+    </Section>
+  )
+}
+
+function CaptchaResetSection({ job }: { job: ScrapeJob }) {
+  const [state, action, pending] = useActionState(resetCaptchaRetries, initial)
+  return (
+    <Section title="Captcha">
+      <p className="text-[11px] text-[color:var(--color-text-secondary)]">
+        This job hit the captcha auto-retry cap ({job.captcha_attempts ?? 0}{' '}
+        attempts). Reset to retry up to 10 more times — each session uses a
+        fresh proxy IP so a different result is likely.
+      </p>
+      <form action={action}>
+        <input type="hidden" name="job_id" value={job.id} />
+        <button
+          type="submit"
+          disabled={pending}
+          className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+          title="Reset captcha counter and re-queue for another 10 retries"
+        >
+          {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+          Try again — reset captcha counter
+        </button>
+      </form>
+      <FlashMessage state={state} />
     </Section>
   )
 }

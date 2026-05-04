@@ -55,6 +55,7 @@ export type ScrapeJob = {
   priority: number
   status: 'pending' | 'running' | 'completed' | 'failed' | 'captcha' | 'paused' | 'cancelled'
   attempts: number
+  captcha_attempts: number
   claimed_by: string | null
   started_at: string | null
   completed_at: string | null
@@ -234,7 +235,7 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
     .from('scrape_queue')
     .select(
       [
-        'id, keyword, country_code, pages, priority, status, attempts',
+        'id, keyword, country_code, pages, priority, status, attempts, captcha_attempts',
         'claimed_by, started_at, completed_at, scheduled_at',
         'with_enrichment, enrichment_status, language, search_engine',
         'error_message, result_summary, batch_id, created_at',

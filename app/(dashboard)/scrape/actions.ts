@@ -614,6 +614,37 @@ async function flipScrapeStatus(
   return { ok: true, row: data as { id: string; keyword: string } }
 }
 
+export async function resetCaptchaRetries(
+  _prev: JobActionState,
+  fd: FormData,
+): Promise<JobActionState> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const svc = createServiceClient()
+  const { data, error } = await svc.rpc('reset_captcha_retries', { p_job_id: jobId })
+  if (error) return { status: 'error', error: error.message }
+
+  await logActivity({
+    action: 'scrape.reset_captcha',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { prior_status: data ?? null },
+  })
+
+  revalidatePath('/scrape')
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message:
+      data === 'no-op'
+        ? 'Job is not in captcha state — nothing to reset.'
+        : 'Captcha counter reset. Workers will retry up to 10 more times.',
+  }
+}
+
 export async function pauseScrapeJob(_prev: JobActionState, fd: FormData): Promise<JobActionState> {
   const auth = await requireSignedIn()
   if (!auth.ok) return { status: 'error', error: auth.error }
