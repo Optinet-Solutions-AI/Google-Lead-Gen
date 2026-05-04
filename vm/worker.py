@@ -81,9 +81,33 @@ signal.signal(signal.SIGINT, _handle_signal)
 # ---------------------------------------------------------------------------
 
 def claim_job() -> dict[str, Any] | None:
-    """Atomically claim the next pending job for an unlocked country."""
+    """Atomically claim the next pending job for an unlocked country.
+
+    PostgREST quirk: when an RPC declared `RETURNS public.scrape_queue`
+    actually returns SQL NULL (no claimable row), PostgREST emits a
+    JSON object with every column set to null — NOT a JSON null and
+    not an empty array. The dict is truthy in Python, so a naive
+    `if result.data:` check happily passes and the caller tries to
+    process a "job" with id=None, country_code=None, etc.
+
+    Treat any response without a populated `id` as "no job available".
+    """
     result = supabase.rpc("claim_scrape_job", {"p_worker_id": WORKER_ID}).execute()
-    return result.data if result.data else None
+    data = result.data
+    if not data:
+        return None
+    if isinstance(data, list):
+        if len(data) == 0:
+            return None
+        first = data[0]
+        if not isinstance(first, dict) or first.get("id") is None:
+            return None
+        return first
+    if isinstance(data, dict):
+        if data.get("id") is None:
+            return None
+        return data
+    return None
 
 
 def complete_job(job_id: str, results: list[dict[str, Any]], summary: dict[str, Any]) -> None:

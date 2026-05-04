@@ -89,10 +89,32 @@ signal.signal(signal.SIGINT, _handle_signal)
 # ---------------------------------------------------------------------------
 
 def claim_job() -> dict[str, Any] | None:
+    """Atomically claim the next pending enrichment fetch.
+
+    PostgREST returns a JSON object with all-null columns when an
+    RPC declared `RETURNS public.enrichment_fetch_queue` actually
+    returns SQL NULL — the dict is truthy in Python so a naive
+    truthy-check would treat "no job available" as a real claim.
+    Reject any response without a populated `id`.
+    """
     res = supabase.rpc(
         "claim_enrichment_fetch_job", {"p_worker_id": WORKER_ID}
     ).execute()
-    return res.data if res.data else None
+    data = res.data
+    if not data:
+        return None
+    if isinstance(data, list):
+        if len(data) == 0:
+            return None
+        first = data[0]
+        if not isinstance(first, dict) or first.get("id") is None:
+            return None
+        return first
+    if isinstance(data, dict):
+        if data.get("id") is None:
+            return None
+        return data
+    return None
 
 
 def complete_job(job_id: str, html: str | None, screenshot_path: str | None,
