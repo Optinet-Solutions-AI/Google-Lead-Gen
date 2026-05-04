@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
@@ -433,25 +434,58 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     shape as get_google_results_selenium so downstream code is engine-
     agnostic.
 
-    Bing pagination uses `&first=<offset>` where offset is 1, 11, 21, …
+    Flow on page 0: visit bing.com, dismiss the consent banner, type
+    the keyword in the search box, submit. This is more "human-like"
+    than navigating directly to /search?q=… and seems to dodge the
+    degraded-SERP that Bing serves to first-time direct-URL hits.
+
+    Pages 1+ navigate by URL (?first=<offset>) — cookies + consent
+    are established by the page-0 search so direct nav works fine.
     """
     cc = BING_COUNTRY_TO_CC.get(country, "US")
-    first = page * 10 + 1
-    encoded_keyword = quote_plus(keyword)
-    url = (
-        f"https://www.bing.com/search?q={encoded_keyword}"
-        f"&cc={cc}&setlang={language}&first={first}"
-    )
 
-    print(f"[INFO] Bing navigating to: {url}")
-    driver.get(url)
-    check_for_captcha(driver)
+    if page == 0:
+        homepage = f"https://www.bing.com/?cc={cc}&setlang={language}"
+        print(f"[INFO] Bing homepage: {homepage}")
+        driver.get(homepage)
+        check_for_captcha(driver)
+        accept_bing_consent(driver)
 
-    # Step 1: dismiss the GDPR cookie banner. This is THE reason most
-    # EU-region Bing scrapes were returning a single placeholder
-    # result — b_results renders behind the consent modal, the parser
-    # finds 1 vestigial block, returns. Click accept first.
-    accept_bing_consent(driver)
+        # Find the search box (id has been stable as sb_form_q for
+        # years) and type the keyword with small per-char delays so
+        # the keystroke pattern looks human.
+        try:
+            search_input = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.ID, "sb_form_q"))
+            )
+            search_input.clear()
+            for ch in keyword:
+                search_input.send_keys(ch)
+                time.sleep(random.uniform(0.03, 0.12))
+            time.sleep(random.uniform(0.4, 0.9))
+            search_input.send_keys(Keys.RETURN)
+        except Exception as exc:
+            # Fallback: if the search box vanished or moved, fall
+            # back to direct URL nav so we still get something.
+            print(f"[WARN] Bing search-box interaction failed ({exc}), falling back to URL nav")
+            encoded_keyword = quote_plus(keyword)
+            fallback_url = (
+                f"https://www.bing.com/search?q={encoded_keyword}"
+                f"&cc={cc}&setlang={language}&first=1"
+            )
+            driver.get(fallback_url)
+            check_for_captcha(driver)
+    else:
+        first = page * 10 + 1
+        encoded_keyword = quote_plus(keyword)
+        url = (
+            f"https://www.bing.com/search?q={encoded_keyword}"
+            f"&cc={cc}&setlang={language}&first={first}"
+        )
+        print(f"[INFO] Bing page {page + 1} via URL: {url}")
+        driver.get(url)
+        check_for_captcha(driver)
+        accept_bing_consent(driver)
 
     # Wait for the results container, then for the FIRST b_algo block
     # to materialize. Bing renders results progressively; grabbing
