@@ -6,6 +6,10 @@ import { extractContacts } from '@/lib/contact-extraction/extract'
 import { findContactsWithOpenAI } from '@/lib/contact-extraction/llm-fallback'
 import { findContactsWithHunter } from '@/lib/contact-extraction/hunter'
 import { validatePhones } from '@/lib/contact-extraction/phone-validate'
+import {
+  classifyAffiliateBorderline,
+  classifyRoosterBorderline,
+} from '@/lib/llm-fallback/borderline-classifier'
 
 export const dynamic = 'force-dynamic'
 
@@ -123,22 +127,51 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: true, status: 'skipped' })
     }
     const result = scoreAffiliate(html, url)
+    let isAffiliate = result.classification === 'AFFILIATE'
+    // Confidence is widened to string since the LLM-tie-broken paths
+    // produce composite labels like LOW_LLM_AFFILIATE that the scorer's
+    // narrow union doesn't list.
+    let confidence: string = result.confidence
+    let indicators = [...result.indicators]
+    let llmConsulted = false
+
+    // LLM tie-breaker for borderline cases. The heuristic catches the
+    // obvious affiliates and obvious non-affiliates well; the LOW/MEDIUM
+    // band is where the model adds the most value.
+    if (confidence === 'LOW' || confidence === 'MEDIUM') {
+      const llm = await classifyAffiliateBorderline({
+        url,
+        html,
+        affiliateScore: result.affiliateScore,
+        casinoScore: result.casinoScore,
+        externalCasinoLinks: result.externalCasinoLinks,
+        priorIndicators: result.indicators,
+      })
+      if (llm) {
+        llmConsulted = true
+        isAffiliate = llm.isAffiliate
+        confidence = `${confidence}_LLM_${llm.isAffiliate ? 'AFFILIATE' : 'NOT_AFFILIATE'}`
+        indicators = [`LLM (${llm.isAffiliate ? 'yes' : 'no'}): ${llm.reasoning}`, ...indicators]
+      }
+    }
+
     await svc
       .from('google_lead_gen_table')
       .update({
-        is_affiliate: result.classification === 'AFFILIATE',
+        is_affiliate: isAffiliate,
         affiliate_score: result.affiliateScore,
         affiliate_casino_score: result.casinoScore,
-        affiliate_confidence: result.confidence,
+        affiliate_confidence: confidence,
         affiliate_external_links: result.externalCasinoLinks,
-        affiliate_indicators: result.indicators,
+        affiliate_indicators: indicators,
         affiliate_checked_at: now,
       })
       .eq('id', leadId)
     return NextResponse.json({
       ok: true,
-      classification: result.classification,
-      confidence: result.confidence,
+      classification: isAffiliate ? 'AFFILIATE' : 'NOT_AFFILIATE',
+      confidence,
+      llm_consulted: llmConsulted,
     })
   }
 
@@ -271,10 +304,68 @@ export async function POST(req: Request): Promise<Response> {
     }
     const matches = Array.from(found.values())
     if (matches.length === 0) {
+      // Final safety net: ask the LLM to look at the page text + brand
+      // list. Catches affiliates whose brand promotion is via image
+      // logos / CTAs / cloaked tracking that neither cheap nor deep
+      // signals picked up. Only runs when we have HTML cached AND the
+      // lead is currently flagged as affiliate (otherwise it's
+      // probably not a partner site).
+      const { data: cacheRow } = await svc
+        .from('fetched_html_cache')
+        .select('html')
+        .eq('lead_id', leadId)
+        .maybeSingle()
+      const cachedHtml = (cacheRow as { html: string | null } | null)?.html ?? ''
+      const { data: leadFlags } = await svc
+        .from('google_lead_gen_table')
+        .select('is_affiliate, is_rooster_overridden_at')
+        .eq('id', leadId)
+        .maybeSingle()
+      const isAff =
+        (leadFlags as { is_affiliate: boolean | null } | null)?.is_affiliate === true
+      const isOverridden =
+        (leadFlags as { is_rooster_overridden_at: string | null } | null)
+          ?.is_rooster_overridden_at !== null
+
+      if (isAff && !isOverridden && cachedHtml.length > 200) {
+        const llm = await classifyRoosterBorderline({
+          url: url,
+          html: cachedHtml,
+          brands: brandList.map(b => ({ domain: b.domain, name: b.brand_name })),
+        })
+        if (llm?.isPartner && llm.matchedBrandDomains.length > 0) {
+          const llmMatches = llm.matchedBrandDomains.map(domain => {
+            const meta = brandList.find(b => b.domain.toLowerCase() === domain)
+            return {
+              domain,
+              brand_name: meta?.brand_name ?? null,
+              monday_item_id: meta?.monday_item_id ?? null,
+            }
+          })
+          await svc
+            .from('google_lead_gen_table')
+            .update({
+              is_rooster_partner: true,
+              brand: llmMatches[0]?.brand_name ?? null,
+              rooster_brands: llmMatches,
+            })
+            .eq('id', leadId)
+            .is('is_rooster_overridden_at', null)
+          return NextResponse.json({
+            ok: true,
+            partner: true,
+            match_count: llmMatches.length,
+            llm_consulted: true,
+            llm_reasoning: llm.reasoning,
+          })
+        }
+      }
+
       return NextResponse.json({
         ok: true,
         partner: false,
         resolved_count: resolvedUrls.length,
+        llm_consulted: isAff && !isOverridden && cachedHtml.length > 200,
       })
     }
 
