@@ -331,6 +331,24 @@ BING_COUNTRY_TO_CC = {
 }
 
 
+def _bing_first_http_anchor(block):
+    """Return the first <a href="http..."> anywhere inside a Bing
+    result block, preferring h2-nested anchors when available. Falls
+    back to any descendant anchor — handles algo / algoSlug / topTitle
+    / answer-card layouts in one place."""
+    candidates = (
+        block.select("h2 a")
+        + block.select(".b_topTitle a")
+        + block.select(".b_title a")
+        + block.select("a")
+    )
+    for a in candidates:
+        href = a.get("href")
+        if href and href.startswith("http"):
+            return a
+    return None
+
+
 def get_bing_results(driver, keyword, country, page=0, language="en"):
     """
     Single-page Bing SERP fetch + parse. Returns the same per-result
@@ -363,25 +381,22 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     results = []
     position = 1
     overall_position = 1
+    seen_hrefs = set()
 
     # ----- Sponsored / ads -----
-    # Bing wraps ads in <li class="b_ad"> and variants. The exact inner
-    # structure has drifted across redesigns — try a few selectors and
-    # take the first http(s) anchor we find.
-    for ad_block in soup.select("li.b_ad, li.b_adTop, li.b_adBottom"):
-        a = (
-            ad_block.select_one("h2 a")
-            or ad_block.select_one("a.sb_adsTitle")
-            or ad_block.select_one("a")
-        )
+    ad_blocks = soup.select("li.b_ad, li.b_adTop, li.b_adBottom, li.b_adLastChild, .b_adProvider")
+    print(f"[DEBUG] Bing ad blocks found: {len(ad_blocks)}")
+    for ad_block in ad_blocks:
+        a = _bing_first_http_anchor(ad_block)
         if not a:
             continue
         href = a.get("href")
-        if not href or not href.startswith("http"):
+        if href in seen_hrefs:
             continue
         title = a.get_text(strip=True)
         if not title:
             continue
+        seen_hrefs.add(href)
         parsed = urlparse(href)
         full_url = f"{parsed.scheme}://{parsed.netloc}"
         results.append({
@@ -398,19 +413,39 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
         overall_position += 1
 
     # ----- Organic -----
-    for algo in soup.select("li.b_algo"):
-        a = algo.select_one("h2 a")
+    # Bing uses a few wrappers depending on the result kind. b_algo is
+    # the standard, b_algo_group is a grouped result, b_algoSlug shows
+    # up for some answer-style results. Iterate over all of them and
+    # rely on _bing_first_http_anchor + seen_hrefs to dedupe.
+    organic_blocks = soup.select(
+        "li.b_algo, li.b_algo_group, li.b_algoSlug, "
+        "ol#b_results > li.b_ans, "
+        "li[data-bm]"
+    )
+    print(f"[DEBUG] Bing organic-like blocks found: {len(organic_blocks)}")
+    for algo in organic_blocks:
+        # Skip blocks already classified as ads above.
+        cls = " ".join(algo.get("class") or [])
+        if "b_ad" in cls:
+            continue
+        a = _bing_first_http_anchor(algo)
         if not a:
             continue
         href = a.get("href")
-        if not href or not href.startswith("http"):
+        if not href or href in seen_hrefs:
             continue
+        # Bing internal links (e.g. /search redirects, image carousels)
+        # aren't real organic results — drop them.
+        if "bing.com/" in href and "/search?" in href:
+            continue
+        seen_hrefs.add(href)
+        title = a.get_text(strip=True)
         parsed = urlparse(href)
         full_url = f"{parsed.scheme}://{parsed.netloc}"
         results.append({
             "url": href,
             "full_url": full_url,
-            "title": a.get_text(strip=True),
+            "title": title,
             "resultType": "Organic",
             "page": page + 1,
             "position": position,
@@ -420,6 +455,37 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
         })
         position += 1
         overall_position += 1
+
+    # Final fallback: if for whatever reason the structured selectors
+    # missed everything, sweep #b_results for any http link anchored on
+    # an h2/title-like ancestor. Catches truly unusual layouts but keeps
+    # the dedupe via seen_hrefs.
+    if len(results) < 3:
+        for h2 in soup.select("#b_results h2"):
+            a = h2.find("a", href=True)
+            if not a:
+                continue
+            href = a.get("href")
+            if not href or not href.startswith("http") or href in seen_hrefs:
+                continue
+            if "bing.com/" in href and "/search?" in href:
+                continue
+            seen_hrefs.add(href)
+            parsed = urlparse(href)
+            full_url = f"{parsed.scheme}://{parsed.netloc}"
+            results.append({
+                "url": href,
+                "full_url": full_url,
+                "title": a.get_text(strip=True),
+                "resultType": "Organic",
+                "page": page + 1,
+                "position": position,
+                "overall_position": overall_position,
+                "keyword": keyword,
+                "country": country,
+            })
+            position += 1
+            overall_position += 1
 
     print(
         f"[INFO] Bing page {page + 1}: "
