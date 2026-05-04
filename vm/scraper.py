@@ -40,6 +40,84 @@ def accept_google_consent(driver):
     except:
         pass
 
+
+# ---------------------------
+# Bing consent handler
+# ---------------------------
+def accept_bing_consent(driver):
+    """
+    Click Bing's cookie-consent accept button if it appears. Bing has
+    cycled through several button IDs over the years and the label is
+    localized — try the stable IDs first, then fall back to a text
+    match across the major languages we scrape (en, de, it, da, no,
+    fr, ar). Returns True if a button was clicked, False otherwise.
+
+    The button MUST be clicked because the consent overlay covers
+    `b_results` even after the container is in the DOM, leaving the
+    parser with whatever vestigial element rendered behind the modal
+    (typically just one placeholder — the symptom we've been seeing).
+    """
+    id_selectors = [
+        (By.ID, "bnp_btn_accept"),
+        (By.ID, "bnp_hfly_cta1"),
+        (By.CSS_SELECTOR, "button#bnp_btn_accept"),
+        (By.CSS_SELECTOR, "button.bnp_btn_accept"),
+        (By.CSS_SELECTOR, "a#bnp_btn_accept"),
+    ]
+    for by, sel in id_selectors:
+        try:
+            btn = WebDriverWait(driver, 2).until(
+                EC.element_to_be_clickable((by, sel))
+            )
+            btn.click()
+            print(f"[INFO] Bing consent dismissed via selector: {sel}")
+            time.sleep(1.5)
+            return True
+        except Exception:
+            continue
+    # Localized text fallback — covers EN, DE, IT, FR, ES, PT, DA, NO,
+    # AR. Matches against any clickable <button> or <a>.
+    try:
+        btn = WebDriverWait(driver, 3).until(
+            EC.element_to_be_clickable((
+                By.XPATH,
+                "//button[contains(., 'Accept') or contains(., 'Akzeptieren') or "
+                "contains(., 'Accetta') or contains(., 'Aceptar') or "
+                "contains(., 'Aceitar') or contains(., 'Acceptér') or "
+                "contains(., 'Godta') or contains(., 'قبول') or "
+                "contains(., 'I accept') or contains(., 'OK')] | "
+                "//a[contains(., 'Accept') or contains(., 'Akzeptieren') or "
+                "contains(., 'Accetta')]"
+            ))
+        )
+        btn.click()
+        print("[INFO] Bing consent dismissed via text match")
+        time.sleep(1.5)
+        return True
+    except Exception:
+        pass
+    return False
+
+
+def _maybe_save_bing_debug(page_source, url):
+    """
+    When BING_DEBUG=1 is set in the worker's env, dump the rendered
+    page to /tmp so we can see exactly what Bing returned. This is the
+    diagnostic that lets us tell apart consent-banner / interstitial /
+    actual-but-empty / unusual-markup cases without guessing.
+    """
+    if os.environ.get("BING_DEBUG") != "1":
+        return
+    ts = int(time.time() * 1000)
+    path = f"/tmp/bing_debug_{ts}.html"
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(f"<!-- URL: {url} -->\n")
+            f.write(page_source)
+        print(f"[DEBUG] Bing page_source saved to {path} ({len(page_source)} bytes)")
+    except Exception as exc:
+        print(f"[WARN] failed to save bing debug file: {exc}")
+
 # ---------------------------
 # Wait for Sponsored Results to appear (max 7 seconds)
 # ---------------------------
@@ -369,6 +447,12 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     driver.get(url)
     check_for_captcha(driver)
 
+    # Step 1: dismiss the GDPR cookie banner. This is THE reason most
+    # EU-region Bing scrapes were returning a single placeholder
+    # result — b_results renders behind the consent modal, the parser
+    # finds 1 vestigial block, returns. Click accept first.
+    accept_bing_consent(driver)
+
     # Wait for the results container, then for the FIRST b_algo block
     # to materialize. Bing renders results progressively; grabbing
     # page_source immediately after b_results appears can land in
@@ -393,6 +477,7 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     time.sleep(2)
 
     page_source = driver.page_source
+    _maybe_save_bing_debug(page_source, url)
     soup = BeautifulSoup(page_source, "html.parser")
     # Crude size sanity check — if the page is suspiciously small, we
     # probably hit a consent banner / interstitial / redirect rather
