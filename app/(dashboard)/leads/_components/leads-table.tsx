@@ -183,7 +183,17 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                   </>
                 ) : (
                   <>
-                    <Td className="max-w-[220px] truncate" title={row.keyword ?? ''}>{row.keyword ?? '—'}</Td>
+                    <Td className="max-w-[220px] truncate" title={row.keyword ?? ''}>
+                      <div className="truncate">{row.keyword ?? '—'}</div>
+                      {(row.created_by_display || row.created_by_username) && (
+                        <div
+                          className="truncate text-[10px] font-normal text-[color:var(--color-text-secondary)]"
+                          title={`Queued by ${row.created_by_display || row.created_by_username}`}
+                        >
+                          by {row.created_by_display || row.created_by_username}
+                        </div>
+                      )}
+                    </Td>
                     <Td>{row.country_code ?? '—'}</Td>
                     <Td>
                       <TypeBadge type={row.result_type} />
@@ -314,6 +324,11 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
             <dl className="space-y-1 text-[12px]">
               {!jobContext && <Field label="Country">{row.country_code ?? '—'}</Field>}
               {!jobContext && <Field label="Domain">{row.domain ?? '—'}</Field>}
+              {!jobContext && (row.created_by_display || row.created_by_username) && (
+                <Field label="Queued by">
+                  {row.created_by_display || row.created_by_username}
+                </Field>
+              )}
               <Field label="URL">
                 {row.url ? (
                   <a

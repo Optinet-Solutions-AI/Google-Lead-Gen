@@ -1,6 +1,7 @@
 'use client'
 
 import { useActionState, useEffect, useState, useTransition } from 'react'
+import Link from 'next/link'
 import {
   CheckCircle2,
   ExternalLink,
@@ -10,6 +11,7 @@ import {
   Send,
   Tag,
   Trash2,
+  User,
   X,
 } from 'lucide-react'
 import type { LeadDetail } from '../_lib/detail-query'
@@ -178,6 +180,34 @@ function DetailBody({ detail }: { detail: Detail }) {
         <KV label="Type" value={lead.result_type ?? '—'} />
         <KV label="Batch" value={lead.batch_id != null ? String(lead.batch_id) : '—'} />
         <KV label="Scraped" value={new Date(lead.created_at).toLocaleString()} />
+        {(lead.queued_by_display || lead.queued_by_username) && (
+          <KV
+            label="Queued by"
+            value={
+              <span
+                className="inline-flex items-center gap-1"
+                title={lead.queued_by_username ?? undefined}
+              >
+                <User className="h-3 w-3 text-[color:var(--color-text-secondary)]" />
+                {lead.queued_by_display || lead.queued_by_username}
+              </span>
+            }
+          />
+        )}
+        {lead.scrape_job_id && (
+          <KV
+            label="Scrape job"
+            value={
+              <Link
+                href={`/scrape/${lead.scrape_job_id}`}
+                className="inline-flex items-center gap-1 underline underline-offset-2"
+              >
+                <ExternalLink className="h-3 w-3" />
+                Open job
+              </Link>
+            }
+          />
+        )}
       </Section>
 
       <Section title="Monday duplicate check">

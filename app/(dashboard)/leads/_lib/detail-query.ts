@@ -36,6 +36,10 @@ export type LeadDetail = {
     result_type: string | null
     batch_id: number | null
     created_at: string
+    scrape_job_id: string | null
+    /** Display name of the user who queued the scrape that produced this lead. */
+    queued_by_display: string | null
+    queued_by_username: string | null
     is_on_monday: boolean | null
     monday_board: string | null
     monday_item_id: string | null
@@ -73,6 +77,7 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
       .select(
         [
           'id, url, domain, keyword, country, country_code, result_type, batch_id, created_at',
+          'scrape_job_id',
           'is_on_monday, monday_board, monday_item_id',
           'is_affiliate, affiliate_score, affiliate_casino_score, affiliate_confidence',
           'affiliate_external_links, affiliate_indicators',
@@ -80,6 +85,9 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
           'has_contact_details, has_s_tags, s_tags_checked_at',
           'screenshot_content_link',
           'pushed_to_monday_at, monday_pushed_item_id, monday_pushed_by',
+          // FK join — pull the queueing user's display + username so the
+          // drawer can show "Queued by …" without a second round-trip.
+          'scrape_queue:scrape_queue!scrape_job_id(created_by_username, created_by_display)',
         ].join(', '),
       )
       .eq('id', leadId)
@@ -109,7 +117,23 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
   if (contactRes.error) throw new Error(contactRes.error.message)
   if (stagsRes.error) throw new Error(stagsRes.error.message)
 
-  const lead = (leadRes.data ?? null) as LeadDetail['lead']
+  // Flatten the joined scrape_queue object into top-level queued_by_* fields
+  // before handing the row off to the typed LeadDetail['lead'] shape.
+  const rawLead = leadRes.data as
+    | (Record<string, unknown> & {
+        scrape_queue: { created_by_username: string | null; created_by_display: string | null } | null
+      })
+    | null
+  const lead = (rawLead
+    ? (() => {
+        const { scrape_queue, ...rest } = rawLead
+        return {
+          ...rest,
+          queued_by_username: scrape_queue?.created_by_username ?? null,
+          queued_by_display: scrape_queue?.created_by_display ?? null,
+        }
+      })()
+    : null) as LeadDetail['lead']
 
   let screenshotUrl: string | null = null
   if (lead?.screenshot_content_link) {

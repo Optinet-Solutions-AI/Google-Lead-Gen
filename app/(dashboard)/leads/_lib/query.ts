@@ -43,6 +43,10 @@ export type LeadRow = {
   s_tags_checked_at: string | null
   s_tag_id: number | null
   created_at: string
+  // Attribution — denormalized from scrape_queue at query time so the
+  // table can show "by <display>" without an extra round-trip.
+  created_by_username: string | null
+  created_by_display: string | null
 }
 
 export type LeadsQueryOptions = {
@@ -90,6 +94,9 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
         'has_s_tags, is_stag_overridden_at',
         's_tags_checked_at, s_tag_id',
         'created_at',
+        // FK join — google_lead_gen_table.scrape_job_id → scrape_queue(id).
+        // PostgREST flattens this into a nested object on the row.
+        'scrape_queue:scrape_queue!scrape_job_id(created_by_username, created_by_display)',
       ].join(', '),
       { count: 'exact' },
     )
@@ -135,7 +142,20 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
       `queryLeads failed: ${error.message} (details: ${JSON.stringify(error.details ?? {})})`,
     )
   }
-  return { rows: (data ?? []) as unknown as LeadRow[], total: count ?? 0 }
+  // PostgREST returns the joined scrape_queue row as a nested object —
+  // flatten it into the LeadRow shape callers expect.
+  const rows = (data ?? []).map(raw => {
+    const r = raw as unknown as Record<string, unknown> & {
+      scrape_queue: { created_by_username: string | null; created_by_display: string | null } | null
+    }
+    const { scrape_queue, ...rest } = r
+    return {
+      ...rest,
+      created_by_username: scrape_queue?.created_by_username ?? null,
+      created_by_display: scrape_queue?.created_by_display ?? null,
+    }
+  }) as unknown as LeadRow[]
+  return { rows, total: count ?? 0 }
 }
 
 export async function listCountryFilters(): Promise<Array<{ code: string; name: string }>> {
