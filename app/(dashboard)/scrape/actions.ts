@@ -138,11 +138,30 @@ export async function enqueueScrape(
   const allowedLangs = (profile as { languages: string[] | null }).languages ?? ['en']
   const finalLang = allowedLangs.includes(language) || language === 'en' ? language : 'en'
 
-  // Cross-product: one row per (keyword × engine). Stamp the queueing
-  // user's email so /scrape can show "queued by <email>" without a
-  // join, and so audit trails survive even if the user is later
-  // deleted from auth.users.
-  const createdBy = user.email ?? null
+  // Cross-product: one row per (keyword × engine). Stamp queueing
+  // attribution so /scrape can show "by <name>" without a join, and
+  // so audit trails survive even if the user is later deleted from
+  // auth.users.
+  //
+  // We denormalize three fields:
+  //   - created_by_email     → audit identity (Supabase email)
+  //   - created_by_username  → login username (lowercase)
+  //   - created_by_display   → friendly label, falls back to username
+  // Username + display come from user_profiles. If the row doesn't
+  // exist for some reason, we fall back to email's local-part.
+  const createdByEmail = user.email ?? null
+  const { data: userProfileRow } = await svc
+    .from('user_profiles')
+    .select('username, display_name')
+    .eq('id', user.id)
+    .maybeSingle()
+  const userProfile = userProfileRow as
+    | { username: string | null; display_name: string | null }
+    | null
+  const fallbackUser = createdByEmail ? createdByEmail.split('@')[0] ?? null : null
+  const createdByUsername = userProfile?.username ?? fallbackUser
+  const createdByDisplay = userProfile?.display_name ?? createdByUsername
+
   const rows = keywords.flatMap(keyword =>
     enginesToRun.map(engine => ({
       keyword,
@@ -153,7 +172,9 @@ export async function enqueueScrape(
       scheduled_at: scheduledAtIso,
       language: finalLang,
       search_engine: engine,
-      created_by_email: createdBy,
+      created_by_email: createdByEmail,
+      created_by_username: createdByUsername,
+      created_by_display: createdByDisplay,
     })),
   )
   const { error: insertError } = await svc.from('scrape_queue').insert(rows)

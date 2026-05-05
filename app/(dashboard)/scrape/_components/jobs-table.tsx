@@ -177,12 +177,15 @@ export function JobsTable({ jobs }: Props) {
                 <LinkTd
                   href={href}
                   className="max-w-[280px] truncate"
-                  title={job.created_by_email ? `${job.keyword} — queued by ${job.created_by_email}` : job.keyword}
+                  title={(() => {
+                    const by = job.created_by_display || job.created_by_username
+                    return by ? `${job.keyword} — queued by ${by}` : job.keyword
+                  })()}
                 >
                   <span className="block truncate">{job.keyword}</span>
-                  {job.created_by_email && (
+                  {(job.created_by_display || job.created_by_username) && (
                     <span className="block truncate text-[10px] text-[color:var(--color-text-secondary)]">
-                      by {job.created_by_email}
+                      by {job.created_by_display || job.created_by_username}
                     </span>
                   )}
                 </LinkTd>

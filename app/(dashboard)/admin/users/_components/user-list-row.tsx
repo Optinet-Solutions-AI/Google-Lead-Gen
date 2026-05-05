@@ -9,7 +9,8 @@ const initial: SetAdminState = null
 type Props = {
   user: {
     id: string
-    email: string | null
+    username: string | null
+    display_name: string | null
     created_at: string
     last_sign_in_at: string | null
   }
@@ -20,13 +21,18 @@ type Props = {
 export function UserListRow({ user, isAdmin, isSelf }: Props) {
   const [state, action, pending] = useActionState(setAdminFlagAction, initial)
 
+  // Display priority: display_name → username → fallback. Username is
+  // shown as the secondary line so admins can read it out for sign-in.
+  const primary = user.display_name || user.username || '(unnamed user)'
+  const secondary = user.display_name && user.username ? user.username : null
+
   return (
     <div className="flex flex-wrap items-center gap-3 px-3 py-2 text-[12px]">
       <User className="h-4 w-4 shrink-0 text-[color:var(--color-text-secondary)]" />
 
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] font-medium text-[color:var(--color-text-primary)]">
-          {user.email ?? '(no email)'}
+          {primary}
           {isSelf && (
             <span className="ml-2 rounded-full bg-[color:var(--color-bg-secondary)] px-1.5 py-0.5 text-[10px] font-normal text-[color:var(--color-text-secondary)]">
               you
@@ -40,7 +46,8 @@ export function UserListRow({ user, isAdmin, isSelf }: Props) {
           )}
         </p>
         <p className="truncate text-[10px] text-[color:var(--color-text-secondary)]">
-          created {new Date(user.created_at).toLocaleDateString()}
+          {secondary ? <span className="font-mono">{secondary}</span> : <span className="italic">no username set</span>}
+          {' · '}created {new Date(user.created_at).toLocaleDateString()}
           {user.last_sign_in_at
             ? ` · last sign-in ${new Date(user.last_sign_in_at).toLocaleString()}`
             : ' · never signed in'}
@@ -49,8 +56,7 @@ export function UserListRow({ user, isAdmin, isSelf }: Props) {
 
       <form action={action} className="flex items-center gap-1.5">
         <input type="hidden" name="user_id" value={user.id} />
-        {/* The checkbox is the inverse of current — submitting flips it.
-         *  Using a single button so we don't need separate promote/demote forms. */}
+        {/* The hidden value is the inverse of current — submit flips it. */}
         <input type="hidden" name="is_admin" value={isAdmin ? '' : 'on'} />
         <button
           type="submit"

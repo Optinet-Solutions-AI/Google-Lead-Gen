@@ -8,13 +8,16 @@ export const dynamic = 'force-dynamic'
 
 type AuthUser = {
   id: string
-  email: string | null
+  username: string | null
+  display_name: string | null
   created_at: string
   last_sign_in_at: string | null
 }
 
 type ProfileRow = {
   id: string
+  username: string | null
+  display_name: string | null
   is_admin: boolean
 }
 
@@ -30,23 +33,31 @@ export default async function AdminUsersPage() {
   const { data: callerIsAdmin } = await svc.rpc('is_admin', { p_user_id: user.id })
   if (!callerIsAdmin) redirect('/')
 
-  // List all users via the admin API + their profile flags.
+  // Pull every profile + every auth.users row, then merge by id. We
+  // don't surface the synthetic email anywhere — the UI is purely
+  // username + display_name driven.
   const [{ data: usersPage }, { data: profiles }] = await Promise.all([
     svc.auth.admin.listUsers({ page: 1, perPage: 200 }),
-    svc.from('user_profiles').select('id, is_admin'),
+    svc.from('user_profiles').select('id, username, display_name, is_admin'),
   ])
 
-  const profileById = new Map<string, boolean>(
-    ((profiles ?? []) as ProfileRow[]).map(p => [p.id, p.is_admin]),
+  const profileById = new Map<string, ProfileRow>(
+    ((profiles ?? []) as ProfileRow[]).map(p => [p.id, p]),
   )
 
-  const users: AuthUser[] = (usersPage?.users ?? []).map(u => ({
-    id: u.id,
-    email: u.email ?? null,
-    created_at: u.created_at,
-    last_sign_in_at: u.last_sign_in_at ?? null,
-  }))
-  users.sort((a, b) => (a.email ?? '').localeCompare(b.email ?? ''))
+  const users: AuthUser[] = (usersPage?.users ?? []).map(u => {
+    const p = profileById.get(u.id) ?? null
+    return {
+      id: u.id,
+      username: p?.username ?? null,
+      display_name: p?.display_name ?? null,
+      created_at: u.created_at,
+      last_sign_in_at: u.last_sign_in_at ?? null,
+    }
+  })
+  users.sort((a, b) =>
+    (a.display_name || a.username || '').localeCompare(b.display_name || b.username || ''),
+  )
 
   return (
     <div className="flex min-w-0 flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
@@ -77,7 +88,7 @@ export default async function AdminUsersPage() {
             <UserListRow
               key={u.id}
               user={u}
-              isAdmin={profileById.get(u.id) ?? false}
+              isAdmin={profileById.get(u.id)?.is_admin ?? false}
               isSelf={u.id === user.id}
             />
           ))}

@@ -1,13 +1,9 @@
 /**
  * Memorable user-credential suggestions for the admin "Add user" form.
  *
- * Email format: <adjective>.<animal><nn>@rooster.app
- *   e.g. swift.heron42@rooster.app — easy to read out loud, hard to typo.
- *
- * Password format: <word>-<word>-<word>-<nnn>
- *   e.g. purple-canyon-river-471 — passes most password complexity rules
- *   while staying memorable. ~33 bits of entropy from the words alone,
- *   plus the 3-digit suffix.
+ * Username:     <adjective>.<animal><nn>           e.g. swift.heron42
+ * Display name: <Adjective> <Animal>               e.g. Swift Heron
+ * Password:     <word>-<word>-<word>-<nnn>         e.g. purple-canyon-river-471
  *
  * Both lists are kept short and PG so the suggestions never produce
  * something awkward to read in front of a colleague.
@@ -30,20 +26,38 @@ const PASSWORD_WORDS = [
   'glacier', 'horizon', 'thunder', 'crystal', 'ember', 'lantern', 'compass',
   'harvest', 'cobalt', 'maple', 'cedar', 'willow', 'ivory', 'ruby', 'topaz',
   'opal', 'sienna', 'sapphire', 'pebble', 'driftwood', 'sandstone', 'fern',
-  'summit', 'valley', 'meadow', 'hollow', 'birch', 'poppy', 'thistle',
+  'summit', 'valley', 'hollow', 'birch', 'poppy', 'thistle',
 ]
-
-const EMAIL_DOMAIN = 'rooster.app'
 
 function pick<T>(arr: ReadonlyArray<T>): T {
   return arr[Math.floor(Math.random() * arr.length)]!
 }
 
-export function suggestEmail(): string {
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+/**
+ * Produces a coherent {username, displayName} pair so the two fields
+ * tell the same story (e.g. swift.heron42 / Swift Heron) when the
+ * admin uses both regenerate buttons in sequence.
+ */
+export function suggestIdentity(): { username: string; displayName: string } {
   const adj = pick(ADJECTIVES)
   const animal = pick(ANIMALS)
   const num = Math.floor(Math.random() * 90) + 10 // 10–99
-  return `${adj}.${animal}${num}@${EMAIL_DOMAIN}`
+  return {
+    username: `${adj}.${animal}${num}`,
+    displayName: `${capitalize(adj)} ${capitalize(animal)}`,
+  }
+}
+
+export function suggestUsername(): string {
+  return suggestIdentity().username
+}
+
+export function suggestDisplayName(): string {
+  return suggestIdentity().displayName
 }
 
 export function suggestPassword(): string {
