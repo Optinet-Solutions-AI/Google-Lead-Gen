@@ -247,7 +247,28 @@ explain you don't have to actually create a user.
 
 ---
 
-## Section 11 — Wrap up (1 min)
+## Section 11 — Admin: alert recipients (1 min)
+
+*(Skip if your audience isn't an admin.)*
+
+**Say this:**
+
+> "We're building a feature where, when the tool finds a really good
+> lead — strong affiliate signals, contact details available, not
+> already on Monday — we automatically email an affiliate manager.
+> The conditions are still being defined, but the recipient list is
+> already live here. Add an email, optionally scope it to one country,
+> and that person will start getting alerts as soon as the conditions
+> ship. You can pause a recipient temporarily without deleting them,
+> and every alert that ever gets sent is recorded for audit."
+
+**Show:** click **Alert Recipients (Admin)**. Walk through the form:
+email, optional name, optional country dropdown ("German manager only
+gets DE leads"), notes. Show the list with Pause / Remove buttons.
+
+---
+
+## Section 12 — Wrap up (1 min)
 
 **Say this:**
 
@@ -276,10 +297,11 @@ explain you don't have to actually create a user.
 | 8 | Profiles + Brands | 1 min |
 | 9 | Activity Log | 1 min |
 | 10 | Admin add user | 1 min |
-| 11 | Wrap up | 1 min |
-| **Total** | | **~15 min** |
+| 11 | Admin alert recipients | 1 min |
+| 12 | Wrap up | 1 min |
+| **Total** | | **~16 min** |
 
-If you're tight on time, drop sections 7-9 and you're at ~12 min.
+If you're tight on time, drop sections 7-9 and you're at ~13 min.
 
 ---
 

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Activity,
   ArrowRight,
+  Bell,
   BookOpen,
   CalendarClock,
   CheckCircle2,
@@ -47,6 +48,7 @@ const SECTIONS: SectionDef[] = [
   { id: 'activity', title: 'Activity log', icon: Clock },
   { id: 'workers', title: 'Workers & health', icon: Cpu },
   { id: 'monday', title: 'Monday data', icon: Database },
+  { id: 'alerts', title: 'Alert recipients (admin)', icon: Bell },
 ]
 
 function useCompleted() {
@@ -819,6 +821,7 @@ export default function OnboardingPage() {
             done={completed.has('monday')}
             onToggle={() => toggle('monday')}
             prev="workers"
+            next="alerts"
           >
             <p>
               <Code>/monday/leads</Code> mirrors four Monday boards (Leads,
@@ -846,10 +849,50 @@ export default function OnboardingPage() {
             <TryItRow>
               <TryIt href="/monday/leads" label="Browse Monday data" />
             </TryItRow>
+          </Section>
+
+          <Section
+            id="alerts"
+            title="Alert recipients (admin)"
+            icon={Bell}
+            done={completed.has('alerts')}
+            onToggle={() => toggle('alerts')}
+            prev="monday"
+          >
+            <p>
+              When the tool finds a strong lead, we&apos;ll email an
+              affiliate manager so they can act on it without watching{' '}
+              <Code>/leads</Code> all day. The recipient registry lives at{' '}
+              <Code>/admin/alerts</Code>; the auto-trigger conditions
+              (e.g. &quot;is_affiliate=true AND has_contact=true AND not
+              on Monday&quot;) are still being defined and will land in a
+              follow-up. Until then, the page just manages the list and
+              every alert sent is recorded in <Code>lead_alerts_log</Code>.
+            </p>
+            <ul>
+              <li>
+                <strong>Add a recipient</strong> — email + optional name +
+                optional country. A recipient with no country gets every
+                alert; a recipient with a country only gets alerts for
+                leads scraped from that country (so the German manager
+                doesn&apos;t see DE-only spam from a UK scrape).
+              </li>
+              <li>
+                <strong>Pause / Resume</strong> — temporarily stop sending
+                without removing the recipient from the list.
+              </li>
+              <li>
+                <strong>Remove</strong> — permanent. Past audit-log rows
+                in <Code>lead_alerts_log</Code> are kept.
+              </li>
+            </ul>
             <Tip>
               You&apos;ve reached the end of the tour. Hit Reset progress at
               the top if you want to start over.
             </Tip>
+            <TryItRow>
+              <TryIt href="/admin/alerts" label="Manage alert recipients" />
+            </TryItRow>
           </Section>
         </div>
       </div>
