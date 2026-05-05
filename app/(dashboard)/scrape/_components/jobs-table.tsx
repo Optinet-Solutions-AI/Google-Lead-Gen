@@ -198,7 +198,9 @@ export function JobsTable({ jobs }: Props) {
                   <StatusBadge job={job} />
                 </LinkTd>
                 <LinkTd href={href}>{formatDateTime(job.started_at)}</LinkTd>
-                <LinkTd href={href}>{formatDuration(job.started_at, job.completed_at)}</LinkTd>
+                <td className="p-0 align-middle">
+                  <DurationCell job={job} href={href} />
+                </td>
                 <LinkTd href={href}>
                   <ResultsCell summary={job.result_summary} />
                 </LinkTd>
@@ -246,7 +248,9 @@ export function JobsCardList({ jobs }: Props) {
             <span>{job.country_code}</span>
             <EngineBadge engine={job.search_engine} />
             <span>{job.pages} {job.pages === 1 ? 'page' : 'pages'}</span>
-            <span>{formatDuration(job.started_at, job.completed_at)}</span>
+            <span title={mobileDurationTooltip(job)}>
+              {formatTotalDuration(job)}
+            </span>
             <ResultsCell summary={job.result_summary} mobile />
           </div>
           {job.status === 'completed' && (
@@ -351,6 +355,104 @@ function ResultsCell({
       )}
     </span>
   )
+}
+
+/** Cell renderer — total scrape+enrichment duration with a hover popover
+ *  showing per-stage breakdown. Falls back to the raw scrape window when
+ *  no enrichment timings are available (non-completed jobs, jobs without
+ *  with_enrichment, or completed jobs that haven't been enriched yet). */
+function DurationCell({ job, href }: { job: ScrapeJob; href: string }) {
+  const total = formatTotalDuration(job)
+  const stages = stageBreakdown(job)
+  const showPopover = stages.length > 0
+  return (
+    <div className="group/dur relative">
+      <Link
+        href={href}
+        className="block whitespace-nowrap px-3 py-2"
+      >
+        {total}
+        {job.stage_timings?.enrichment_in_progress && (
+          <span className="ml-1 text-[9px] text-[color:var(--color-text-secondary)]">
+            +
+          </span>
+        )}
+      </Link>
+      {showPopover && (
+        <div
+          role="tooltip"
+          className="pointer-events-none invisible absolute left-1/2 top-full z-20 mt-1 w-[210px] -translate-x-1/2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-2 text-[10px] text-[color:var(--color-text-primary)] opacity-0 shadow-lg transition-opacity group-hover/dur:visible group-hover/dur:opacity-100"
+        >
+          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+            Stage breakdown
+          </p>
+          <table className="w-full">
+            <tbody>
+              {stages.map(s => (
+                <tr key={s.label}>
+                  <td className="py-0.5 pr-2 text-[color:var(--color-text-secondary)]">{s.label}</td>
+                  <td className="py-0.5 text-right font-mono">{s.value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {job.stage_timings?.enrichment_in_progress && (
+            <p className="mt-1.5 border-t border-[color:var(--color-border)] pt-1 text-[9px] italic text-[color:var(--color-text-secondary)]">
+              Enrichment still in flight — values update as rows land.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Total wall-clock from scrape start to the latest stage end, or the
+ *  scrape-only window when no enrichment timings exist. */
+function formatTotalDuration(job: ScrapeJob): string {
+  const t = job.stage_timings
+  if (t?.total_ms != null) return formatMs(t.total_ms)
+  return formatDuration(job.started_at, job.completed_at)
+}
+
+/** Per-stage rows for the hover popover. Returns [] when there's nothing
+ *  meaningful to show (e.g. job hasn't completed scraping yet). */
+function stageBreakdown(job: ScrapeJob): Array<{ label: string; value: string }> {
+  const t = job.stage_timings
+  if (!t) return []
+  const rows: Array<{ label: string; value: string }> = []
+  const push = (label: string, ms: number | null) => {
+    if (ms == null) return
+    rows.push({ label, value: formatMs(ms) })
+  }
+  push('Scrape', t.scrape_ms)
+  push('Monday check', t.monday_ms)
+  push('Affiliate', t.affiliate_ms)
+  push('Rooster', t.rooster_ms)
+  push('Contacts', t.contact_ms)
+  push('S-tags', t.stag_ms)
+  push('S-tag check', t.stag_check_ms)
+  if (rows.length === 0) return []
+  if (t.total_ms != null) {
+    rows.push({ label: 'Total', value: formatMs(t.total_ms) })
+  }
+  return rows
+}
+
+/** Title-attribute fallback for the mobile card list. */
+function mobileDurationTooltip(job: ScrapeJob): string {
+  const stages = stageBreakdown(job)
+  if (stages.length === 0) return ''
+  return stages.map(s => `${s.label}: ${s.value}`).join('\n')
+}
+
+/** ms → human-readable. <60s → "Ns", else "Nm Ns". */
+function formatMs(ms: number): string {
+  const secs = Math.max(0, Math.round(ms / 1000))
+  if (secs < 60) return `${secs}s`
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  return s === 0 ? `${m}m` : `${m}m ${s}s`
 }
 
 /** Full date + time, e.g. "Apr 29, 14:32" — preferred for table cells. */

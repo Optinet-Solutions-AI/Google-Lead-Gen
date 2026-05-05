@@ -73,6 +73,28 @@ export type ScrapeJob = {
   created_at: string
   /** Per-stage applied flags. Only present for completed jobs that have rows. */
   enrichment: EnrichmentStatus
+  /** Per-stage timing approximation, derived from min/max of *_checked_at on
+   *  google_lead_gen_table for the job's leads. Stages run sequentially in
+   *  practice (monday → affiliate → all_running → stag_check), so each
+   *  stage's duration is approximated as `max(checked_at) - prior_stage_end`.
+   *  Null when no leads have been processed by a given stage yet. */
+  stage_timings: StageTimings | null
+}
+
+/** Approximate per-stage timing for a single scrape job. All times in ms. */
+export type StageTimings = {
+  scrape_ms: number | null
+  monday_ms: number | null
+  affiliate_ms: number | null
+  rooster_ms: number | null
+  contact_ms: number | null
+  stag_ms: number | null
+  stag_check_ms: number | null
+  /** End-to-end: from scrape `started_at` to the latest stage end. */
+  total_ms: number | null
+  /** True when at least one enrichment stage still has rows that will
+   *  be processed (drives the "still ticking" UI). */
+  enrichment_in_progress: boolean
 }
 
 export type StageStatus = {
@@ -278,11 +300,18 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
 
   const { data, count, error } = await query
   if (error) throw error
-  const jobs = (data ?? []) as unknown as Omit<ScrapeJob, 'enrichment'>[]
+  const jobs = (data ?? []) as unknown as Omit<ScrapeJob, 'enrichment' | 'stage_timings'>[]
   const completedIds = jobs.filter(j => j.status === 'completed').map(j => j.id)
-  const enrichmentByJob = await fetchEnrichmentStatus(completedIds)
+  const [enrichmentByJob, timingsByJob] = await Promise.all([
+    fetchEnrichmentStatus(completedIds),
+    fetchStageTimings(jobs.filter(j => j.status === 'completed' && j.with_enrichment)),
+  ])
   return {
-    rows: jobs.map(j => ({ ...j, enrichment: enrichmentByJob.get(j.id) ?? {} })),
+    rows: jobs.map(j => ({
+      ...j,
+      enrichment: enrichmentByJob.get(j.id) ?? {},
+      stage_timings: timingsByJob.get(j.id) ?? null,
+    })),
     total: count ?? jobs.length,
   }
 }
@@ -327,6 +356,177 @@ async function fetchEnrichmentStatus(
       acc.stag_check = true
     }
     out.set(jobId, acc)
+  }
+  return out
+}
+
+/** Approximate per-stage durations from min/max of *_checked_at on the
+ *  job's leads. The pipeline runs sequentially in practice
+ *  (monday → affiliate → rooster|contact|stag → stag_check) so each
+ *  stage's duration is `max(checked_at) - prior_stage_end`, with
+ *  prior_stage_end falling back to scrape `completed_at` for the first
+ *  stage. Approximate but cheap — no schema change required. */
+async function fetchStageTimings(
+  jobs: Array<{ id: string; started_at: string | null; completed_at: string | null }>,
+): Promise<Map<string, StageTimings>> {
+  const out = new Map<string, StageTimings>()
+  if (jobs.length === 0) return out
+
+  const jobIds = jobs.map(j => j.id)
+  const svc = createServiceClient()
+
+  // Pull every lead's stage timestamps + id (for the s_tag_check join below).
+  const { data: leadRows, error: leadErr } = await svc
+    .from('google_lead_gen_table')
+    .select(
+      [
+        'id, scrape_job_id',
+        'monday_checked_at, affiliate_checked_at, rooster_checked_at',
+        'contact_checked_at, s_tags_checked_at, stag_check_checked_at',
+      ].join(', '),
+    )
+    .in('scrape_job_id', jobIds)
+  if (leadErr) throw leadErr
+
+  // s_tag_check_checked_at lives on the lead row, but the actual stage
+  // operates per s_tags_table row; fall back to per-lead column which is
+  // already aggregated by the RPC that runs the stage.
+  type LeadRow = {
+    id: number
+    scrape_job_id: string | null
+    monday_checked_at: string | null
+    affiliate_checked_at: string | null
+    rooster_checked_at: string | null
+    contact_checked_at: string | null
+    s_tags_checked_at: string | null
+    stag_check_checked_at: string | null
+  }
+
+  type StageMax = {
+    monday: number | null
+    affiliate: number | null
+    rooster: number | null
+    contact: number | null
+    stag: number | null
+    stag_check: number | null
+    /** Total leads in the job — needed to detect whether enrichment is
+     *  still in flight (any stage still has rows with null checked_at). */
+    total_leads: number
+    /** Per-stage applied row counts — for the in-progress check. */
+    monday_done: number
+    affiliate_done: number
+    rooster_done: number
+    contact_done: number
+    stag_done: number
+    stag_check_done: number
+  }
+
+  const perJob = new Map<string, StageMax>()
+  for (const r of (leadRows ?? []) as unknown as LeadRow[]) {
+    if (!r.scrape_job_id) continue
+    const acc = perJob.get(r.scrape_job_id) ?? {
+      monday: null,
+      affiliate: null,
+      rooster: null,
+      contact: null,
+      stag: null,
+      stag_check: null,
+      total_leads: 0,
+      monday_done: 0,
+      affiliate_done: 0,
+      rooster_done: 0,
+      contact_done: 0,
+      stag_done: 0,
+      stag_check_done: 0,
+    }
+    acc.total_leads += 1
+    const fold = (key: keyof StageMax, ts: string | null, doneKey: keyof StageMax) => {
+      if (!ts) return
+      const ms = Date.parse(ts)
+      if (!Number.isFinite(ms)) return
+      const cur = acc[key] as number | null
+      if (cur === null || ms > cur) (acc[key] as number | null) = ms
+      ;(acc[doneKey] as number) += 1
+    }
+    fold('monday', r.monday_checked_at, 'monday_done')
+    fold('affiliate', r.affiliate_checked_at, 'affiliate_done')
+    fold('rooster', r.rooster_checked_at, 'rooster_done')
+    fold('contact', r.contact_checked_at, 'contact_done')
+    fold('stag', r.s_tags_checked_at, 'stag_done')
+    fold('stag_check', r.stag_check_checked_at, 'stag_check_done')
+    perJob.set(r.scrape_job_id, acc)
+  }
+
+  for (const job of jobs) {
+    const startMs = job.started_at ? Date.parse(job.started_at) : NaN
+    const completedMs = job.completed_at ? Date.parse(job.completed_at) : NaN
+    if (!Number.isFinite(startMs) || !Number.isFinite(completedMs)) {
+      out.set(job.id, {
+        scrape_ms: null,
+        monday_ms: null,
+        affiliate_ms: null,
+        rooster_ms: null,
+        contact_ms: null,
+        stag_ms: null,
+        stag_check_ms: null,
+        total_ms: null,
+        enrichment_in_progress: false,
+      })
+      continue
+    }
+    const stages = perJob.get(job.id)
+    const scrape_ms = Math.max(0, completedMs - startMs)
+
+    // Each stage starts at the prior stage's end time. Affiliate is the
+    // first parallel-stage gate; rooster/contact/stag all start at the
+    // affiliate end; stag_check starts at the stag end.
+    const mondayEnd = stages?.monday ?? null
+    const affiliateEnd = stages?.affiliate ?? null
+    const roosterEnd = stages?.rooster ?? null
+    const contactEnd = stages?.contact ?? null
+    const stagEnd = stages?.stag ?? null
+    const stagCheckEnd = stages?.stag_check ?? null
+
+    const monday_ms = mondayEnd !== null ? Math.max(0, mondayEnd - completedMs) : null
+    const affiliateStart = mondayEnd ?? completedMs
+    const affiliate_ms = affiliateEnd !== null ? Math.max(0, affiliateEnd - affiliateStart) : null
+    const allStart = affiliateEnd ?? affiliateStart
+    const rooster_ms = roosterEnd !== null ? Math.max(0, roosterEnd - allStart) : null
+    const contact_ms = contactEnd !== null ? Math.max(0, contactEnd - allStart) : null
+    const stag_ms = stagEnd !== null ? Math.max(0, stagEnd - allStart) : null
+    const stagCheckStart = stagEnd ?? allStart
+    const stag_check_ms = stagCheckEnd !== null ? Math.max(0, stagCheckEnd - stagCheckStart) : null
+
+    const ends = [completedMs, mondayEnd, affiliateEnd, roosterEnd, contactEnd, stagEnd, stagCheckEnd]
+      .filter((v): v is number => typeof v === 'number')
+    const lastEnd = ends.length > 0 ? Math.max(...ends) : completedMs
+    const total_ms = Math.max(0, lastEnd - startMs)
+
+    // In-progress: any stage where some leads have a checked_at and
+    // some don't. We can't observe queue state here cheaply, so the
+    // partial-completion heuristic works as a "stage still running".
+    const total = stages?.total_leads ?? 0
+    const partial = (done: number) => done > 0 && done < total
+    const enrichment_in_progress =
+      total > 0 &&
+      (partial(stages?.monday_done ?? 0) ||
+        partial(stages?.affiliate_done ?? 0) ||
+        partial(stages?.rooster_done ?? 0) ||
+        partial(stages?.contact_done ?? 0) ||
+        partial(stages?.stag_done ?? 0) ||
+        partial(stages?.stag_check_done ?? 0))
+
+    out.set(job.id, {
+      scrape_ms,
+      monday_ms,
+      affiliate_ms,
+      rooster_ms,
+      contact_ms,
+      stag_ms,
+      stag_check_ms,
+      total_ms,
+      enrichment_in_progress,
+    })
   }
   return out
 }
