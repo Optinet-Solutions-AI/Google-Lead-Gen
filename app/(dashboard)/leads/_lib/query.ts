@@ -43,6 +43,7 @@ export type LeadRow = {
   s_tags_checked_at: string | null
   s_tag_id: number | null
   created_at: string
+  is_not_relevant: boolean
   // Attribution — denormalized from scrape_queue at query time so the
   // table can show "by <display>" without an extra round-trip.
   created_by_username: string | null
@@ -64,6 +65,10 @@ export type LeadsQueryOptions = {
   filters?: Filter[]
   /** Advanced sort priority list (parsed `?s=` params). */
   sorts?: Sort[]
+  /** Include rows flagged is_not_relevant. Default false — those rows
+   *  are hidden from the default /leads view. Pass true to surface
+   *  them (with the badge) e.g. for an admin "show hidden" toggle. */
+  includeNotRelevant?: boolean
 }
 
 export type LeadsQueryResult = {
@@ -94,12 +99,19 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
         'has_s_tags, is_stag_overridden_at',
         's_tags_checked_at, s_tag_id',
         'created_at',
+        'is_not_relevant',
         // FK join — google_lead_gen_table.scrape_job_id → scrape_queue(id).
         // PostgREST flattens this into a nested object on the row.
         'scrape_queue:scrape_queue!scrape_job_id(created_by_username, created_by_display)',
       ].join(', '),
       { count: 'exact' },
     )
+
+  // Default: hide not-relevant rows (Monday not_relevant board match
+  // OR user-flagged). `?show_hidden=1` flips includeNotRelevant=true.
+  if (!opts.includeNotRelevant) {
+    query = query.eq('is_not_relevant', false)
+  }
 
   if (opts.scrapeJobId) {
     query = query.eq('scrape_job_id', opts.scrapeJobId)

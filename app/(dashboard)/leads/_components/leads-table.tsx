@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import { CheckSquare, Square } from 'lucide-react'
+import { CheckSquare, EyeOff, Square } from 'lucide-react'
 import { SortHeader } from '../../monday/_components/sort-header'
 import type { LeadRow } from '../_lib/query'
 import {
@@ -184,7 +184,10 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                 ) : (
                   <>
                     <Td className="max-w-[220px] truncate" title={row.keyword ?? ''}>
-                      <div className="truncate">{row.keyword ?? '—'}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate">{row.keyword ?? '—'}</span>
+                        {row.is_not_relevant && <NotRelevantPill />}
+                      </div>
                       {(row.created_by_display || row.created_by_username) && (
                         <div
                           className="truncate text-[10px] font-normal text-[color:var(--color-text-secondary)]"
@@ -417,6 +420,18 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
 
       <LeadDetailDrawer leadId={openLeadId} onClose={() => setOpenLeadId(null)} />
     </>
+  )
+}
+
+function NotRelevantPill() {
+  return (
+    <span
+      title="Marked not relevant — hidden from default /leads view, skipped by enrichment."
+      className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-800"
+    >
+      <EyeOff className="h-2.5 w-2.5" />
+      hidden
+    </span>
   )
 }
 

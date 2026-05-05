@@ -4,10 +4,12 @@ import { useActionState, useEffect, useState, useTransition } from 'react'
 import Link from 'next/link'
 import {
   CheckCircle2,
+  EyeOff,
   ExternalLink,
   Loader2,
   Mail,
   Phone,
+  RotateCcw,
   Send,
   Tag,
   Trash2,
@@ -15,7 +17,13 @@ import {
   X,
 } from 'lucide-react'
 import type { LeadDetail } from '../_lib/detail-query'
-import { deleteLeadScreenshot, pushLeadToMondayAction, type PushToMondayState } from '../actions'
+import {
+  deleteLeadScreenshot,
+  pushLeadToMondayAction,
+  setNotRelevantAction,
+  type MarkNotRelevantState,
+  type PushToMondayState,
+} from '../actions'
 
 type Detail = LeadDetail
 
@@ -167,6 +175,13 @@ function DetailBody({ detail }: { detail: Detail }) {
 
   return (
     <div className="flex flex-col gap-4 p-4 text-[12px]">
+      <NotRelevantPanel
+        leadId={lead.id}
+        isNotRelevant={lead.is_not_relevant}
+        markedAt={lead.not_relevant_marked_at}
+        markedBy={lead.not_relevant_marked_by}
+      />
+
       <PushToMondayPanel
         leadId={lead.id}
         pushedAt={lead.pushed_to_monday_at}
@@ -211,7 +226,21 @@ function DetailBody({ detail }: { detail: Detail }) {
       </Section>
 
       <Section title="Monday duplicate check">
-        <KV label="On Monday?" value={lead.is_on_monday === null ? '—' : lead.is_on_monday ? (lead.monday_board ?? 'Yes') : 'No'} />
+        <KV
+          label="On Monday?"
+          value={
+            lead.is_on_monday === null
+              ? '—'
+              : lead.is_on_monday
+                ? (
+                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                    <span>{lead.monday_board ?? 'Yes'}</span>
+                    <MatchKindBadge kind={lead.monday_match_kind} />
+                  </span>
+                )
+                : 'No'
+          }
+        />
         {lead.monday_item_id && (
           <KV label="Item ID" value={lead.monday_item_id} />
         )}
@@ -491,12 +520,140 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
+function MatchKindBadge({ kind }: { kind: string | null }) {
+  if (!kind || kind === 'exact') return null
+  const styles: Record<string, { label: string; cls: string; title: string }> = {
+    registered: {
+      label: 'subdomain match',
+      cls: 'bg-amber-100 text-amber-800',
+      title: 'Matched on the registered domain (eTLD+1) — the lead is a subdomain variant of the Monday item.',
+    },
+    mentioned_in_updates: {
+      label: 'in updates',
+      cls: 'bg-sky-100 text-sky-800',
+      title: 'Matched a domain mentioned in a Monday board comment/post on the parent item.',
+    },
+  }
+  const s = styles[kind] ?? { label: kind, cls: 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]', title: '' }
+  return (
+    <span
+      title={s.title}
+      className={['inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide', s.cls].join(' ')}
+    >
+      {s.label}
+    </span>
+  )
+}
+
 function KV({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-baseline gap-2">
       <dt className="shrink-0 text-[11px] text-[color:var(--color-text-secondary)]">{label}:</dt>
       <dd className="min-w-0 flex-1 text-[11px] text-[color:var(--color-text-primary)]">{value}</dd>
     </div>
+  )
+}
+
+function NotRelevantPanel({
+  leadId,
+  isNotRelevant,
+  markedAt,
+  markedBy,
+}: {
+  leadId: number
+  isNotRelevant: boolean
+  markedAt: string | null
+  markedBy: string | null
+}) {
+  const initial: MarkNotRelevantState = null
+  const [state, action, pending] = useActionState(setNotRelevantAction, initial)
+  const [confirming, setConfirming] = useState(false)
+
+  // Optimistic flip — server action revalidates the lead drawer's data
+  // source on next open, but the panel updates immediately so the user
+  // sees the new state.
+  const effectivelyHidden =
+    state?.status === 'ok' ? !isNotRelevant : isNotRelevant
+
+  if (effectivelyHidden) {
+    return (
+      <section className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50/50 px-3 py-2">
+        <EyeOff className="h-4 w-4 shrink-0 text-amber-700" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold text-amber-900">
+            Marked as not relevant
+          </p>
+          <p className="truncate text-[10px] text-amber-800/80">
+            Hidden from /leads · skipped by enrichment
+            {markedAt ? ` · ${new Date(markedAt).toLocaleString()}` : ''}
+            {markedBy ? ` · by ${markedBy}` : ''}
+          </p>
+        </div>
+        <form action={action}>
+          <input type="hidden" name="lead_id" value={leadId} />
+          <input type="hidden" name="value" value="false" />
+          <button
+            type="submit"
+            disabled={pending}
+            className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2 py-1 text-[10px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+          >
+            {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+            Restore
+          </button>
+        </form>
+      </section>
+    )
+  }
+
+  return (
+    <section className="flex flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+          Not relevant?
+        </p>
+        {!confirming && (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]"
+          >
+            <EyeOff className="h-3 w-3" />
+            Mark as not relevant
+          </button>
+        )}
+      </div>
+      <p className="text-[10px] text-[color:var(--color-text-secondary)]">
+        Hides this lead from /leads, cancels in-flight enrichment for it,
+        and prevents future enrichment passes from picking it up. Reversible.
+      </p>
+      {confirming && (
+        <form action={action} className="flex items-center gap-2">
+          <input type="hidden" name="lead_id" value={leadId} />
+          <input type="hidden" name="value" value="true" />
+          <button
+            type="submit"
+            disabled={pending}
+            className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : <EyeOff className="h-3 w-3" />}
+            Confirm
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirming(false)}
+            disabled={pending}
+            className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] hover:bg-[color:var(--color-bg-secondary)]"
+          >
+            Cancel
+          </button>
+        </form>
+      )}
+      {state?.status === 'error' && (
+        <p className="rounded-md bg-red-50 px-2 py-1 text-[11px] text-red-700">
+          {state.error}
+        </p>
+      )}
+    </section>
   )
 }
 

@@ -299,6 +299,83 @@ export async function pushLeadToMondayAction(
 }
 
 // ============================================================
+// Mark / unmark a lead as not-relevant. Hides it from /leads (default
+// view), cancels any in-flight enrichment for it, and prevents future
+// enrichment passes from picking it up. Reversible.
+// ============================================================
+
+export type MarkNotRelevantState =
+  | { status: 'ok' }
+  | { status: 'error'; error: string }
+  | null
+
+export async function setNotRelevantAction(
+  _prev: MarkNotRelevantState,
+  formData: FormData,
+): Promise<MarkNotRelevantState> {
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { status: 'error', error: 'Not signed in.' }
+
+  const leadId = Number(formData.get('lead_id'))
+  if (!Number.isFinite(leadId)) return { status: 'error', error: 'Missing lead id.' }
+
+  // 'on' from a checkbox-style hidden input maps to true; empty string = false (unmark).
+  const wantsTrue = String(formData.get('value') ?? '').toLowerCase() === 'true'
+
+  const svc = createServiceClient()
+  // Resolve a friendly attribution string — display_name → username → email.
+  const { data: profileRow } = await svc
+    .from('user_profiles')
+    .select('username, display_name')
+    .eq('id', user.id)
+    .maybeSingle()
+  const profile = profileRow as { username: string | null; display_name: string | null } | null
+  const markedBy = profile?.display_name ?? profile?.username ?? user.email ?? user.id
+
+  const update: Record<string, unknown> = wantsTrue
+    ? {
+        is_not_relevant: true,
+        not_relevant_marked_at: new Date().toISOString(),
+        not_relevant_marked_by: markedBy,
+      }
+    : {
+        is_not_relevant: false,
+        not_relevant_marked_at: null,
+        not_relevant_marked_by: null,
+      }
+
+  const { error: updErr } = await svc
+    .from('google_lead_gen_table')
+    .update(update)
+    .eq('id', leadId)
+  if (updErr) return { status: 'error', error: updErr.message }
+
+  if (wantsTrue) {
+    // Cancel any pending/paused enrichment for this lead so the worker
+    // doesn't pick it up after the user just hid it.
+    await svc
+      .from('enrichment_fetch_queue')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('lead_id', leadId)
+      .in('status', ['pending', 'paused'])
+  }
+
+  await logActivity({
+    action: wantsTrue ? 'lead.mark_not_relevant' : 'lead.unmark_not_relevant',
+    entity_type: 'lead',
+    entity_id: leadId,
+    details: { marked_by: markedBy },
+  })
+
+  revalidatePath('/leads')
+  revalidatePath('/scrape', 'layout')
+  return { status: 'ok' }
+}
+
+// ============================================================
 // Bulk-select actions on /leads:
 //   - retryEnrichmentForLeads — re-enqueue an enrichment stage for
 //     the selected lead ids only (used to retry failed domains

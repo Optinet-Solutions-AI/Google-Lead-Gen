@@ -43,6 +43,10 @@ export type LeadDetail = {
     is_on_monday: boolean | null
     monday_board: string | null
     monday_item_id: string | null
+    /** How the match was found: 'exact', 'registered' (subdomain
+     *  variant), or 'mentioned_in_updates' (domain found in a board
+     *  comment/post). Null when the lead isn't on Monday. */
+    monday_match_kind: string | null
     is_affiliate: boolean | null
     affiliate_score: number | null
     affiliate_casino_score: number | null
@@ -59,6 +63,9 @@ export type LeadDetail = {
     pushed_to_monday_at: string | null
     monday_pushed_item_id: string | null
     monday_pushed_by: string | null
+    is_not_relevant: boolean
+    not_relevant_marked_at: string | null
+    not_relevant_marked_by: string | null
   } | null
   contact: ContactDetail | null
   stags: StagDetail[]
@@ -78,13 +85,14 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
         [
           'id, url, domain, keyword, country, country_code, result_type, batch_id, created_at',
           'scrape_job_id',
-          'is_on_monday, monday_board, monday_item_id',
+          'is_on_monday, monday_board, monday_item_id, monday_match_kind',
           'is_affiliate, affiliate_score, affiliate_casino_score, affiliate_confidence',
           'affiliate_external_links, affiliate_indicators',
           'is_rooster_partner, brand, rooster_brands',
           'has_contact_details, has_s_tags, s_tags_checked_at',
           'screenshot_content_link',
           'pushed_to_monday_at, monday_pushed_item_id, monday_pushed_by',
+          'is_not_relevant, not_relevant_marked_at, not_relevant_marked_by',
           // FK join — pull the queueing user's display + username so the
           // drawer can show "Queued by …" without a second round-trip.
           'scrape_queue:scrape_queue!scrape_job_id(created_by_username, created_by_display)',
