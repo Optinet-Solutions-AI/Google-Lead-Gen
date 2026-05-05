@@ -138,7 +138,11 @@ export async function enqueueScrape(
   const allowedLangs = (profile as { languages: string[] | null }).languages ?? ['en']
   const finalLang = allowedLangs.includes(language) || language === 'en' ? language : 'en'
 
-  // Cross-product: one row per (keyword × engine).
+  // Cross-product: one row per (keyword × engine). Stamp the queueing
+  // user's email so /scrape can show "queued by <email>" without a
+  // join, and so audit trails survive even if the user is later
+  // deleted from auth.users.
+  const createdBy = user.email ?? null
   const rows = keywords.flatMap(keyword =>
     enginesToRun.map(engine => ({
       keyword,
@@ -149,6 +153,7 @@ export async function enqueueScrape(
       scheduled_at: scheduledAtIso,
       language: finalLang,
       search_engine: engine,
+      created_by_email: createdBy,
     })),
   )
   const { error: insertError } = await svc.from('scrape_queue').insert(rows)

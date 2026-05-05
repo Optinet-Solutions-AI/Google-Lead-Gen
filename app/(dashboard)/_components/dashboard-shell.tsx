@@ -18,6 +18,7 @@ import {
   Menu,
   Search,
   Star,
+  Users,
   X,
 } from 'lucide-react'
 import { signOutAction } from '../_actions/auth'
@@ -91,12 +92,20 @@ const NAV_ITEMS = [
   },
 ]
 
+const ADMIN_NAV_ITEM = {
+  label: 'Users (Admin)',
+  href: '/admin/users',
+  icon: Users,
+  match: (p: string) => p.startsWith('/admin'),
+} as const
+
 type Props = {
   children: React.ReactNode
   username: string
+  isAdmin?: boolean
 }
 
-export function DashboardShell({ children, username }: Props) {
+export function DashboardShell({ children, username, isAdmin = false }: Props) {
   const pathname = usePathname()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [expanded, setExpanded] = useState(true)
@@ -160,7 +169,7 @@ export function DashboardShell({ children, username }: Props) {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
-          {NAV_ITEMS.map(item => {
+          {[...NAV_ITEMS, ...(isAdmin ? [ADMIN_NAV_ITEM] : [])].map(item => {
             const active = item.match(pathname)
             const Icon = item.icon
             return (

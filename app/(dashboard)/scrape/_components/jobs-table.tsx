@@ -174,8 +174,17 @@ export function JobsTable({ jobs }: Props) {
                 <td className="w-8 px-1 py-1 align-middle">
                   <JobActionsButton job={job} />
                 </td>
-                <LinkTd href={href} className="max-w-[280px] truncate" title={job.keyword}>
-                  {job.keyword}
+                <LinkTd
+                  href={href}
+                  className="max-w-[280px] truncate"
+                  title={job.created_by_email ? `${job.keyword} — queued by ${job.created_by_email}` : job.keyword}
+                >
+                  <span className="block truncate">{job.keyword}</span>
+                  {job.created_by_email && (
+                    <span className="block truncate text-[10px] text-[color:var(--color-text-secondary)]">
+                      by {job.created_by_email}
+                    </span>
+                  )}
                 </LinkTd>
                 <LinkTd href={href}>{job.country_code}</LinkTd>
                 <LinkTd href={href}>
