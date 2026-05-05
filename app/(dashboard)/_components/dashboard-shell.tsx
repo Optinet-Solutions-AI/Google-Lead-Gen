@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import {
   BookOpen,
-  CalendarClock,
   ChevronLeft,
   Clock,
   Database,
@@ -36,12 +35,8 @@ const NAV_ITEMS = [
     icon: Search,
     match: (p: string) => p.startsWith('/scrape'),
   },
-  {
-    label: 'Schedules',
-    href: '/schedules',
-    icon: CalendarClock,
-    match: (p: string) => p.startsWith('/schedules'),
-  },
+  // Schedules sidebar entry hidden pending the scheduler UI work — the
+  // page still exists at /schedules; this is just a sidebar omission.
   {
     label: 'Leads',
     href: '/leads',
