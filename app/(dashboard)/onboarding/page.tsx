@@ -206,7 +206,8 @@ export default function OnboardingPage() {
             <p>
               This app finds high-quality affiliate-leads for Rooster by scraping
               Google search results across 15 countries, then running each lead
-              through a six-stage enrichment pipeline. The end product is a
+              through a five-stage enrichment pipeline (3 auto + 2
+              operator-triggered). The end product is a
               short-list of websites that look like real affiliates and aren&apos;t
               already on your Monday boards.
             </p>
@@ -328,8 +329,9 @@ export default function OnboardingPage() {
               </li>
               <li>
                 <Badge tone="sky">enriching · affiliate</Badge> /{' '}
-                <Badge tone="sky">enriching · all stages</Badge> — enrichment is
-                running.
+                <Badge tone="sky">enriching · rooster</Badge> — auto-chain
+                stages 1–3 are running. (S-tag and Contact extraction are
+                operator-triggered from the job page.)
               </li>
               <li>
                 <Badge tone="success">completed</Badge> — scrape <em>and</em>{' '}
@@ -456,52 +458,56 @@ export default function OnboardingPage() {
             next="leads"
           >
             <p>
-              Six stages run on each lead, in order. Each one writes back to{' '}
+              Five stages exist on each lead. The first three run{' '}
+              <strong>automatically</strong> after the scrape; the last two
+              are <strong>operator-triggered</strong> from the job detail
+              page once the auto-chain is done. Each stage writes back to{' '}
               <Code>google_lead_gen_table</Code> via the{' '}
-              <Code>/api/enrichment/score-row</Code> endpoint. You can also
-              trigger any stage manually from the job detail page.
+              <Code>/api/enrichment/score-row</Code> endpoint.
             </p>
             <ol>
               <li>
-                <strong>1. Monday duplicate check</strong> — pure DB query
-                against the Monday replica tables. No fetch needed; sets{' '}
-                <Code>is_on_monday</Code>.
+                <strong>1. Monday duplicate check</strong>{' '}
+                <em>(auto)</em> — pure DB query against the Monday replica
+                tables. No fetch needed; sets <Code>is_on_monday</Code>.
               </li>
               <li>
-                <strong>2. Affiliate detection</strong> — fetches the lead&apos;s
-                homepage in a browser, scores it for affiliate signals
-                (out-bound tracking links, casino keywords, sponsored language).
-                Sets <Code>is_affiliate</Code> + confidence.
+                <strong>2. Affiliate detection</strong>{' '}
+                <em>(auto)</em> — fetches the lead&apos;s homepage in a
+                browser, scores it for affiliate signals (out-bound
+                tracking links, casino keywords, sponsored language). Sets{' '}
+                <Code>is_affiliate</Code> + confidence.
               </li>
               <li>
-                <strong>3. Rooster partner check</strong> — runs three
-                cheap signals against the cached HTML: outgoing{' '}
-                <Code>href</Code> match against brand domains,{' '}
-                <Code>&lt;img alt=&quot;Brand&quot;&gt;</Code> match,
-                and image filename token match (logo-spinjo.svg). If
-                none of those hit, escalates to a{' '}
-                <Code>rooster_deep</Code> follow-up that opens the page in
-                Chromium, follows tracking redirects, and checks the
-                resolved hostnames against the brand list — catching
-                affiliates that hide brand links behind /go/ redirects.
+                <strong>3. Rooster partner check</strong>{' '}
+                <em>(auto, last in chain)</em> — runs three cheap signals
+                against the cached HTML: outgoing <Code>href</Code> match
+                against brand domains,{' '}
+                <Code>&lt;img alt=&quot;Brand&quot;&gt;</Code> match, and
+                image filename token match (logo-spinjo.svg). Escalates to
+                a <Code>rooster_deep</Code> follow-up if none hit.
               </li>
               <li>
-                <strong>4. Contact extraction</strong> — visits homepage,{' '}
-                <Code>/contact</Code>, <Code>/about</Code>, <Code>/impressum</Code>{' '}
-                and runs a cascade: regex → GPT-4o web search → Hunter.io
-                fallback.
+                <strong>4. S-tag extraction</strong>{' '}
+                <em>(manual, affiliate rows only)</em> — follows outbound
+                tracking links, takes a screenshot of each landing, pulls
+                out <Code>btag</Code> / <Code>stag</Code> / <Code>cxd</Code>{' '}
+                / <Code>mid</Code> / <Code>affid</Code>. Truncated at the
+                first <Code>_</Code> so 10 outbound links → 10 short s_tag
+                rows.
               </li>
               <li>
-                <strong>5. S-tag extraction</strong> (affiliate rows only) —
-                follows tracking links, takes a screenshot of each landing,
-                pulls out <Code>btag</Code> / <Code>stag</Code> / <Code>cxd</Code>{' '}
-                / <Code>mid</Code> / <Code>affid</Code> params.
-              </li>
-              <li>
-                <strong>6. S-tag verify</strong> — cross-references each
-                extracted tag against the Monday replica to flag duplicates.
+                <strong>5. Contact extraction</strong>{' '}
+                <em>(manual)</em> — visits homepage, <Code>/contact</Code>,{' '}
+                <Code>/about</Code>, <Code>/impressum</Code> and runs a
+                cascade: regex → GPT-4o web search → Hunter.io fallback.
               </li>
             </ol>
+            <p className="mt-2 text-[11px] italic text-[color:var(--color-text-secondary)]">
+              S-tag duplicate verification (the old stage 6) is hidden
+              from the UI for now — backend RPC is still wired up and
+              will surface again once the workflow is finalised.
+            </p>
             <Tip>
               The pipeline badges on the jobs table (small circles in the
               Pipeline column) show which stages have run for each job.

@@ -81,9 +81,13 @@ Click **Add to queue**. Show the new row appear in the table below.
 
 - **Status** — pending → running → completed. If a captcha shows up,
   the tool auto-retries up to 10 times with a fresh IP each time. If
-  it still hits a wall, you'll see "captcha" and can click retry. If
-  enrichment is running after the scrape is done, you'll see
-  "enriching · affiliate" or "enriching · all stages".
+  it still hits a wall, you'll see "captcha" and can click retry. After
+  the scrape finishes, the auto-enrichment chain runs the **first
+  three stages**: Monday duplicate check → Affiliate detection →
+  Rooster brand check. Status badge will show "enriching · affiliate"
+  then "enriching · rooster" while it works. **S-tag extraction and
+  Contact extraction are now operator-triggered** — you click them
+  per-job from the job detail page once the auto chain is done.
 - **Started / Duration** — when it kicked off, how long it took.
   **Hover over the duration** to see the breakdown: "Scrape took 42s,
   Monday check 2s, Affiliate detection 1m 30s, Rooster check 5s,

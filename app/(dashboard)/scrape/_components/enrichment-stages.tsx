@@ -80,6 +80,10 @@ type StageRowProps = {
   message: string | null
   error: string | null
   jobId: string
+  /** When true, the auto-enrichment chain runs this stage. When false,
+   *  the operator triggers it from this row. Drives the badge next to
+   *  the title so users know what to click vs. what runs by itself. */
+  auto?: boolean
 }
 
 function StageRow({
@@ -93,6 +97,7 @@ function StageRow({
   message,
   error,
   jobId,
+  auto = false,
 }: StageRowProps) {
   const done = status.total > 0
   // In-flight state — block the play button while jobs are queued/running
@@ -126,6 +131,19 @@ function StageRow({
         <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[color:var(--color-text-primary)]">
           {icon}
           <span className="whitespace-nowrap">{index}. {title}</span>
+          <span
+            className={[
+              'rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
+              auto
+                ? 'bg-emerald-100 text-emerald-800'
+                : 'bg-amber-100 text-amber-800',
+            ].join(' ')}
+            title={auto
+              ? 'Runs automatically after the scrape completes'
+              : 'Operator-triggered — click ▶ to run on this job'}
+          >
+            {auto ? 'auto' : 'manual'}
+          </span>
         </span>
         <span className="text-[11px] text-[color:var(--color-text-secondary)]">
           {hasInflight ? (
@@ -219,7 +237,7 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
                   : 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]',
             ].join(' ')}
           >
-            {doneCount} of 6 done
+            {doneCount} of 5 done
           </span>
           <ChevronDown
             className={['h-4 w-4 text-[color:var(--color-text-secondary)] transition-transform', open ? 'rotate-180' : ''].join(' ')}
@@ -240,6 +258,7 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
             message={mondayState?.status === 'ok' ? mondayState.message : null}
             error={mondayState?.status === 'error' ? mondayState.error : null}
             jobId={jobId}
+            auto
           />
           <StageRow
             index={2}
@@ -252,6 +271,7 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
             message={affState?.status === 'ok' ? affState.message : null}
             error={affState?.status === 'error' ? affState.error : null}
             jobId={jobId}
+            auto
           />
           <StageRow
             index={3}
@@ -264,7 +284,11 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
             message={roosterState?.status === 'ok' ? roosterState.message : null}
             error={roosterState?.status === 'error' ? roosterState.error : null}
             jobId={jobId}
+            auto
           />
+          {/* Stages 4 & 5 are now MANUAL — auto-chain stops at Rooster
+           *  (see migration 20260505040000_chain_stops_at_rooster.sql).
+           *  Operators trigger these per-job from the ▶ button below. */}
           <StageRow
             index={4}
             stageKey="stag"
@@ -277,9 +301,6 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
             error={stagState?.status === 'error' ? stagState.error : null}
             jobId={jobId}
           />
-          {/* Stage 5 (Verify s-tags on Monday) intentionally hidden —
-           *  backend RPC is still wired up; re-introduce when the
-           *  workflow stabilises. */}
           <StageRow
             index={5}
             stageKey="contact"

@@ -64,17 +64,20 @@ function displayStatus(job: ScrapeJob): { label: string; style: string; title?: 
         style: 'bg-sky-100 text-sky-800',
         title: 'Scrape done; affiliate-detection stage running',
       }
-    case 'all_running':
+    case 'rooster_running':
       return {
-        label: 'enriching · rooster + tags',
+        label: 'enriching · rooster',
         style: 'bg-sky-100 text-sky-800',
-        title: 'Scrape done; rooster + s-tag stages running. Contact extraction runs after these complete.',
+        title: 'Scrape done; Rooster brand check running. S-tag and Contact extraction are operator-triggered from the job page.',
       }
+    // Legacy statuses from before the chain shrank to 1–3. Treated
+    // identically to rooster_running — chain only waits on rooster now.
+    case 'all_running':
     case 'contact_running':
       return {
-        label: 'enriching · contacts',
+        label: 'enriching · rooster',
         style: 'bg-sky-100 text-sky-800',
-        title: 'Last stage — contact extraction running on every eligible lead.',
+        title: 'Legacy chain status; auto pipeline now stops at Rooster. S-tag and Contact extraction are manual.',
       }
     case 'pending':
     case null:
