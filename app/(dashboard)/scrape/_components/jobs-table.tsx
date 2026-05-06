@@ -66,9 +66,15 @@ function displayStatus(job: ScrapeJob): { label: string; style: string; title?: 
       }
     case 'all_running':
       return {
-        label: 'enriching · all stages',
+        label: 'enriching · rooster + tags',
         style: 'bg-sky-100 text-sky-800',
-        title: 'Scrape done; rooster, contact, and s-tag stages running',
+        title: 'Scrape done; rooster + s-tag stages running. Contact extraction runs after these complete.',
+      }
+    case 'contact_running':
+      return {
+        label: 'enriching · contacts',
+        style: 'bg-sky-100 text-sky-800',
+        title: 'Last stage — contact extraction running on every eligible lead.',
       }
     case 'pending':
     case null:
@@ -537,9 +543,9 @@ function stageBreakdown(job: ScrapeJob): Array<{ label: string; value: string }>
   push('Monday check', t.monday_ms)
   push('Affiliate', t.affiliate_ms)
   push('Rooster', t.rooster_ms)
-  push('Contacts', t.contact_ms)
   push('S-tags', t.stag_ms)
   push('S-tag check', t.stag_check_ms)
+  push('Contacts', t.contact_ms)
   if (rows.length === 0) return []
   if (t.total_ms != null) {
     rows.push({ label: 'Total', value: formatMs(t.total_ms) })

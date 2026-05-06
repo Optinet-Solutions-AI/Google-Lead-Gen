@@ -38,9 +38,12 @@ export const PIPELINE_STAGES = [
   { key: 'monday_check', label: 'Monday duplicate check' },
   { key: 'affiliate', label: 'Affiliate detection' },
   { key: 'rooster', label: 'Rooster partner check' },
-  { key: 'contacts', label: 'Contact extraction' },
   { key: 'stags', label: 'S-tag extraction' },
   { key: 'stag_check', label: 'S-tag duplicate check' },
+  // Contact extraction runs LAST so the orchestrator only spends the
+  // expensive page-scrape pass on leads that the cheaper stages have
+  // already classified.
+  { key: 'contacts', label: 'Contact extraction' },
   // 7.7 Monday sync — { key: 'monday_sync', label: 'Monday sync' },
 ] as const
 
@@ -477,9 +480,11 @@ async function fetchStageTimings(
     const stages = perJob.get(job.id)
     const scrape_ms = Math.max(0, completedMs - startMs)
 
-    // Each stage starts at the prior stage's end time. Affiliate is the
-    // first parallel-stage gate; rooster/contact/stag all start at the
-    // affiliate end; stag_check starts at the stag end.
+    // Each stage starts at the prior stage's end time. The chain is:
+    //   monday → affiliate → (rooster + stag in parallel) → stag_check
+    //                                                    └→ contact (last)
+    // So contact starts at MAX(rooster_end, stag_end) — it's gated on
+    // both rooster and stag finishing, not just affiliate.
     const mondayEnd = stages?.monday ?? null
     const affiliateEnd = stages?.affiliate ?? null
     const roosterEnd = stages?.rooster ?? null
@@ -492,10 +497,14 @@ async function fetchStageTimings(
     const affiliate_ms = affiliateEnd !== null ? Math.max(0, affiliateEnd - affiliateStart) : null
     const allStart = affiliateEnd ?? affiliateStart
     const rooster_ms = roosterEnd !== null ? Math.max(0, roosterEnd - allStart) : null
-    const contact_ms = contactEnd !== null ? Math.max(0, contactEnd - allStart) : null
     const stag_ms = stagEnd !== null ? Math.max(0, stagEnd - allStart) : null
     const stagCheckStart = stagEnd ?? allStart
     const stag_check_ms = stagCheckEnd !== null ? Math.max(0, stagCheckEnd - stagCheckStart) : null
+    // Contact starts AFTER rooster + stag finish (new "contact runs last"
+    // chain). Falls back to allStart if neither rooster nor stag has
+    // landed yet.
+    const contactStart = Math.max(roosterEnd ?? allStart, stagEnd ?? allStart)
+    const contact_ms = contactEnd !== null ? Math.max(0, contactEnd - contactStart) : null
 
     const ends = [completedMs, mondayEnd, affiliateEnd, roosterEnd, contactEnd, stagEnd, stagCheckEnd]
       .filter((v): v is number => typeof v === 'number')
