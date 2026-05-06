@@ -141,9 +141,9 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
               <Th>Is on Monday?</Th>
               <Th>Is an affiliate?</Th>
               <Th>Rooster brand?</Th>
-              <Th>Has contacts?</Th>
               <Th>S-tags</Th>
               <Th>Verified s-tags</Th>
+              <Th>Has contacts?</Th>
               {!jobContext && (
                 <Th><SortHeader columnKey="batch_id" label="Batch" sortable /></Th>
               )}
@@ -248,14 +248,6 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                 <Td>
                   <BooleanLabelEditor
                     leadId={row.id}
-                    value={row.has_contact_details}
-                    isOverridden={row.is_contact_overridden_at !== null}
-                    action={setContactLabel}
-                  />
-                </Td>
-                <Td>
-                  <BooleanLabelEditor
-                    leadId={row.id}
                     value={row.has_s_tags}
                     isOverridden={row.is_stag_overridden_at !== null}
                     action={setStagLabel}
@@ -269,6 +261,14 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                     action={setStagVerifiedLabel}
                     yesLabel="Verified"
                     noLabel="Not yet"
+                  />
+                </Td>
+                <Td>
+                  <BooleanLabelEditor
+                    leadId={row.id}
+                    value={row.has_contact_details}
+                    isOverridden={row.is_contact_overridden_at !== null}
+                    action={setContactLabel}
                   />
                 </Td>
                 {!jobContext && (
@@ -370,14 +370,6 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                   action={setRoosterLabel}
                 />
               </Field>
-              <Field label="Has contacts?">
-                <BooleanLabelEditor
-                  leadId={row.id}
-                  value={row.has_contact_details}
-                  isOverridden={row.is_contact_overridden_at !== null}
-                  action={setContactLabel}
-                />
-              </Field>
               <Field label="S-tags">
                 <BooleanLabelEditor
                   leadId={row.id}
@@ -394,6 +386,14 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                   action={setStagVerifiedLabel}
                   yesLabel="Verified"
                   noLabel="Not yet"
+                />
+              </Field>
+              <Field label="Has contacts?">
+                <BooleanLabelEditor
+                  leadId={row.id}
+                  value={row.has_contact_details}
+                  isOverridden={row.is_contact_overridden_at !== null}
+                  action={setContactLabel}
                 />
               </Field>
               {!jobContext && (
