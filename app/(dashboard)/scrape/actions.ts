@@ -1063,3 +1063,227 @@ export async function runStagDuplicateCheck(
         : `Checked ${checked} s-tag${checked === 1 ? '' : 's'} — ${matched} already on Monday.`,
   }
 }
+
+// ============================================================
+// Bulk-select actions on /scrape:
+//   - bulkRerunScrapeJobs   — re-queue selected jobs (same keyword/
+//                              country/pages/etc), no confirmation
+//                              required since it doesn't destroy data.
+//   - bulkDeleteScrapeJobs  — wipe selected jobs + every lead/screenshot/
+//                              s-tag belonging to them. Two safety
+//                              gates: typed confirmation phrase AND
+//                              admin password re-verification.
+//
+// Both actions are admin-gated. The whole point is to clean up
+// quickly-failed batches without playing whack-a-mole on the kebab.
+// ============================================================
+
+export type BulkScrapeActionState =
+  | { status: 'ok'; message: string }
+  | { status: 'error'; error: string }
+  | null
+
+function parseJobIds(fd: FormData): string[] {
+  const raw = String(fd.get('job_ids') ?? '').trim()
+  if (!raw) return []
+  return Array.from(
+    new Set(
+      raw
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0),
+    ),
+  )
+}
+
+async function requireBulkAdmin(): Promise<
+  | { ok: true; user_id: string; user_email: string | null }
+  | { ok: false; error: string }
+> {
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not signed in.' }
+
+  const svc = createServiceClient()
+  const { data, error } = await svc.rpc('is_admin', { p_user_id: user.id })
+  if (error) return { ok: false, error: error.message }
+  if (!data) return { ok: false, error: 'Admin access required for bulk actions.' }
+  return { ok: true, user_id: user.id, user_email: user.email ?? null }
+}
+
+export async function bulkRerunScrapeJobs(
+  _prev: BulkScrapeActionState,
+  fd: FormData,
+): Promise<BulkScrapeActionState> {
+  const auth = await requireBulkAdmin()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+
+  const jobIds = parseJobIds(fd)
+  if (jobIds.length === 0) return { status: 'error', error: 'No jobs selected.' }
+  if (jobIds.length > 200) return { status: 'error', error: 'Too many jobs selected (max 200).' }
+
+  const svc = createServiceClient()
+  const { data: jobs, error: readErr } = await svc
+    .from('scrape_queue')
+    .select('id, keyword, country_code, pages, priority, with_enrichment, language, search_engine, result_type_filter')
+    .in('id', jobIds)
+  if (readErr) return { status: 'error', error: readErr.message }
+
+  type Row = {
+    id: string
+    keyword: string
+    country_code: string
+    pages: number
+    priority: number
+    with_enrichment: boolean
+    language: string | null
+    search_engine: 'google' | 'bing' | null
+    result_type_filter: 'PPC' | 'Organic' | null
+  }
+  const rows = (jobs ?? []) as Row[]
+  if (rows.length === 0) return { status: 'error', error: 'No matching jobs found.' }
+
+  // Insert one fresh queue row per selected source job. Same shape as
+  // rerunScrapeFiltered, just batched. Workers pick them up via the
+  // normal claim flow within ~5s.
+  const inserts = rows.map(r => ({
+    keyword: r.keyword,
+    country_code: r.country_code,
+    pages: r.pages,
+    priority: r.priority,
+    with_enrichment: r.with_enrichment,
+    language: r.language ?? 'en',
+    search_engine: r.search_engine ?? 'google',
+    result_type_filter: r.result_type_filter,
+  }))
+  const { error: insertErr } = await svc.from('scrape_queue').insert(inserts)
+  if (insertErr) return { status: 'error', error: insertErr.message }
+
+  await logActivity({
+    action: 'scrape.bulk_rerun',
+    entity_type: 'scrape_jobs_bulk',
+    details: { requested: jobIds.length, queued: rows.length },
+  })
+
+  revalidatePath('/scrape')
+  return {
+    status: 'ok',
+    message: `Re-queued ${rows.length} scrape${rows.length === 1 ? '' : 's'}. Workers will pick them up within ~5 s.`,
+  }
+}
+
+export async function bulkDeleteScrapeJobs(
+  _prev: BulkScrapeActionState,
+  fd: FormData,
+): Promise<BulkScrapeActionState> {
+  const auth = await requireBulkAdmin()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+
+  const jobIds = parseJobIds(fd)
+  if (jobIds.length === 0) return { status: 'error', error: 'No jobs selected.' }
+  if (jobIds.length > 200) return { status: 'error', error: 'Too many jobs selected (max 200).' }
+
+  // Safety gate 1: typed confirmation. Must read "delete <N>".
+  const confirmation = String(fd.get('confirmation_text') ?? '').trim()
+  const expected = `delete ${jobIds.length}`
+  if (confirmation !== expected) {
+    return {
+      status: 'error',
+      error: `Confirmation must be "${expected}" (got "${confirmation}").`,
+    }
+  }
+
+  // Safety gate 2: re-verify the caller's password. Catches a
+  // walked-away laptop scenario before the cascade fires.
+  const password = String(fd.get('admin_password') ?? '')
+  if (!password) return { status: 'error', error: 'Admin password is required.' }
+  if (!auth.user_email) {
+    return { status: 'error', error: 'Cannot verify password — no email on file.' }
+  }
+  // signInWithPassword issues a fresh JWT but doesn't invalidate the
+  // existing session; safe to use as a one-shot password check.
+  const reauth = await createServerClient().then(c =>
+    c.auth.signInWithPassword({ email: auth.user_email!, password }),
+  )
+  if (reauth.error) {
+    return { status: 'error', error: 'Password is incorrect.' }
+  }
+
+  const svc = createServiceClient()
+
+  // Pull every screenshot path (lead-level + s-tag-level) for the
+  // selected jobs so storage cleanup happens before the cascade
+  // wipes the rows that point to them.
+  const { data: leadRows } = await svc
+    .from('google_lead_gen_table')
+    .select('id, screenshot_content_link')
+    .in('scrape_job_id', jobIds)
+  type LeadRow = { id: number; screenshot_content_link: string | null }
+  const leads = (leadRows ?? []) as LeadRow[]
+  const leadIds = leads.map(l => l.id)
+  const leadPaths = leads
+    .map(l => l.screenshot_content_link)
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
+
+  let stagPaths: string[] = []
+  if (leadIds.length > 0) {
+    const { data: stagShots } = await svc
+      .from('s_tags_table')
+      .select('screenshot_path')
+      .in('lead_id', leadIds)
+      .not('screenshot_path', 'is', null)
+    stagPaths = ((stagShots ?? []) as { screenshot_path: string }[])
+      .map(r => r.screenshot_path)
+      .filter(p => typeof p === 'string' && p.length > 0)
+  }
+  const allPaths = [...leadPaths, ...stagPaths]
+  if (allPaths.length > 0) {
+    try {
+      await svc.storage.from('lead-screenshots').remove(allPaths)
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  // Cascade-delete each job. The existing delete_scrape_job_cascade
+  // RPC handles enrichment_fetch_queue + google_lead_gen_table +
+  // s_tags_table + contact_table cleanup per job.
+  let deleted = 0
+  let leadsDeleted = 0
+  const errors: string[] = []
+  for (const id of jobIds) {
+    const { data, error } = await svc.rpc('delete_scrape_job_cascade', { p_job_id: id })
+    if (error) {
+      errors.push(`${id.slice(0, 8)}: ${error.message}`)
+      continue
+    }
+    deleted += 1
+    if (typeof data === 'number') leadsDeleted += data
+  }
+
+  await logActivity({
+    action: 'scrape.bulk_delete',
+    entity_type: 'scrape_jobs_bulk',
+    details: {
+      requested: jobIds.length,
+      deleted,
+      leads_deleted: leadsDeleted,
+      screenshots_deleted: allPaths.length,
+      errors: errors.length,
+    },
+  })
+
+  revalidatePath('/scrape')
+  if (errors.length > 0) {
+    return {
+      status: 'error',
+      error: `Deleted ${deleted}/${jobIds.length}. Errors: ${errors.slice(0, 3).join(' · ')}${errors.length > 3 ? ` (+${errors.length - 3} more)` : ''}`,
+    }
+  }
+  return {
+    status: 'ok',
+    message: `Deleted ${deleted} scrape${deleted === 1 ? '' : 's'} and ${leadsDeleted} lead${leadsDeleted === 1 ? '' : 's'} with all enrichment data wiped.`,
+  }
+}

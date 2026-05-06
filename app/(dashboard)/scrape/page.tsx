@@ -1,6 +1,8 @@
 import { JOBS_COLUMNS } from '@/lib/filters/columns-jobs'
 import { parseFilters, parseSorts } from '@/lib/filters/serialize'
 import type { ColumnDef } from '@/lib/filters/types'
+import { createClient as createServerClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { AdvancedFilters } from '../_components/advanced-filters'
 import { Pagination } from '../monday/_components/pagination'
 import { AutoRefresh } from './_components/auto-refresh'
@@ -29,9 +31,19 @@ export default async function ScrapePage({
   const sorts = parseSorts(sp.s)
   const hasAnyFilter = q.length > 0 || filters.length > 0 || sorts.length > 0
 
-  const [profiles, { rows, total }] = await Promise.all([
+  const [profiles, { rows, total }, isAdmin] = await Promise.all([
     listActiveProfiles(),
     queryJobs({ page, size, q, filters, sorts }),
+    (async () => {
+      const supabase = await createServerClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (!user) return false
+      const svc = createServiceClient()
+      const { data } = await svc.rpc('is_admin', { p_user_id: user.id })
+      return data === true
+    })(),
   ])
 
   // Auto-refresh stays on while either the scrape itself OR a follow-on
@@ -86,7 +98,7 @@ export default async function ScrapePage({
 
         <AdvancedFilters columns={columns} />
 
-        <JobsTable jobs={rows} />
+        <JobsTable jobs={rows} isAdmin={isAdmin} />
         <JobsCardList jobs={rows} />
       </section>
 

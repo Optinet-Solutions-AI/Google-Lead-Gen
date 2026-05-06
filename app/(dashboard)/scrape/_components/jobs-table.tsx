@@ -1,9 +1,19 @@
+'use client'
+
 import Link from 'next/link'
-import { Check } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Check, CheckSquare, Square } from 'lucide-react'
 import { PIPELINE_STAGES, type EnrichmentStatus, type ScrapeJob } from '../_lib/queries'
+import { BulkScrapeActionsBar } from './bulk-actions-bar'
 import { JobActionsButton } from './job-row-actions'
 
-type Props = { jobs: ScrapeJob[] }
+type Props = {
+  jobs: ScrapeJob[]
+  /** When true, show the "Select rows" toggle + bulk-action bar. The
+   *  underlying server actions are independently gated, but hiding the
+   *  UI from non-admins keeps the table cleaner for normal users. */
+  isAdmin?: boolean
+}
 
 const STATUS_STYLES: Record<ScrapeJob['status'], string> = {
   pending: 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]',
@@ -135,7 +145,46 @@ function PipelineBadges({
   )
 }
 
-export function JobsTable({ jobs }: Props) {
+export function JobsTable({ jobs, isAdmin = false }: Props) {
+  // Bulk-select state — only meaningful when isAdmin is true. Drop
+  // any selected ids that aren't on the current page so paging away
+  // doesn't keep stale selections.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const rowIdSig = useMemo(() => jobs.map(j => j.id).join(','), [jobs])
+  useEffect(() => {
+    setSelectedIds(prev => {
+      const valid = new Set(jobs.map(j => j.id))
+      const next = new Set<string>()
+      for (const id of prev) if (valid.has(id)) next.add(id)
+      return next.size === prev.size ? prev : next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowIdSig])
+
+  const visibleIds = useMemo(() => jobs.map(j => j.id), [jobs])
+  const allChecked = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
+  const toggleAll = () => {
+    setSelectedIds(prev => {
+      if (allChecked) {
+        const next = new Set(prev)
+        for (const id of visibleIds) next.delete(id)
+        return next
+      }
+      const next = new Set(prev)
+      for (const id of visibleIds) next.add(id)
+      return next
+    })
+  }
+  const toggleOne = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   if (jobs.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-10 text-center text-[12px] text-[color:var(--color-text-secondary)]">
@@ -145,35 +194,93 @@ export function JobsTable({ jobs }: Props) {
   }
 
   return (
-    <div className="hidden overflow-x-auto rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
-      <table className="w-full border-collapse text-[11px]">
-        <thead className="bg-[color:var(--color-bg-secondary)]">
-          <tr>
-            <Th>{''}</Th>
-            <Th>Keyword</Th>
-            <Th>Country</Th>
-            <Th>Engine</Th>
-            <Th>Pages</Th>
-            <Th>Status</Th>
-            <Th>Started</Th>
-            <Th>Duration</Th>
-            <Th>Results</Th>
-            <Th>Pipeline</Th>
-            <Th>Batch</Th>
-            <Th>Error</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {jobs.map(job => {
-            const href = `/scrape/${job.id}`
-            return (
-              <tr
-                key={job.id}
-                className="group border-b border-[color:var(--color-border)] last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]"
-              >
-                <td className="w-8 px-1 py-1 align-middle">
-                  <JobActionsButton job={job} />
-                </td>
+    <>
+      {/* Admin-only: select-mode toggle + bulk-action bar. The toggle
+       *  is hidden entirely for non-admins so the table looks clean. */}
+      {isAdmin && (
+        <div className="hidden items-center justify-end md:flex">
+          <button
+            type="button"
+            onClick={() => {
+              setSelectMode(s => !s)
+              if (selectMode) setSelectedIds(new Set())
+            }}
+            className={[
+              'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors',
+              selectMode
+                ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/15 text-[color:var(--color-text-primary)]'
+                : 'border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]',
+            ].join(' ')}
+            title={selectMode ? 'Hide selection checkboxes' : 'Show selection checkboxes for bulk actions (admin)'}
+          >
+            {selectMode ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+            {selectMode ? 'Selecting' : 'Select rows'}
+          </button>
+        </div>
+      )}
+
+      {isAdmin && selectMode && selectedIds.size > 0 && (
+        <BulkScrapeActionsBar
+          selectedIds={Array.from(selectedIds)}
+          onClear={() => setSelectedIds(new Set())}
+        />
+      )}
+
+      <div className="hidden overflow-x-auto rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
+        <table className="w-full border-collapse text-[11px]">
+          <thead className="bg-[color:var(--color-bg-secondary)]">
+            <tr>
+              {selectMode && (
+                <Th>
+                  <input
+                    type="checkbox"
+                    aria-label={allChecked ? 'Deselect all visible' : 'Select all visible'}
+                    checked={allChecked}
+                    onChange={toggleAll}
+                    className="h-3.5 w-3.5 cursor-pointer accent-[color:var(--color-accent)]"
+                  />
+                </Th>
+              )}
+              <Th>{''}</Th>
+              <Th>Keyword</Th>
+              <Th>Country</Th>
+              <Th>Engine</Th>
+              <Th>Pages</Th>
+              <Th>Status</Th>
+              <Th>Started</Th>
+              <Th>Duration</Th>
+              <Th>Results</Th>
+              <Th>Pipeline</Th>
+              <Th>Batch</Th>
+              <Th>Error</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {jobs.map(job => {
+              const href = `/scrape/${job.id}`
+              const isSelected = selectedIds.has(job.id)
+              return (
+                <tr
+                  key={job.id}
+                  className={[
+                    'group border-b border-[color:var(--color-border)] last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]',
+                    selectMode && isSelected ? 'bg-[color:var(--color-accent)]/10' : '',
+                  ].join(' ')}
+                >
+                  {selectMode && (
+                    <td className="w-8 px-2 py-1 align-middle">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select job ${job.keyword}`}
+                        checked={isSelected}
+                        onChange={() => toggleOne(job.id)}
+                        className="h-3.5 w-3.5 cursor-pointer accent-[color:var(--color-accent)]"
+                      />
+                    </td>
+                  )}
+                  <td className="w-8 px-1 py-1 align-middle">
+                    <JobActionsButton job={job} />
+                  </td>
                 <LinkTd
                   href={href}
                   className="max-w-[280px] truncate"
@@ -220,7 +327,8 @@ export function JobsTable({ jobs }: Props) {
           })}
         </tbody>
       </table>
-    </div>
+      </div>
+    </>
   )
 }
 
