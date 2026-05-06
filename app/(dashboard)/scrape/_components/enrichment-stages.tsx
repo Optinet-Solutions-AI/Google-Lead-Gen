@@ -273,18 +273,6 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
           />
           <StageRow
             index={4}
-            stageKey="contact"
-            title="Extract contacts"
-            icon={<Mail className="h-3 w-3" />}
-            status={summary.contact}
-            action={contactAction}
-            pending={contactPending}
-            message={contactState?.status === 'ok' ? contactState.message : null}
-            error={contactState?.status === 'error' ? contactState.error : null}
-            jobId={jobId}
-          />
-          <StageRow
-            index={5}
             stageKey="stag"
             title="Extract s-tags (affiliates)"
             icon={<Tag className="h-3 w-3" />}
@@ -296,7 +284,7 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
             jobId={jobId}
           />
           <StageRow
-            index={6}
+            index={5}
             stageKey="stagCheck"
             title="Verify s-tags on Monday"
             icon={<Users className="h-3 w-3" />}
@@ -305,6 +293,18 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
             pending={stagCheckPending}
             message={stagCheckState?.status === 'ok' ? stagCheckState.message : null}
             error={stagCheckState?.status === 'error' ? stagCheckState.error : null}
+            jobId={jobId}
+          />
+          <StageRow
+            index={6}
+            stageKey="contact"
+            title="Extract contacts"
+            icon={<Mail className="h-3 w-3" />}
+            status={summary.contact}
+            action={contactAction}
+            pending={contactPending}
+            message={contactState?.status === 'ok' ? contactState.message : null}
+            error={contactState?.status === 'error' ? contactState.error : null}
             jobId={jobId}
           />
         </div>
