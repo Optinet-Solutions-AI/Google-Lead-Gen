@@ -3,6 +3,24 @@ import { applyFilters, applySorts } from '@/lib/filters/apply'
 import { JOBS_COLUMNS } from '@/lib/filters/columns-jobs'
 import type { Filter, Sort } from '@/lib/filters/types'
 import { createServiceClient } from '@/lib/supabase/service'
+import {
+  PIPELINE_STAGES,
+  type EnrichmentStatus,
+  type ScrapeJob,
+  type StageKey,
+  type StageTimings,
+} from './pipeline'
+
+// Re-export client-safe types for callers that already import from
+// queries.ts. The actual definitions live in ./pipeline because that
+// module is safe to import from client components — this one isn't.
+export {
+  PIPELINE_STAGES,
+  type EnrichmentStatus,
+  type ScrapeJob,
+  type StageKey,
+  type StageTimings,
+}
 
 export type GoLoginProfile = {
   country_code: string
@@ -29,75 +47,6 @@ export async function listActiveProfiles(): Promise<GoLoginProfile[]> {
     ...p,
     languages: p.languages ?? ['en'],
   }))
-}
-
-/** Enrichment pipeline stages we currently know about. Add new keys here
- *  as Epic 7 stages land. The order is the pipeline order and drives the
- *  rendering of badges in the jobs table. */
-export const PIPELINE_STAGES = [
-  { key: 'monday_check', label: 'Monday duplicate check' },
-  { key: 'affiliate', label: 'Affiliate detection' },
-  { key: 'rooster', label: 'Rooster partner check' },
-  { key: 'stags', label: 'S-tag extraction' },
-  { key: 'stag_check', label: 'S-tag duplicate check' },
-  // Contact extraction runs LAST so the orchestrator only spends the
-  // expensive page-scrape pass on leads that the cheaper stages have
-  // already classified.
-  { key: 'contacts', label: 'Contact extraction' },
-  // 7.7 Monday sync — { key: 'monday_sync', label: 'Monday sync' },
-] as const
-
-export type StageKey = (typeof PIPELINE_STAGES)[number]['key']
-export type EnrichmentStatus = Partial<Record<StageKey, boolean>>
-
-export type ScrapeJob = {
-  id: string
-  keyword: string
-  country_code: string
-  pages: number
-  priority: number
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'captcha' | 'paused' | 'cancelled'
-  attempts: number
-  captcha_attempts: number
-  claimed_by: string | null
-  started_at: string | null
-  completed_at: string | null
-  scheduled_at: string | null
-  with_enrichment: boolean
-  enrichment_status: string | null
-  language: string | null
-  search_engine: 'google' | 'bing' | null
-  created_by_email: string | null
-  created_by_username: string | null
-  created_by_display: string | null
-  error_message: string | null
-  result_summary: Record<string, unknown> | null
-  batch_id: number | null
-  created_at: string
-  /** Per-stage applied flags. Only present for completed jobs that have rows. */
-  enrichment: EnrichmentStatus
-  /** Per-stage timing approximation, derived from min/max of *_checked_at on
-   *  google_lead_gen_table for the job's leads. Stages run sequentially in
-   *  practice (monday → affiliate → all_running → stag_check), so each
-   *  stage's duration is approximated as `max(checked_at) - prior_stage_end`.
-   *  Null when no leads have been processed by a given stage yet. */
-  stage_timings: StageTimings | null
-}
-
-/** Approximate per-stage timing for a single scrape job. All times in ms. */
-export type StageTimings = {
-  scrape_ms: number | null
-  monday_ms: number | null
-  affiliate_ms: number | null
-  rooster_ms: number | null
-  contact_ms: number | null
-  stag_ms: number | null
-  stag_check_ms: number | null
-  /** End-to-end: from scrape `started_at` to the latest stage end. */
-  total_ms: number | null
-  /** True when at least one enrichment stage still has rows that will
-   *  be processed (drives the "still ticking" UI). */
-  enrichment_in_progress: boolean
 }
 
 export type StageStatus = {

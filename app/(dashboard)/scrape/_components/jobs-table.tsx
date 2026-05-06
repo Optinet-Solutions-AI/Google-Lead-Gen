@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { Check, CheckSquare, Square } from 'lucide-react'
-import { PIPELINE_STAGES, type EnrichmentStatus, type ScrapeJob } from '../_lib/queries'
+import { PIPELINE_STAGES, type EnrichmentStatus, type ScrapeJob } from '../_lib/pipeline'
 import { BulkScrapeActionsBar } from './bulk-actions-bar'
 import { JobActionsButton } from './job-row-actions'
 
