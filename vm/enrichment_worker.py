@@ -207,7 +207,11 @@ def process_stag_in_browser(
     log.info("stag: lead=%s found %d tracking links across %d pages",
              lead_id, len(seen_tracking), len(pages_html))
 
-    resolved_by_tag: dict[str, dict] = {}
+    # No dedupe by tag value — if the affiliate page exposes 10
+    # outbound tracking links, we want 10 s_tag rows, even if some
+    # links collapse to the same short ID after truncation. This
+    # matches the operator's "10 links = 10 s-tags" expectation.
+    resolved: list[dict] = []
     for i, tracking_url in enumerate(list(seen_tracking)[:30]):
         final_url, chain, screenshot = resolve_in_browser(driver, tracking_url)
         if not final_url:
@@ -216,14 +220,12 @@ def process_stag_in_browser(
         if not parsed:
             continue
         tag_value, source_param = parsed
-        if tag_value in resolved_by_tag:
-            continue
         screenshot_path: str | None = None
         if screenshot:
             screenshot_path = upload_screenshot(
                 lead_id, screenshot, suffix=f"stag_{i}_{int(time.time() * 1000)}",
             )
-        resolved_by_tag[tag_value] = {
+        resolved.append({
             "s_tag": tag_value,
             "source_param": source_param,
             "brand": guess_brand_from_url(final_url),
@@ -231,9 +233,9 @@ def process_stag_in_browser(
             "final_url": final_url,
             "redirect_chain": chain,
             "screenshot_path": screenshot_path,
-        }
+        })
 
-    return list(resolved_by_tag.values())
+    return resolved
 
 
 def call_score_endpoint(lead_id: int, stage: str, extras: dict | None = None) -> None:
@@ -402,7 +404,13 @@ def extract_tracking_links(html: str, base_url: str) -> list[str]:
 
 
 def parse_stag_from_url(url: str) -> tuple[str, str] | None:
-    """Return (tag_value, source_param) for the FIRST matching key, in priority order."""
+    """Return (tag_value, source_param) for the FIRST matching key, in priority order.
+
+    Truncates the value at the first underscore so values like
+    "54354_53463gdfbdy3534gdfv4" collapse to just "54354" — that's the
+    short ID the affiliate-management workflow keys off; the suffix
+    after the underscore is per-click tracking noise.
+    """
     try:
         qs = parse_qs(urlparse(url).query, keep_blank_values=False)
     except Exception:  # noqa: BLE001
@@ -412,7 +420,10 @@ def parse_stag_from_url(url: str) -> tuple[str, str] | None:
     for key in STAG_PARAM_ORDER:
         v = lower_qs.get(key)
         if v and v[0]:
-            return v[0], key
+            short = v[0].split("_", 1)[0]
+            if not short:
+                continue
+            return short, key
     return None
 
 

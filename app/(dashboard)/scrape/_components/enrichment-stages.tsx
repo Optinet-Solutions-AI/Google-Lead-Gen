@@ -11,14 +11,12 @@ import {
   Play,
   Search,
   Tag,
-  Users,
 } from 'lucide-react'
 import {
   checkMondayDuplicates,
   runAffiliateDetection,
   runContactExtraction,
   runRoosterCheck,
-  runStagDuplicateCheck,
   runStagExtraction,
   type CheckMondayState,
   type StageRunState,
@@ -194,13 +192,9 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
     initialStage,
   )
   const [stagState, stagAction, stagPending] = useActionState(runStagExtraction, initialStage)
-  const [stagCheckState, stagCheckAction, stagCheckPending] = useActionState(
-    runStagDuplicateCheck,
-    initialStage,
-  )
 
   const doneCount = (
-    [summary.monday, summary.affiliate, summary.rooster, summary.contact, summary.stag, summary.stagCheck] as StageStatus[]
+    [summary.monday, summary.affiliate, summary.rooster, summary.contact, summary.stag] as StageStatus[]
   ).filter(s => s.total > 0).length
 
   return (
@@ -283,20 +277,11 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
             error={stagState?.status === 'error' ? stagState.error : null}
             jobId={jobId}
           />
+          {/* Stage 5 (Verify s-tags on Monday) intentionally hidden —
+           *  backend RPC is still wired up; re-introduce when the
+           *  workflow stabilises. */}
           <StageRow
             index={5}
-            stageKey="stagCheck"
-            title="Verify s-tags on Monday"
-            icon={<Users className="h-3 w-3" />}
-            status={summary.stagCheck}
-            action={stagCheckAction}
-            pending={stagCheckPending}
-            message={stagCheckState?.status === 'ok' ? stagCheckState.message : null}
-            error={stagCheckState?.status === 'error' ? stagCheckState.error : null}
-            jobId={jobId}
-          />
-          <StageRow
-            index={6}
             stageKey="contact"
             title="Extract contacts"
             icon={<Mail className="h-3 w-3" />}

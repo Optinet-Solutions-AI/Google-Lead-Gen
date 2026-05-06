@@ -10,16 +10,23 @@
  *  the pipeline order and drives the rendering of badges in the jobs
  *  table. Add new keys here as new stages land. */
 export const PIPELINE_STAGES = [
-  { key: 'monday_check', label: 'Monday duplicate check' },
-  { key: 'affiliate', label: 'Affiliate detection' },
-  { key: 'rooster', label: 'Rooster partner check' },
-  { key: 'stags', label: 'S-tag extraction' },
-  { key: 'stag_check', label: 'S-tag duplicate check' },
+  { key: 'monday_check', label: 'Monday duplicate check', hidden: false },
+  { key: 'affiliate', label: 'Affiliate detection', hidden: false },
+  { key: 'rooster', label: 'Rooster partner check', hidden: false },
+  { key: 'stags', label: 'S-tag extraction', hidden: false },
+  // S-tag verification stage backend stays wired up (RPC + the
+  // column on s_tags_table); flagged hidden so the badge in the
+  // /scrape table doesn't render. Re-flip when the workflow is final.
+  { key: 'stag_check', label: 'S-tag duplicate check', hidden: true },
   // Contact extraction runs LAST so the orchestrator only spends the
   // expensive page-scrape pass on leads that the cheaper stages have
   // already classified.
-  { key: 'contacts', label: 'Contact extraction' },
+  { key: 'contacts', label: 'Contact extraction', hidden: false },
 ] as const
+
+/** Visible-in-UI subset — used by the /scrape pipeline badges so we
+ *  don't have to re-iterate the order in two places. */
+export const VISIBLE_PIPELINE_STAGES = PIPELINE_STAGES.filter(s => !s.hidden)
 
 export type StageKey = (typeof PIPELINE_STAGES)[number]['key']
 export type EnrichmentStatus = Partial<Record<StageKey, boolean>>

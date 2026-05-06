@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { Check, CheckSquare, Square } from 'lucide-react'
-import { PIPELINE_STAGES, type EnrichmentStatus, type ScrapeJob } from '../_lib/pipeline'
+import { VISIBLE_PIPELINE_STAGES, type EnrichmentStatus, type ScrapeJob } from '../_lib/pipeline'
 import { BulkScrapeActionsBar } from './bulk-actions-bar'
 import { JobActionsButton } from './job-row-actions'
 
@@ -130,7 +130,7 @@ function PipelineBadges({
   }
   return (
     <div className="flex items-center gap-1">
-      {PIPELINE_STAGES.map(stage => {
+      {VISIBLE_PIPELINE_STAGES.map(stage => {
         const applied = enrichment[stage.key] === true
         return (
           <span
@@ -544,7 +544,8 @@ function stageBreakdown(job: ScrapeJob): Array<{ label: string; value: string }>
   push('Affiliate', t.affiliate_ms)
   push('Rooster', t.rooster_ms)
   push('S-tags', t.stag_ms)
-  push('S-tag check', t.stag_check_ms)
+  // 'S-tag check' breakdown row hidden until the verification stage is
+  // re-surfaced in the UI. Timing is still computed in fetchStageTimings.
   push('Contacts', t.contact_ms)
   if (rows.length === 0) return []
   if (t.total_ms != null) {

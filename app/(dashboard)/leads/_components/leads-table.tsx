@@ -10,7 +10,6 @@ import {
   setContactLabel,
   setRoosterLabel,
   setStagLabel,
-  setStagVerifiedLabel,
 } from '../actions'
 import { BooleanLabelEditor } from './boolean-label-editor'
 import { BulkActionsBar } from './bulk-actions-bar'
@@ -142,7 +141,9 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
               <Th>Is an affiliate?</Th>
               <Th>Rooster brand?</Th>
               <Th>S-tags</Th>
-              <Th>Verified s-tags</Th>
+              {/* "Verified s-tags" column hidden — backend stage still
+                runs on the lead row (s_tags_checked_at), surface again
+                later when the workflow is finalised. */}
               <Th>Has contacts?</Th>
               {!jobContext && (
                 <Th><SortHeader columnKey="batch_id" label="Batch" sortable /></Th>
@@ -253,16 +254,7 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                     action={setStagLabel}
                   />
                 </Td>
-                <Td>
-                  <BooleanLabelEditor
-                    leadId={row.id}
-                    value={row.s_tags_checked_at !== null ? true : row.has_s_tags === null ? null : false}
-                    isOverridden={false}
-                    action={setStagVerifiedLabel}
-                    yesLabel="Verified"
-                    noLabel="Not yet"
-                  />
-                </Td>
+                {/* Verified-s-tags cell removed — see Th comment above. */}
                 <Td>
                   <BooleanLabelEditor
                     leadId={row.id}
@@ -378,16 +370,7 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                   action={setStagLabel}
                 />
               </Field>
-              <Field label="Verified s-tags">
-                <BooleanLabelEditor
-                  leadId={row.id}
-                  value={row.s_tags_checked_at !== null ? true : row.has_s_tags === null ? null : false}
-                  isOverridden={false}
-                  action={setStagVerifiedLabel}
-                  yesLabel="Verified"
-                  noLabel="Not yet"
-                />
-              </Field>
+              {/* Verified s-tags Field hidden — see desktop Th comment. */}
               <Field label="Has contacts?">
                 <BooleanLabelEditor
                   leadId={row.id}
