@@ -206,6 +206,9 @@ export type JobsQueryResult = {
 
 const JOBS_SEARCH_COLUMNS = ['keyword', 'country_code', 'error_message']
 
+/** Soft cap for the "All rows" dropdown option on /scrape. */
+const JOBS_ROWS_ALL_CAP = 10_000
+
 export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult> {
   const svc = createServiceClient()
   let query = svc
@@ -243,8 +246,12 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
   }
 
   // Pagination: explicit page/size when given, else honour the legacy `limit`.
+  // size === 0 is the UI "All" sentinel; we cap at JOBS_ROWS_ALL_CAP so a
+  // multi-thousand-job table doesn't lock the browser.
   if (opts.limit && opts.limit > 0) {
     query = query.range(0, opts.limit - 1)
+  } else if (opts.size === 0) {
+    query = query.range(0, JOBS_ROWS_ALL_CAP - 1)
   } else {
     const from = Math.max(0, (opts.page - 1) * opts.size)
     query = query.range(from, from + opts.size - 1)

@@ -1,6 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase/service'
-import { getBoardBySlug, type TableConfig } from './tables'
+import { ALL_ROWS_CAP, getBoardBySlug, type TableConfig } from './tables'
 
 export type DataQueryResult = {
   rows: Array<Record<string, unknown>>
@@ -47,9 +47,15 @@ export async function queryTable(
     query = query.or(filter)
   }
 
-  const from = Math.max(0, (options.page - 1) * options.size)
-  const to = from + options.size - 1
-  query = query.range(from, to)
+  // size === 0 is the UI "All" sentinel; clamp to ALL_ROWS_CAP so a
+  // 50k-row board doesn't lock up the browser.
+  if (options.size === 0) {
+    query = query.range(0, ALL_ROWS_CAP - 1)
+  } else {
+    const from = Math.max(0, (options.page - 1) * options.size)
+    const to = from + options.size - 1
+    query = query.range(from, to)
+  }
 
   const { data, count, error } = await query
   if (error) {

@@ -261,5 +261,10 @@ export function getTableConfig(
   return kind === 'items' ? board.items : board.updates
 }
 
-export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const
-export const DEFAULT_PAGE_SIZE = 10
+// 0 is the "All" sentinel — handled in monday/_lib/query-data.ts via a soft
+// cap so a 50k-row table doesn't lock up the browser. See ALL_ROWS in
+// monday/_components/pagination.tsx.
+export const PAGE_SIZE_OPTIONS = [20, 50, 100, 0] as const
+export const DEFAULT_PAGE_SIZE = 20
+/** Soft cap when the user picks "All rows". */
+export const ALL_ROWS_CAP = 10_000

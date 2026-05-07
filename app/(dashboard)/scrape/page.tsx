@@ -12,8 +12,11 @@ import { listActiveProfiles, queryJobs } from './_lib/queries'
 
 type SearchParams = Record<string, string | string[] | undefined>
 
-const PAGE_SIZES = [25, 50, 100, 200] as const
-const DEFAULT_PAGE_SIZE = 25
+// 0 is the "All" sentinel — see ALL_ROWS in monday/_components/pagination.tsx.
+// queryJobs substitutes a soft cap so a multi-thousand-job table doesn't lock
+// up the browser.
+const PAGE_SIZES = [20, 50, 100, 0] as const
+const DEFAULT_PAGE_SIZE = 20
 
 export const dynamic = 'force-dynamic'
 

@@ -5,6 +5,11 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { PAGE_SIZE_OPTIONS as MONDAY_PAGE_SIZE_OPTIONS } from '../_lib/tables'
 
+/** Sentinel value in the size dropdown that means "show every row".
+ *  Backed by a soft cap in the per-page query helpers so a 50k-row
+ *  table doesn't lock up the browser. */
+export const ALL_ROWS = 0
+
 type Props = {
   page: number
   size: number
@@ -19,9 +24,13 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
   const sp = useSearchParams()
   const router = useRouter()
 
-  const totalPages = Math.max(1, Math.ceil(total / size))
-  const fromRow = total === 0 ? 0 : (page - 1) * size + 1
-  const toRow = Math.min(page * size, total)
+  const showingAll = size === ALL_ROWS
+  // When "All" is picked, every row is on a single page — collapse the
+  // page math so the prev/next chevrons go disabled and we render
+  // "All N rows" instead of "1-X of N".
+  const totalPages = showingAll ? 1 : Math.max(1, Math.ceil(total / size))
+  const fromRow = total === 0 ? 0 : showingAll ? 1 : (page - 1) * size + 1
+  const toRow = showingAll ? total : Math.min(page * size, total)
 
   const hrefForPage = (target: number) => {
     const params = new URLSearchParams(sp.toString())
@@ -44,7 +53,11 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[color:var(--color-border)] px-3 py-2 text-[12px] text-[color:var(--color-text-secondary)]">
       <span>
-        {total === 0 ? 'No rows' : `${fromRow.toLocaleString()}–${toRow.toLocaleString()} of ${total.toLocaleString()}`}
+        {total === 0
+          ? 'No rows'
+          : showingAll
+            ? `All ${total.toLocaleString()} row${total === 1 ? '' : 's'}`
+            : `${fromRow.toLocaleString()}–${toRow.toLocaleString()} of ${total.toLocaleString()}`}
       </span>
 
       <div className="flex items-center gap-3">
@@ -57,7 +70,7 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
           >
             {sizeOptions.map(opt => (
               <option key={opt} value={opt}>
-                {opt}
+                {opt === ALL_ROWS ? 'All' : opt}
               </option>
             ))}
           </select>

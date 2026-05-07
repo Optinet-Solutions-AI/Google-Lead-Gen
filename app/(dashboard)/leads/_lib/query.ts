@@ -4,8 +4,14 @@ import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
 import type { Filter, Sort } from '@/lib/filters/types'
 import { createServiceClient } from '@/lib/supabase/service'
 
-export const LEAD_PAGE_SIZES = [10, 25, 50, 100] as const
-export const DEFAULT_LEAD_PAGE_SIZE = 10
+// 0 is the sentinel for "All rows" — substituted with a soft cap
+// in queryLeads so a multi-thousand-row table doesn't lock up the
+// browser. Keep the sentinel in sync with ALL_ROWS in
+// monday/_components/pagination.tsx.
+export const LEAD_PAGE_SIZES = [20, 50, 100, 0] as const
+export const DEFAULT_LEAD_PAGE_SIZE = 20
+/** Soft cap used when the user picks "All". */
+export const LEAD_ROWS_ALL_CAP = 10_000
 
 export type LeadRow = {
   id: number
@@ -145,8 +151,14 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
     query = query.order(opts.sort, { ascending: opts.order === 'asc', nullsFirst: false })
   }
 
-  const from = Math.max(0, (opts.page - 1) * opts.size)
-  query = query.range(from, from + opts.size - 1)
+  // size === 0 (sentinel "All") → fetch up to LEAD_ROWS_ALL_CAP rows
+  // from page 1; the dropdown UI calls page=1 implicitly for "All".
+  if (opts.size === 0) {
+    query = query.range(0, LEAD_ROWS_ALL_CAP - 1)
+  } else {
+    const from = Math.max(0, (opts.page - 1) * opts.size)
+    query = query.range(from, from + opts.size - 1)
+  }
 
   const { data, count, error } = await query
   if (error) {
