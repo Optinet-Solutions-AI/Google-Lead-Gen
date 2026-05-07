@@ -204,7 +204,13 @@ export type JobsQueryResult = {
   total: number
 }
 
-const JOBS_SEARCH_COLUMNS = ['keyword', 'country_code', 'error_message']
+const JOBS_SEARCH_COLUMNS = [
+  'keyword',
+  'country_code',
+  'error_message',
+  'created_by_display',
+  'created_by_username',
+]
 
 /** Soft cap for the "All rows" dropdown option on /scrape. */
 const JOBS_ROWS_ALL_CAP = 10_000
