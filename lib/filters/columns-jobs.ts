@@ -42,7 +42,7 @@ export const JOBS_COLUMNS: ReadonlyArray<ColumnDef> = [
   { key: 'scheduled_at', label: 'Scheduled at', type: 'date', filterable: true, sortable: true },
   // Attribution columns — denormalized from user_profiles at insert
   // time. Both are sortable + filterable so the advanced UI can do
-  // "Queued by Hannah" or "all jobs from username admin".
-  { key: 'created_by_display', label: 'Queued by', type: 'text', filterable: true, sortable: true },
-  { key: 'created_by_username', label: 'Queued by (username)', type: 'text', filterable: true, sortable: true },
+  // "Owner Hannah" or "all jobs from username admin".
+  { key: 'created_by_display', label: 'Owner', type: 'text', filterable: true, sortable: true },
+  { key: 'created_by_username', label: 'Owner (username)', type: 'text', filterable: true, sortable: true },
 ]
