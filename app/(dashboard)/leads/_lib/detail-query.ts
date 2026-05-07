@@ -66,12 +66,18 @@ export type LeadDetail = {
     is_not_relevant: boolean
     not_relevant_marked_at: string | null
     not_relevant_marked_by: string | null
+    serp_screenshot_path: string | null
   } | null
   contact: ContactDetail | null
   stags: StagDetail[]
-  /** Pre-signed URL to the screenshot PNG, valid ~1h. Null when no
-   *  screenshot exists or it's been deleted. */
+  /** Pre-signed URL to the landing-page screenshot PNG (captured during
+   *  enrichment), valid ~1h. Null when no screenshot exists or it's
+   *  been deleted. */
   screenshot_url: string | null
+  /** Pre-signed URL to the SERP-time ad screenshot for PPC rows
+   *  (captured at scrape time, the small ad creative as seen on
+   *  Google). Null for organic rows or when the capture failed. */
+  serp_screenshot_url: string | null
 }
 
 export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
@@ -90,7 +96,7 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
           'affiliate_external_links, affiliate_indicators',
           'is_rooster_partner, brand, rooster_brands',
           'has_contact_details, has_s_tags, s_tags_checked_at',
-          'screenshot_content_link',
+          'screenshot_content_link, serp_screenshot_path',
           'pushed_to_monday_at, monday_pushed_item_id, monday_pushed_by',
           'is_not_relevant, not_relevant_marked_at, not_relevant_marked_by',
           // FK join — pull the queueing user's display + username so the
@@ -151,6 +157,14 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
     screenshotUrl = signed?.signedUrl ?? null
   }
 
+  let serpScreenshotUrl: string | null = null
+  if (lead?.serp_screenshot_path) {
+    const { data: signed } = await svc.storage
+      .from('lead-screenshots')
+      .createSignedUrl(lead.serp_screenshot_path, 60 * 60)
+    serpScreenshotUrl = signed?.signedUrl ?? null
+  }
+
   const stags = (stagsRes.data ?? []) as unknown as StagDetail[]
   // Sign per-tag screenshot URLs in parallel
   await Promise.all(
@@ -171,5 +185,6 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
     contact: (contactRes.data ?? null) as ContactDetail | null,
     stags,
     screenshot_url: screenshotUrl,
+    serp_screenshot_url: serpScreenshotUrl,
   }
 }

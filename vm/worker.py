@@ -125,6 +125,46 @@ def fail_job(job_id: str, error: str) -> None:
     supabase.rpc("fail_scrape_job", {"p_job_id": job_id, "p_error": error[:2000]}).execute()
 
 
+SERP_SCREENSHOT_BUCKET = os.environ.get("SCREENSHOT_BUCKET", "lead-screenshots")
+
+
+def _upload_serp_screenshots(job_id: str, results: list[dict[str, Any]]) -> None:
+    """Best-effort upload of per-PPC SERP ad screenshots.
+
+    The scraper drops PNGs at `/tmp/serp_ad_*.png` and tags each PPC
+    result row with `local_serp_screenshot=<path>`. Here we upload
+    each PNG to the lead-screenshots bucket under
+    `serp/<job_id>/<idx>.png`, replace the local-path field with
+    `serp_screenshot_path` (the bucket-relative path that the RPC
+    expects), and delete the local file. Failures are logged but
+    never block the rest of the job.
+    """
+    for idx, row in enumerate(results):
+        local = row.pop("local_serp_screenshot", None)
+        if not local or not os.path.exists(local):
+            continue
+        bucket_path = f"serp/{job_id}/{idx}_{int(time.time() * 1000)}.png"
+        try:
+            with open(local, "rb") as f:
+                png = f.read()
+            supabase.storage.from_(SERP_SCREENSHOT_BUCKET).upload(
+                bucket_path,
+                png,
+                {"content-type": "image/png", "upsert": "true"},
+            )
+            row["serp_screenshot_path"] = bucket_path
+            log.info("uploaded SERP ad screenshot for job=%s idx=%d → %s",
+                     job_id, idx, bucket_path)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("SERP screenshot upload failed for job=%s idx=%d: %s",
+                        job_id, idx, exc)
+        finally:
+            try:
+                os.unlink(local)
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def fetch_profile(country_code: str) -> dict[str, Any] | None:
     result = (
         supabase.table("gologin_profiles")
@@ -292,6 +332,11 @@ def process_job(job: dict[str, Any]) -> None:
         # which bumps gologin_profiles.is_google_logged_in for the country.
         "is_logged_in": payload.get("is_logged_in"),
     }
+
+    # Upload any per-PPC SERP screenshots the scraper saved to /tmp.
+    # Replaces local_serp_screenshot (a /tmp path) with serp_screenshot_path
+    # (a bucket-relative path) on each result row before the RPC fires.
+    _upload_serp_screenshots(job_id, results)
 
     try:
         complete_job(job_id, results, summary)

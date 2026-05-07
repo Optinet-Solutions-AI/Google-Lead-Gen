@@ -135,7 +135,10 @@ def wait_for_sponsored_results(driver, timeout=7):
 # Extract Sponsored URLs using Selenium
 # ---------------------------
 def extract_sponsored_urls_selenium(driver):
-    sponsored_urls = set()
+    """Returns a dict { ppc_url: anchor_element } so the caller can both
+    enumerate sponsored URLs AND screenshot the corresponding ad cards.
+    """
+    sponsored: dict = {}
 
     try:
         print("[DEBUG] Searching for 'Sponsored results' sections...")
@@ -150,8 +153,8 @@ def extract_sponsored_urls_selenium(driver):
             for a in a_tags:
                 raw_url = a.get_attribute("data-pcu") or a.get_attribute("href")
                 url = raw_url.split(",")[0] if raw_url else None
-                if url and url.startswith("http"):
-                    sponsored_urls.add(url)
+                if url and url.startswith("http") and url not in sponsored:
+                    sponsored[url] = a
                     print(f"[DEBUG] Detected PPC URL: {url}")
 
         fallback_links = driver.find_elements(By.CSS_SELECTOR, 'a[data-pcu]')
@@ -159,15 +162,53 @@ def extract_sponsored_urls_selenium(driver):
         for a in fallback_links:
             raw_url = a.get_attribute("data-pcu")
             url = raw_url.split(",")[0] if raw_url else None
-            if url and url.startswith("http"):
-                sponsored_urls.add(url)
+            if url and url.startswith("http") and url not in sponsored:
+                sponsored[url] = a
                 print(f"[DEBUG] Detected fallback PPC URL: {url}")
 
     except Exception as e:
         print(f"[WARN] PPC extraction failed: {e}", file=sys.stderr)
 
-    print(f"[INFO] Detected {len(sponsored_urls)} PPC URLs")
-    return sponsored_urls
+    print(f"[INFO] Detected {len(sponsored)} PPC URLs")
+    return sponsored
+
+
+def capture_serp_ad_screenshot(driver, anchor, out_path: str) -> bool:
+    """Element-screenshot the smallest reasonable ancestor of `anchor`
+    that wraps the entire ad card (title + description + URL line).
+
+    Best-effort: returns True on success, False if the ad isn't visible
+    or the screenshot fails. Failure never blocks the scrape.
+    """
+    try:
+        # Walk up to the ad container. Google's ad cards are wrapped by
+        # a div with one of these markers; the first-match pick is
+        # tight enough to capture just the ad without a row of others.
+        card = anchor.find_element(
+            By.XPATH,
+            "ancestor::div[@data-text-ad or @data-pcu or @jscontroller][1]",
+        )
+
+        # Scroll into view so the element is fully rendered before
+        # screenshot_as_png reads its bounding box. block:'center'
+        # avoids the sticky search header clipping the top edge.
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block: 'center', behavior: 'instant'});",
+            card,
+        )
+        time.sleep(0.4)
+
+        png_bytes = card.screenshot_as_png
+        if not png_bytes:
+            return False
+
+        with open(out_path, "wb") as f:
+            f.write(png_bytes)
+        print(f"[DEBUG] Saved SERP ad screenshot: {out_path}")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] SERP ad screenshot failed for ad: {exc}", file=sys.stderr)
+        return False
 
 # ---------------------------
 # Helper: extract domain from URL
@@ -285,7 +326,17 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
     if wait_for_sponsored:
         wait_for_sponsored_results(driver, timeout=7)
 
-    sponsored_urls = extract_sponsored_urls_selenium(driver)
+    sponsored_map = extract_sponsored_urls_selenium(driver)
+    sponsored_urls = set(sponsored_map.keys())
+
+    # Element-screenshot each PPC ad card on this SERP. Saves PNGs to
+    # /tmp; the worker uploads them to Storage after the scrape and
+    # rewrites the path on each result row before calling the RPC.
+    serp_screenshots: dict = {}
+    for idx, (ppc_url, anchor) in enumerate(sponsored_map.items()):
+        out_path = f"/tmp/serp_ad_{int(time.time() * 1000)}_{page}_{idx}.png"
+        if capture_serp_ad_screenshot(driver, anchor, out_path):
+            serp_screenshots[ppc_url] = out_path
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     results = []
@@ -308,7 +359,7 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
         parsed = urlparse(link)
         full_url = f"{parsed.scheme}://{parsed.netloc}"
 
-        results.append({
+        result_row = {
             "url": link,
             "full_url": full_url,
             "title": h3.get_text(strip=True),
@@ -317,8 +368,14 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
             "position": position if result_type == "Organic" else None,
             "overall_position": overall_position,
             "keyword": keyword,
-            "country": country
-        })
+            "country": country,
+        }
+        if result_type == "PPC" and link in serp_screenshots:
+            # local_serp_screenshot is the on-disk path; the worker
+            # rewrites it to a Storage bucket path before it ever
+            # reaches the DB.
+            result_row["local_serp_screenshot"] = serp_screenshots[link]
+        results.append(result_row)
 
         overall_position += 1
         if result_type == "Organic":
@@ -335,7 +392,7 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
         parsed = urlparse(ppc_url)
         full_url = f"{parsed.scheme}://{parsed.netloc}"
 
-        results.append({
+        result_row = {
             "url": ppc_url,
             "full_url": full_url,
             "title": title,
@@ -344,8 +401,11 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
             "position": None,
             "overall_position": overall_position,
             "keyword": keyword,
-            "country": country
-        })
+            "country": country,
+        }
+        if ppc_url in serp_screenshots:
+            result_row["local_serp_screenshot"] = serp_screenshots[ppc_url]
+        results.append(result_row)
         overall_position += 1
 
     print(

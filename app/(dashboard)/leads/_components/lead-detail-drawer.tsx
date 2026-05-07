@@ -246,6 +246,10 @@ function DetailBody({ detail }: { detail: Detail }) {
         )}
       </Section>
 
+      {detail.serp_screenshot_url && (
+        <SerpScreenshotSection url={detail.serp_screenshot_url} />
+      )}
+
       {(detail.screenshot_url || lead.result_type === 'PPC') && (
         <ScreenshotSection
           leadId={lead.id}
@@ -429,6 +433,35 @@ function DetailBody({ detail }: { detail: Detail }) {
         )}
       </Section>
     </div>
+  )
+}
+
+function SerpScreenshotSection({ url }: { url: string }) {
+  return (
+    <section className="flex flex-col gap-1">
+      <h3 className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+        SERP ad screenshot
+      </h3>
+      <p className="text-[10px] italic text-[color:var(--color-text-secondary)]">
+        Captured at scrape time on Google&apos;s results page — the small
+        ad creative as it appeared to a searcher.
+      </p>
+      <div className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-2">
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mb-1.5 inline-flex items-center gap-1 text-[11px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
+        >
+          <ExternalLink className="h-3 w-3" />
+          Open full size
+        </a>
+        <div className="overflow-hidden rounded-sm border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)]">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={url} alt="SERP ad screenshot" className="w-full" loading="lazy" />
+        </div>
+      </div>
+    </section>
   )
 }
 
