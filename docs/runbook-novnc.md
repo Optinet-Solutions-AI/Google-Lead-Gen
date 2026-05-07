@@ -157,13 +157,15 @@ git clone https://github.com/novnc/noVNC.git
 sudo ln -s /home/ubuntu/noVNC /opt/novnc
 ```
 
-## Step 4 — nginx reverse proxy + token verification
+## Step 4 — nginx reverse proxy + token verifier sidecar
 
-Install + configure nginx with the Lua module so we can verify the
-HMAC token in the URL before allowing the WS upgrade:
+We delegate token verification to a tiny stdlib-Python sidecar
+(`vm/novnc/token-verify.py`) that nginx hits via `auth_request`.
+This avoids the lua-resty-hmac → luacrypto build (which fails
+against OpenSSL 3 on modern Ubuntu).
 
 ```bash
-sudo apt install -y nginx libnginx-mod-http-lua libssl-dev
+sudo apt install -y nginx
 
 # Replace <YOUR-DOMAIN> below with whatever DNS you point at the VM.
 sudo tee /etc/nginx/sites-available/vnc > /dev/null <<'EOF'
@@ -192,56 +194,23 @@ server {
         alias /opt/novnc/;
     }
 
+    # Internal auth endpoint that nginx hits before allowing any WS
+    # upgrade. The vnc-token-verify systemd unit (Python stdlib HTTP
+    # server on 127.0.0.1:8765) does HMAC + expiry + port check and
+    # returns 200 (allow) or 401 (deny). Variables from the outer
+    # regex location ($vnc_port, $arg_token) are interpolated into
+    # the auth subrequest URI so the verifier sees them.
+    location = /_auth {
+        internal;
+        proxy_pass http://127.0.0.1:8765/verify?token=$arg_token&port=$arg_port;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+    }
+
     # The actual WebSocket endpoint. websockify expects the request
     # at the root path, so we rewrite /vnc/<port>/websockify → /.
-    # Token is verified by Lua before the upgrade is allowed.
     location ~ ^/vnc/(?<vnc_port>922[2-4])/websockify$ {
-        access_by_lua_block {
-            local secret = os.getenv("INTERACTIVE_VNC_HMAC_SECRET")
-            if not secret or secret == "" then
-                ngx.log(ngx.ERR, "INTERACTIVE_VNC_HMAC_SECRET unset on VM")
-                ngx.exit(500)
-            end
-            local token = ngx.var.arg_token
-            if not token then
-                ngx.exit(401)
-            end
-            -- Expected: <header_b64>.<payload_b64>.<sig_b64>
-            local h, p, s = token:match("^([^.]+)%.([^.]+)%.([^.]+)$")
-            if not h then
-                ngx.exit(401)
-            end
-            local resty_hmac = require "resty.hmac"
-            local cjson      = require "cjson.safe"
-            -- Recompute signature and compare.
-            local hmac = resty_hmac:new(secret, resty_hmac.ALGOS.SHA256)
-            hmac:update(h .. "." .. p)
-            local raw = hmac:final()
-            local function b64url(b)
-                local s = ngx.encode_base64(b)
-                s = s:gsub("=", ""):gsub("+", "-"):gsub("/", "_")
-                return s
-            end
-            if b64url(raw) ~= s then
-                ngx.exit(401)
-            end
-            -- Decode payload + check expiry + port.
-            local function fromb64url(t)
-                local s = t:gsub("-", "+"):gsub("_", "/")
-                while #s % 4 ~= 0 do s = s .. "=" end
-                return ngx.decode_base64(s)
-            end
-            local payload = cjson.decode(fromb64url(p))
-            if not payload or not payload.exp or not payload.port then
-                ngx.exit(401)
-            end
-            if payload.exp < ngx.time() then
-                ngx.exit(401)
-            end
-            if tostring(payload.port) ~= ngx.var.vnc_port then
-                ngx.exit(401)
-            end
-        }
+        auth_request /_auth?token=$arg_token&port=$vnc_port;
 
         proxy_pass http://$vnc_upstream/;
         proxy_http_version 1.1;
@@ -262,17 +231,32 @@ EOF
 
 sudo ln -sf /etc/nginx/sites-available/vnc /etc/nginx/sites-enabled/vnc
 
-# Install the Lua HMAC module.
-sudo apt install -y luarocks
-sudo luarocks install lua-resty-hmac
+# Pull the verifier sidecar from the repo + run as systemd unit.
+curl -fsSL https://raw.githubusercontent.com/Optinet-Solutions-AI/Google-Lead-Gen/main/vm/novnc/token-verify.py \
+  -o /home/ubuntu/vnc-token-verify.py
+chmod +x /home/ubuntu/vnc-token-verify.py
 
-# Make INTERACTIVE_VNC_HMAC_SECRET available to the nginx process.
-# Generate the secret once: openssl rand -hex 32
-sudo tee -a /etc/default/nginx > /dev/null <<EOF
-INTERACTIVE_VNC_HMAC_SECRET=PASTE-THE-SAME-VALUE-AS-IN-VERCEL-ENV
+sudo tee /etc/systemd/system/vnc-token-verify.service > /dev/null <<'EOF'
+[Unit]
+Description=HMAC token verifier for noVNC URLs
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+# Generate the shared secret once with: openssl rand -hex 32
+# The same value goes into the Vercel env var of the same name.
+Environment=INTERACTIVE_VNC_HMAC_SECRET=PASTE-THE-SAME-VALUE-AS-IN-VERCEL-ENV
+ExecStart=/usr/bin/python3 /home/ubuntu/vnc-token-verify.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
 EOF
-# (Same value goes into the Vercel env var of the same name.)
 
+sudo systemctl daemon-reload
+sudo systemctl enable --now vnc-token-verify
 sudo systemctl reload nginx
 ```
 
