@@ -16,12 +16,14 @@ import {
   ListChecks,
   LogOut,
   Menu,
+  MessageCircle,
   Search,
   Star,
   Users,
   X,
 } from 'lucide-react'
 import { signOutAction } from '../_actions/auth'
+import { FeedbackWidget } from './feedback-widget'
 
 const NAV_ITEMS = [
   {
@@ -100,6 +102,12 @@ const ADMIN_NAV_ITEMS = [
     href: '/admin/alerts',
     icon: Bell,
     match: (p: string) => p.startsWith('/admin/alerts'),
+  },
+  {
+    label: 'QA Feedback (Admin)',
+    href: '/admin/feedback',
+    icon: MessageCircle,
+    match: (p: string) => p.startsWith('/admin/feedback'),
   },
 ] as const
 
@@ -242,6 +250,11 @@ export function DashboardShell({ children, username, isAdmin = false }: Props) {
 
         <main className="min-w-0 flex-1 bg-[color:var(--color-bg-primary)]">{children}</main>
       </div>
+
+      {/* Floating QA-feedback widget — bottom-right of every dashboard
+       *  page. Any signed-in user can fire a row into qa_feedback;
+       *  admins triage at /admin/feedback. */}
+      <FeedbackWidget />
     </div>
   )
 }
