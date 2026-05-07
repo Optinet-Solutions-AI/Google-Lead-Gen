@@ -108,7 +108,7 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
       {/* Desktop — table */}
       <div className="hidden overflow-x-auto rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
-          <thead className="bg-[color:var(--color-bg-secondary)]">
+          <thead className="sticky top-0 z-10 bg-[color:var(--color-bg-secondary)]">
             <tr>
               {selectMode && (
                 <Th className="w-8 px-2">
@@ -441,7 +441,7 @@ function Th({ children, className }: { children: React.ReactNode; className?: st
     <th
       scope="col"
       className={[
-        'whitespace-nowrap border-b border-[color:var(--color-border)] px-3 py-2 text-left align-middle',
+        'whitespace-nowrap border-b border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-left align-middle',
         className ?? '',
       ].join(' ')}
     >

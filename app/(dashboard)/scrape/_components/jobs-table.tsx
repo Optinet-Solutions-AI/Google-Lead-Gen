@@ -237,7 +237,7 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
 
       <div className="hidden overflow-x-auto rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
-          <thead className="bg-[color:var(--color-bg-secondary)]">
+          <thead className="sticky top-0 z-10 bg-[color:var(--color-bg-secondary)]">
             <tr>
               {selectMode && (
                 <Th>
@@ -392,7 +392,7 @@ function Th({ children }: { children: React.ReactNode }) {
   return (
     <th
       scope="col"
-      className="whitespace-nowrap border-b border-[color:var(--color-border)] px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]"
+      className="whitespace-nowrap border-b border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]"
     >
       {children}
     </th>
