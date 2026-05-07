@@ -120,16 +120,31 @@ def _maybe_save_bing_debug(page_source, url):
         print(f"[WARN] failed to save bing debug file: {exc}")
 
 # ---------------------------
-# Wait for Sponsored Results to appear (max 7 seconds)
+# Wait for Sponsored Results to appear (max 15 seconds) +
+# scroll the SERP so lazy-loaded ads (lower on the page) actually
+# render before we extract them. Manual browsing always scrolls a
+# bit on initial page-load; matching that helps us see the same
+# count of ads testers see when checking by hand.
 # ---------------------------
-def wait_for_sponsored_results(driver, timeout=7):
+def wait_for_sponsored_results(driver, timeout=15):
     try:
         WebDriverWait(driver, timeout).until(
             EC.presence_of_element_located((By.XPATH, '//span[text()="Sponsored results"]'))
         )
         print("[DEBUG] Sponsored results section is now visible.")
-    except:
+    except Exception:  # noqa: BLE001
         print("[INFO] Sponsored results section not found within timeout.")
+
+    # Scroll-and-settle so any below-the-fold ad blocks load before
+    # extract_sponsored_urls_selenium runs. Cheap (one second total).
+    try:
+        driver.execute_script(
+            "window.scrollTo(0, document.body.scrollHeight); "
+            "setTimeout(() => window.scrollTo(0, 0), 0);"
+        )
+        time.sleep(1.0)
+    except Exception:  # noqa: BLE001
+        pass
 
 # ---------------------------
 # Extract Sponsored URLs using Selenium
@@ -173,53 +188,87 @@ def extract_sponsored_urls_selenium(driver):
     return sponsored
 
 
-def resolve_ppc_url(driver, anchor) -> str | None:
-    """Open the PPC anchor's `href` in a new tab, follow Google's
-    redirect chain, and return the final destination URL **with all
-    click-tracking params** (gclid, gad_source, gad_campaignid, gbraid,
-    etc.) intact.
+def click_through_ppc(driver, anchor, screenshot_path: str | None) -> tuple[str | None, bool]:
+    """Click through a PPC ad as if a real user did it: real Ctrl+Click
+    on the anchor (so the destination sees a true user-gesture click,
+    not a scripted window.open — many cloakers gate on that), wait up
+    to 15s for the redirect chain to settle and the DOM to finish
+    loading, **scroll to the bottom + back to the top** so lazy-loaded
+    sections render, then take a full-page CDP screenshot of the
+    uncloaked landing page. Close the tab, return to the SERP.
 
-    Why: the bare `data-pcu` attribute only gives the destination
-    domain. To "uncloak" a PPC ad later — paste the URL and see what
-    landing page the advertiser actually serves — operators need the
-    full URL Google generated for this click. Following the click in
-    the same browser session preserves cookies + proxy + fingerprint,
-    so the destination treats us like a legitimate searcher.
+    Returns (full_url, screenshot_taken). Either field is None / False
+    on failure; failure never blocks the scrape.
 
-    Best-effort: returns None on failure (timeout, popup blocked,
-    redirect-fail). PPC-only side effect — never called for organic.
+    Why all of this:
+      - Ctrl+Click instead of window.open: cloakers often check for a
+        real `MouseEvent` with `isTrusted=true`. A scripted window.open
+        fails that check and gets the bare-domain "safe" page.
+      - 15s settle window: some ad-network → tracker → landing-page
+        chains take 8-12s. The previous 6s cap was cutting them off.
+      - Full-page screenshot via CDP `Page.captureScreenshot` with
+        `captureBeyondViewport=true`: Selenium's element_screenshot is
+        viewport-only, so longer pages got truncated at the fold. CDP
+        renders the entire scrollHeight in one shot.
+      - Scroll-to-bottom-then-top before the screenshot: lazy-loaded
+        images / iframes / third-party widgets only resolve once the
+        viewport reaches them. We do this synchronously so the final
+        screenshot has actual content, not skeleton placeholders.
     """
+    from selenium.webdriver.common.keys import Keys
+
     href = anchor.get_attribute("href")
     if not href:
-        return None
+        return None, False
 
     original_handle = driver.current_window_handle
     new_handle = None
     try:
-        # Open in a fresh tab so the SERP stays put and we don't have
-        # to re-scroll / re-load to continue the scrape.
         before_handles = set(driver.window_handles)
-        driver.execute_script("window.open(arguments[0], '_blank');", href)
+
+        # Real Ctrl+Click via send_keys → fires a user-gesture click
+        # that opens the destination in a new tab. Falls back to
+        # window.open only if the anchor refuses to receive keys
+        # (rare; sometimes happens on stale DOM).
+        opened = False
+        try:
+            anchor.send_keys(Keys.CONTROL + Keys.ENTER)
+            opened = True
+        except Exception:  # noqa: BLE001
+            pass
+        if not opened:
+            try:
+                driver.execute_script("window.open(arguments[0], '_blank');", href)
+                opened = True
+            except Exception:  # noqa: BLE001
+                opened = False
+        if not opened:
+            print("[WARN] PPC click-through: could not open new tab", file=sys.stderr)
+            return None, False
+
         # Selenium needs a beat for the new window to register.
-        time.sleep(0.4)
+        time.sleep(0.6)
 
         new_handles = [h for h in driver.window_handles if h not in before_handles]
         if not new_handles:
-            print("[WARN] PPC URL resolve: new tab did not open", file=sys.stderr)
-            return None
+            print("[WARN] PPC click-through: new tab never appeared", file=sys.stderr)
+            return None, False
         new_handle = new_handles[-1]
         driver.switch_to.window(new_handle)
 
-        # Poll current_url until it stops changing AND has left
-        # Google's redirect domains. Capped at ~6s.
+        # Poll until URL stops changing AND has left Google's redirect
+        # domains AND document is loaded. 15s cap (was 6s — too short
+        # for some uncloak chains).
         prev = ""
         final = None
-        for _ in range(12):  # 12 * 0.5 = 6s
+        for _ in range(30):  # 30 * 0.5 = 15s
             time.sleep(0.5)
             try:
                 cur = driver.current_url
+                ready = driver.execute_script("return document.readyState") == "complete"
             except Exception:  # noqa: BLE001
                 cur = ""
+                ready = False
             if not cur:
                 continue
             on_redirect = (
@@ -227,7 +276,7 @@ def resolve_ppc_url(driver, anchor) -> str | None:
                 or "doubleclick.net" in cur
                 or "google.com/aclk" in cur
             )
-            if cur == prev and not on_redirect:
+            if cur == prev and not on_redirect and ready:
                 final = cur
                 break
             prev = cur
@@ -238,12 +287,56 @@ def resolve_ppc_url(driver, anchor) -> str | None:
             except Exception:  # noqa: BLE001
                 final = None
 
+        # ----- Full-page screenshot of the uncloaked landing page -----
+        screenshot_taken = False
+        if screenshot_path and final and final.startswith("http"):
+            try:
+                # Trigger lazy-loaded content by scrolling to the bottom
+                # (in chunks, with small pauses so observers fire), then
+                # snap back to the top before the screenshot so the hero
+                # section shows up at the top of the captured image.
+                driver.execute_script(
+                    """
+                    return new Promise(resolve => {
+                        const step = 600;
+                        let y = 0;
+                        const max = document.body.scrollHeight || 8000;
+                        const tick = setInterval(() => {
+                            window.scrollBy(0, step);
+                            y += step;
+                            if (y >= max) {
+                                clearInterval(tick);
+                                window.scrollTo(0, 0);
+                                setTimeout(resolve, 250);
+                            }
+                        }, 120);
+                    });
+                    """,
+                )
+                # Give lazy iframes / images one more beat to settle.
+                time.sleep(1.2)
+
+                # CDP full-page screenshot — captures the entire scroll
+                # height in one PNG, no manual stitching.
+                cdp = driver.execute_cdp_cmd(
+                    "Page.captureScreenshot",
+                    {"captureBeyondViewport": True, "fromSurface": True},
+                )
+                import base64
+                png_bytes = base64.b64decode(cdp["data"])
+                with open(screenshot_path, "wb") as fh:
+                    fh.write(png_bytes)
+                screenshot_taken = True
+                print(f"[DEBUG] Saved PPC landing screenshot: {screenshot_path} (url={final})")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[WARN] PPC landing screenshot failed: {exc}", file=sys.stderr)
+
         if final and final.startswith("http"):
-            return final
-        return None
+            return final, screenshot_taken
+        return None, screenshot_taken
     except Exception as exc:  # noqa: BLE001
-        print(f"[WARN] PPC URL resolve failed: {exc}", file=sys.stderr)
-        return None
+        print(f"[WARN] PPC click-through failed: {exc}", file=sys.stderr)
+        return None, False
     finally:
         # Always close the new tab + return to the SERP, even on error.
         try:
@@ -253,44 +346,6 @@ def resolve_ppc_url(driver, anchor) -> str | None:
                 driver.switch_to.window(original_handle)
         except Exception:  # noqa: BLE001
             pass
-
-
-def capture_serp_ad_screenshot(driver, anchor, out_path: str) -> bool:
-    """Element-screenshot the smallest reasonable ancestor of `anchor`
-    that wraps the entire ad card (title + description + URL line).
-
-    Best-effort: returns True on success, False if the ad isn't visible
-    or the screenshot fails. Failure never blocks the scrape.
-    """
-    try:
-        # Walk up to the ad container. Google's ad cards are wrapped by
-        # a div with one of these markers; the first-match pick is
-        # tight enough to capture just the ad without a row of others.
-        card = anchor.find_element(
-            By.XPATH,
-            "ancestor::div[@data-text-ad or @data-pcu or @jscontroller][1]",
-        )
-
-        # Scroll into view so the element is fully rendered before
-        # screenshot_as_png reads its bounding box. block:'center'
-        # avoids the sticky search header clipping the top edge.
-        driver.execute_script(
-            "arguments[0].scrollIntoView({block: 'center', behavior: 'instant'});",
-            card,
-        )
-        time.sleep(0.4)
-
-        png_bytes = card.screenshot_as_png
-        if not png_bytes:
-            return False
-
-        with open(out_path, "wb") as f:
-            f.write(png_bytes)
-        print(f"[DEBUG] Saved SERP ad screenshot: {out_path}")
-        return True
-    except Exception as exc:  # noqa: BLE001
-        print(f"[WARN] SERP ad screenshot failed for ad: {exc}", file=sys.stderr)
-        return False
 
 # ---------------------------
 # Helper: extract domain from URL
@@ -411,23 +466,23 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
     sponsored_map = extract_sponsored_urls_selenium(driver)
     sponsored_urls = set(sponsored_map.keys())
 
-    # Element-screenshot each PPC ad card AND resolve the full click
-    # URL (with gclid/gad_*) by opening it in a new tab. PPC-only —
-    # organic rows skip both. Each click-resolve costs ~3-6s, so this
-    # adds noticeable time when many ads are on a page; that's the
-    # cost of getting URLs operators can paste to "uncloak" the
-    # landing page.
+    # ONE click-through per PPC ad: real Ctrl+Click on the anchor,
+    # wait up to 15s for the redirect chain to settle, scroll the
+    # landing page to trigger lazy-loaded sections, then full-page
+    # screenshot via CDP. Captures BOTH the resolved full URL (with
+    # gclid + gad_*) and a screenshot of the uncloaked landing page
+    # in one pass — half the time of the previous two-pass version
+    # and gets a much more useful screenshot. PPC-only.
     serp_screenshots: dict = {}
     resolved_ppc_urls: dict = {}
     for idx, (ppc_url, anchor) in enumerate(sponsored_map.items()):
         out_path = f"/tmp/serp_ad_{int(time.time() * 1000)}_{page}_{idx}.png"
-        if capture_serp_ad_screenshot(driver, anchor, out_path):
-            serp_screenshots[ppc_url] = out_path
-
-        full = resolve_ppc_url(driver, anchor)
+        full, shot = click_through_ppc(driver, anchor, out_path)
         if full:
             resolved_ppc_urls[ppc_url] = full
             print(f"[DEBUG] Resolved PPC URL: {ppc_url} → {full}")
+        if shot:
+            serp_screenshots[ppc_url] = out_path
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     results = []
