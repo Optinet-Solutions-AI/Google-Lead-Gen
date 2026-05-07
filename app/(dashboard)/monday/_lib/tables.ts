@@ -111,7 +111,7 @@ export const BOARDS: ReadonlyArray<{
       kind: 'items',
       label: 'Leads',
       sqlTable: 'leads_table',
-      searchColumns: ['name', 'email', 'website', 'keywords', 'comments'],
+      searchColumns: ['name', 'email', 'website', 'keywords', 'comments', 'owner'],
       columns: [
         { key: 'name', label: 'Name', sortable: true, className: 'min-w-[200px]' },
         { key: 'status', label: 'Status', sortable: true, className: 'min-w-[140px]' },
@@ -142,7 +142,7 @@ export const BOARDS: ReadonlyArray<{
       kind: 'items',
       label: 'Affiliates',
       sqlTable: 'affiliates_table',
-      searchColumns: ['name', 'affiliate_name', 'email', 'website', 'keywords'],
+      searchColumns: ['name', 'affiliate_name', 'email', 'website', 'keywords', 'owner'],
       columns: [
         { key: 'name', label: 'Name', sortable: true, className: 'min-w-[200px]' },
         { key: 'affiliate_name', label: 'Affiliate', sortable: true, className: 'min-w-[180px]' },
@@ -176,7 +176,7 @@ export const BOARDS: ReadonlyArray<{
       kind: 'items',
       label: 'Not Relevant Leads',
       sqlTable: 'not_relevant_leads_table',
-      searchColumns: ['name', 'affiliate_name', 'email', 'website', 'keywords'],
+      searchColumns: ['name', 'affiliate_name', 'email', 'website', 'keywords', 'owner'],
       columns: [
         { key: 'name', label: 'Name', sortable: true, className: 'min-w-[200px]' },
         { key: 'affiliate_name', label: 'Affiliate', sortable: true, className: 'min-w-[180px]' },
@@ -213,7 +213,7 @@ export const BOARDS: ReadonlyArray<{
       kind: 'items',
       label: 'Email Undelivered Leads',
       sqlTable: 'email_undelivered_leads_table',
-      searchColumns: ['name', 'affiliate_name', 'email', 'website', 'keywords'],
+      searchColumns: ['name', 'affiliate_name', 'email', 'website', 'keywords', 'owner'],
       columns: [
         { key: 'name', label: 'Name', sortable: true, className: 'min-w-[200px]' },
         { key: 'affiliate_name', label: 'Affiliate', sortable: true, className: 'min-w-[180px]' },

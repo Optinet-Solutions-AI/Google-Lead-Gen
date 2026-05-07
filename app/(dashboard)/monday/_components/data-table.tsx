@@ -38,14 +38,18 @@ export function DataTable({ config, rows, selectedItemId }: Props) {
       {/* Desktop — table (with top mirror scrollbar + drag-to-pan) */}
       <ScrollSync className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
-          <thead className="bg-[color:var(--color-bg-secondary)]">
+          {/* Sticky header — when the page scrolls vertically the
+           *  column labels stay pinned to the viewport so users always
+           *  know which column they're looking at. The bg + z-index
+           *  prevent body cells from peeking through underneath. */}
+          <thead className="sticky top-0 z-10 bg-[color:var(--color-bg-secondary)]">
             <tr>
               {config.columns.map(col => (
                 <th
                   key={col.key}
                   scope="col"
                   className={[
-                    'whitespace-nowrap border-b border-[color:var(--color-border)] px-3 py-2 text-left align-middle',
+                    'whitespace-nowrap border-b border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-left align-middle',
                     col.className ?? '',
                   ].join(' ')}
                 >
