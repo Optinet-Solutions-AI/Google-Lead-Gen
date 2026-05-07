@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import { CheckSquare, EyeOff, Square } from 'lucide-react'
+import { Check, CheckSquare, Copy, EyeOff, Square } from 'lucide-react'
 import { SortHeader } from '../../monday/_components/sort-header'
 import type { LeadRow } from '../_lib/query'
 import {
@@ -208,16 +208,20 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                     </Td>
                   </>
                 )}
-                <Td className="max-w-[280px] truncate">
+                <Td className="max-w-[280px]">
                   {row.url ? (
-                    <a
-                      href={row.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-semibold underline underline-offset-2 decoration-[color:var(--color-text-primary)]"
-                    >
-                      {row.url.length > 55 ? row.url.slice(0, 55) + '…' : row.url}
-                    </a>
+                    <div className="flex items-center gap-1.5">
+                      <a
+                        href={row.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="truncate font-semibold underline underline-offset-2 decoration-[color:var(--color-text-primary)]"
+                        title={row.url}
+                      >
+                        {row.url.length > 55 ? row.url.slice(0, 55) + '…' : row.url}
+                      </a>
+                      <CopyUrlButton url={row.url} />
+                    </div>
                   ) : (
                     '—'
                   )}
@@ -326,14 +330,17 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
               )}
               <Field label="URL">
                 {row.url ? (
-                  <a
-                    href={row.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="break-all font-semibold underline underline-offset-2 decoration-[color:var(--color-text-primary)]"
-                  >
-                    {row.url.length > 80 ? row.url.slice(0, 80) + '…' : row.url}
-                  </a>
+                  <span className="inline-flex items-start gap-1.5">
+                    <a
+                      href={row.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="break-all font-semibold underline underline-offset-2 decoration-[color:var(--color-text-primary)]"
+                    >
+                      {row.url.length > 80 ? row.url.slice(0, 80) + '…' : row.url}
+                    </a>
+                    <CopyUrlButton url={row.url} />
+                  </span>
                 ) : (
                   '—'
                 )}
@@ -403,6 +410,49 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
 
       <LeadDetailDrawer leadId={openLeadId} onClose={() => setOpenLeadId(null)} />
     </>
+  )
+}
+
+function CopyUrlButton({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false)
+  const handle = async () => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Older browsers / contexts without clipboard API: select-and-copy fallback.
+      const ta = document.createElement('textarea')
+      ta.value = url
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      try {
+        document.execCommand('copy')
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      } catch {
+        /* give up silently */
+      }
+      document.body.removeChild(ta)
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={handle}
+      title={copied ? 'Copied!' : 'Copy URL'}
+      aria-label={copied ? 'Copied URL' : 'Copy URL'}
+      className={[
+        'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors',
+        copied
+          ? 'bg-emerald-100 text-emerald-700'
+          : 'text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]',
+      ].join(' ')}
+    >
+      {copied ? <Check className="h-3 w-3" strokeWidth={3} /> : <Copy className="h-3 w-3" />}
+    </button>
   )
 }
 
