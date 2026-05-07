@@ -103,10 +103,24 @@ alter table public.scrape_queue
 -- ------------------------------------------------------------
 -- 3. release_stale_locks: skip jobs whose status is 'needs_human'
 -- ------------------------------------------------------------
--- Find the existing function signature first so the rewrite drops
--- and re-creates it with the same arg list (the cron job calls it
--- by name + 30s arg).
-create or replace function public.release_stale_locks(p_grace_seconds integer default 30)
+-- Re-creates the function from 20260424320000_enrichment_fetch_queue.sql
+-- as a strict superset — same parameter name, same semantics for
+-- both `scrape` and `enrichment` job_kinds — with one new exception:
+-- locks held by a scrape_queue row in status='needs_human' are
+-- considered intentionally-idle (an admin is clicking through a
+-- captcha via noVNC) and are NOT released. The interactive_checkpoint
+-- TTL on the parent row handles eventual cleanup if the operator
+-- never shows up.
+--
+-- DROP first because we cannot CREATE OR REPLACE while keeping the
+-- original parameter name `p_max_age_minutes` AND adjusting body —
+-- Postgres actually allows that, but earlier in this migration we
+-- attempted a rename (`p_grace_seconds`) which the planner caches as
+-- the existing signature. Drop-and-recreate is the cleanest way to
+-- guarantee we land on a known shape regardless of prior state.
+drop function if exists public.release_stale_locks(integer);
+
+create or replace function public.release_stale_locks(p_max_age_minutes integer default 30)
 returns integer
 language plpgsql
 volatile
@@ -114,35 +128,50 @@ security definer
 set search_path = public
 as $$
 declare
-  v_count integer;
+  v_count integer := 0;
+  v_lock  record;
+  v_skip  boolean;
 begin
-  -- A "stale" lock is one whose claimer hasn't heartbeated within
-  -- `p_grace_seconds`. We delete the lock + bounce the job back to
-  -- pending so another worker can pick it up.
-  --
-  -- Exception: jobs in status='needs_human' have a paused worker
-  -- that's intentionally idle (operator clicking through a captcha
-  -- in the dashboard). Don't yank those locks; the auto-skip TTL
-  -- on interactive_checkpoints handles them.
-  with stale as (
-    delete from public.active_profile_locks l
-    using public.scrape_queue q
-    where l.job_id = q.id
-      and q.status <> 'needs_human'
-      and l.heartbeat_at < now() - make_interval(secs => p_grace_seconds)
-    returning q.id as job_id
-  ),
-  bounced as (
-    update public.scrape_queue
-    set status = 'pending',
-        claimed_by = null,
-        started_at = null,
-        updated_at = now()
-    where id in (select job_id from stale)
-    returning id
-  )
-  select count(*) into v_count from bounced;
-  return coalesce(v_count, 0);
+  for v_lock in (
+    select country_code, job_id, job_kind
+    from public.active_profile_locks
+    where locked_at < now() - (p_max_age_minutes || ' minutes')::interval
+  ) loop
+    -- Brand-new HITL exception: never release a scrape lock for a
+    -- job that's currently parked at an interactive checkpoint.
+    -- The operator may legitimately need 5-15 min to click through.
+    v_skip := false;
+    if v_lock.job_kind = 'scrape' then
+      select status = 'needs_human' into v_skip
+      from public.scrape_queue
+      where id = v_lock.job_id;
+    end if;
+    if coalesce(v_skip, false) then
+      continue;
+    end if;
+
+    if v_lock.job_kind = 'scrape' then
+      update public.scrape_queue
+      set status        = case when attempts < max_attempts then 'pending' else 'failed' end,
+          claimed_by    = null,
+          started_at    = null,
+          error_message = 'Worker timed out (lock held > ' || p_max_age_minutes || ' min)',
+          updated_at    = now()
+      where id = v_lock.job_id and status = 'running';
+    elsif v_lock.job_kind = 'enrichment' then
+      update public.enrichment_fetch_queue
+      set status        = case when attempts < max_attempts then 'pending' else 'failed' end,
+          claimed_by    = null,
+          started_at    = null,
+          error_message = 'Worker timed out (lock held > ' || p_max_age_minutes || ' min)',
+          updated_at    = now()
+      where id = v_lock.job_id and status = 'running';
+    end if;
+
+    delete from public.active_profile_locks where country_code = v_lock.country_code;
+    v_count := v_count + 1;
+  end loop;
+  return v_count;
 end;
 $$;
 
