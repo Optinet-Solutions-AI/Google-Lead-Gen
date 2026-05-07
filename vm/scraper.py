@@ -173,6 +173,88 @@ def extract_sponsored_urls_selenium(driver):
     return sponsored
 
 
+def resolve_ppc_url(driver, anchor) -> str | None:
+    """Open the PPC anchor's `href` in a new tab, follow Google's
+    redirect chain, and return the final destination URL **with all
+    click-tracking params** (gclid, gad_source, gad_campaignid, gbraid,
+    etc.) intact.
+
+    Why: the bare `data-pcu` attribute only gives the destination
+    domain. To "uncloak" a PPC ad later — paste the URL and see what
+    landing page the advertiser actually serves — operators need the
+    full URL Google generated for this click. Following the click in
+    the same browser session preserves cookies + proxy + fingerprint,
+    so the destination treats us like a legitimate searcher.
+
+    Best-effort: returns None on failure (timeout, popup blocked,
+    redirect-fail). PPC-only side effect — never called for organic.
+    """
+    href = anchor.get_attribute("href")
+    if not href:
+        return None
+
+    original_handle = driver.current_window_handle
+    new_handle = None
+    try:
+        # Open in a fresh tab so the SERP stays put and we don't have
+        # to re-scroll / re-load to continue the scrape.
+        before_handles = set(driver.window_handles)
+        driver.execute_script("window.open(arguments[0], '_blank');", href)
+        # Selenium needs a beat for the new window to register.
+        time.sleep(0.4)
+
+        new_handles = [h for h in driver.window_handles if h not in before_handles]
+        if not new_handles:
+            print("[WARN] PPC URL resolve: new tab did not open", file=sys.stderr)
+            return None
+        new_handle = new_handles[-1]
+        driver.switch_to.window(new_handle)
+
+        # Poll current_url until it stops changing AND has left
+        # Google's redirect domains. Capped at ~6s.
+        prev = ""
+        final = None
+        for _ in range(12):  # 12 * 0.5 = 6s
+            time.sleep(0.5)
+            try:
+                cur = driver.current_url
+            except Exception:  # noqa: BLE001
+                cur = ""
+            if not cur:
+                continue
+            on_redirect = (
+                "googleadservices.com" in cur
+                or "doubleclick.net" in cur
+                or "google.com/aclk" in cur
+            )
+            if cur == prev and not on_redirect:
+                final = cur
+                break
+            prev = cur
+        # Fall back to whatever current_url is if we never settled.
+        if not final:
+            try:
+                final = driver.current_url
+            except Exception:  # noqa: BLE001
+                final = None
+
+        if final and final.startswith("http"):
+            return final
+        return None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] PPC URL resolve failed: {exc}", file=sys.stderr)
+        return None
+    finally:
+        # Always close the new tab + return to the SERP, even on error.
+        try:
+            if new_handle and driver.current_window_handle == new_handle:
+                driver.close()
+            if driver.current_window_handle != original_handle:
+                driver.switch_to.window(original_handle)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def capture_serp_ad_screenshot(driver, anchor, out_path: str) -> bool:
     """Element-screenshot the smallest reasonable ancestor of `anchor`
     that wraps the entire ad card (title + description + URL line).
@@ -329,14 +411,23 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
     sponsored_map = extract_sponsored_urls_selenium(driver)
     sponsored_urls = set(sponsored_map.keys())
 
-    # Element-screenshot each PPC ad card on this SERP. Saves PNGs to
-    # /tmp; the worker uploads them to Storage after the scrape and
-    # rewrites the path on each result row before calling the RPC.
+    # Element-screenshot each PPC ad card AND resolve the full click
+    # URL (with gclid/gad_*) by opening it in a new tab. PPC-only —
+    # organic rows skip both. Each click-resolve costs ~3-6s, so this
+    # adds noticeable time when many ads are on a page; that's the
+    # cost of getting URLs operators can paste to "uncloak" the
+    # landing page.
     serp_screenshots: dict = {}
+    resolved_ppc_urls: dict = {}
     for idx, (ppc_url, anchor) in enumerate(sponsored_map.items()):
         out_path = f"/tmp/serp_ad_{int(time.time() * 1000)}_{page}_{idx}.png"
         if capture_serp_ad_screenshot(driver, anchor, out_path):
             serp_screenshots[ppc_url] = out_path
+
+        full = resolve_ppc_url(driver, anchor)
+        if full:
+            resolved_ppc_urls[ppc_url] = full
+            print(f"[DEBUG] Resolved PPC URL: {ppc_url} → {full}")
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     results = []
@@ -355,12 +446,21 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
 
         result_type = "PPC" if link in sponsored_urls else "Organic"
 
-        # Extract base URL (scheme + netloc)
+        # Extract base URL (scheme + netloc) — derived from the bare
+        # data-pcu link so the `domain` column is clean even when the
+        # resolved PPC URL is full-of-tracking-params.
         parsed = urlparse(link)
         full_url = f"{parsed.scheme}://{parsed.netloc}"
 
+        # PPC ONLY: swap `url` with the resolved full destination
+        # (gclid + gad_* + everything Google appended). Organic rows
+        # keep their bare URL untouched.
+        url_value = link
+        if result_type == "PPC" and link in resolved_ppc_urls:
+            url_value = resolved_ppc_urls[link]
+
         result_row = {
-            "url": link,
+            "url": url_value,
             "full_url": full_url,
             "title": h3.get_text(strip=True),
             "resultType": result_type,
@@ -383,17 +483,22 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
 
     # --- PPC results not included in organic ---
     for ppc_url in sponsored_urls:
-        if any(r["url"] == ppc_url for r in results):
+        # Skip if we already emitted a row for this ad (matched by the
+        # full resolved URL OR the bare data-pcu — either way it's the
+        # same ad and we avoid duplicating it).
+        resolved = resolved_ppc_urls.get(ppc_url, ppc_url)
+        if any(r["url"] == ppc_url or r["url"] == resolved for r in results):
             continue
         a_tag = soup.find("a", href=ppc_url) or soup.find("a", {"data-pcu": ppc_url})
         title = a_tag.get_text(strip=True) if a_tag else ""
 
-        # Extract base URL for PPC results
+        # Extract base URL for the `domain` column from the bare
+        # data-pcu link, even when storing the full resolved URL.
         parsed = urlparse(ppc_url)
         full_url = f"{parsed.scheme}://{parsed.netloc}"
 
         result_row = {
-            "url": ppc_url,
+            "url": resolved,
             "full_url": full_url,
             "title": title,
             "resultType": "PPC",
