@@ -1,8 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
-import { Check, CheckSquare, Copy, EyeOff, Square } from 'lucide-react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Check, CheckSquare, EyeOff, Link2, Square } from 'lucide-react'
 import { SortHeader } from '../../monday/_components/sort-header'
 import type { LeadRow } from '../_lib/query'
 import {
@@ -24,7 +25,26 @@ type Props = {
 }
 
 export function LeadsTable({ rows, jobContext = false }: Props) {
-  const [openLeadId, setOpenLeadId] = useState<number | null>(null)
+  // Drawer is URL-driven via `?lead=<id>` so QA can copy a row link
+  // and any teammate clicking it lands on this exact lead's drawer.
+  // Local state only as fallback for legacy callers.
+  const router = useRouter()
+  const pathname = usePathname()
+  const sp = useSearchParams()
+  const leadParam = sp.get('lead')
+  const openLeadId = leadParam ? Number(leadParam) : null
+
+  const setOpenLeadId = useCallback(
+    (id: number | null) => {
+      const params = new URLSearchParams(sp.toString())
+      if (id === null) params.delete('lead')
+      else params.set('lead', String(id))
+      const qs = params.toString()
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+    },
+    [router, pathname, sp],
+  )
+
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
 
@@ -220,10 +240,10 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                       >
                         {row.url.length > 55 ? row.url.slice(0, 55) + '…' : row.url}
                       </a>
-                      <CopyUrlButton url={row.url} />
+                      <CopyRowLinkButton leadId={row.id} />
                     </div>
                   ) : (
-                    '—'
+                    <CopyRowLinkButton leadId={row.id} />
                   )}
                 </Td>
                 <Td>
@@ -339,10 +359,10 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                     >
                       {row.url.length > 80 ? row.url.slice(0, 80) + '…' : row.url}
                     </a>
-                    <CopyUrlButton url={row.url} />
+                    <CopyRowLinkButton leadId={row.id} />
                   </span>
                 ) : (
-                  '—'
+                  <CopyRowLinkButton leadId={row.id} />
                 )}
               </Field>
               <Field label="Is on Monday?">
@@ -413,37 +433,56 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
   )
 }
 
-function CopyUrlButton({ url }: { url: string }) {
+/** Copies a permalink that opens THIS row's drawer when clicked.
+ *  Used during QA so testers can paste a link in the feedback widget
+ *  (or chat) and the admin lands on the same row + drawer with one
+ *  click — no need to re-search through filters/pages.
+ *
+ *  The drawer is URL-driven via `?lead=<id>` (see LeadsTable above),
+ *  so the link is just the current path with that param set + the
+ *  page-1 reset so the row is guaranteed visible regardless of where
+ *  the link recipient was last paginated to. */
+function CopyRowLinkButton({ leadId }: { leadId: number }) {
+  const pathname = usePathname()
+  const sp = useSearchParams()
   const [copied, setCopied] = useState(false)
+
   const handle = async () => {
+    const params = new URLSearchParams(sp.toString())
+    params.set('lead', String(leadId))
+    // Reset page=1 so the recipient sees the row regardless of where
+    // the sender was paginated to. Filters / sorts are preserved.
+    params.delete('page')
+    const qs = params.toString()
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    const link = `${origin}${pathname}${qs ? `?${qs}` : ''}`
+
     try {
-      await navigator.clipboard.writeText(url)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
+      await navigator.clipboard.writeText(link)
     } catch {
-      // Older browsers / contexts without clipboard API: select-and-copy fallback.
       const ta = document.createElement('textarea')
-      ta.value = url
+      ta.value = link
       ta.style.position = 'fixed'
       ta.style.opacity = '0'
       document.body.appendChild(ta)
       ta.select()
       try {
         document.execCommand('copy')
-        setCopied(true)
-        setTimeout(() => setCopied(false), 1500)
       } catch {
         /* give up silently */
       }
       document.body.removeChild(ta)
     }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
   }
+
   return (
     <button
       type="button"
       onClick={handle}
-      title={copied ? 'Copied!' : 'Copy URL'}
-      aria-label={copied ? 'Copied URL' : 'Copy URL'}
+      title={copied ? 'Copied row link!' : 'Copy link to this row (opens the drawer when shared)'}
+      aria-label={copied ? 'Copied row link' : 'Copy row link'}
       className={[
         'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors',
         copied
@@ -451,7 +490,7 @@ function CopyUrlButton({ url }: { url: string }) {
           : 'text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]',
       ].join(' ')}
     >
-      {copied ? <Check className="h-3 w-3" strokeWidth={3} /> : <Copy className="h-3 w-3" />}
+      {copied ? <Check className="h-3 w-3" strokeWidth={3} /> : <Link2 className="h-3 w-3" />}
     </button>
   )
 }
