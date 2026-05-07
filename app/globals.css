@@ -39,17 +39,19 @@ body {
   scrollbar-width: none;
 }
 
-/* Thin scrollbars app-wide (WebKit + Firefox). */
+/* Thin scrollbars app-wide (WebKit + Firefox). Nudged from 6px to 4px
+ * so the table scrollbars feel less intrusive while still being easy
+ * to grab. Thumb radius shrinks to match. */
 *::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 *::-webkit-scrollbar-track {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
   background: var(--color-border-strong);
-  border-radius: 3px;
+  border-radius: 2px;
 }
 *::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-secondary);
@@ -59,10 +61,11 @@ html {
   scrollbar-color: var(--color-border-strong) transparent;
 }
 
-/* Extra-subtle scrollbar for the top mirror track above the table. */
+/* Extra-subtle scrollbar for the top mirror track above the table.
+ * Thinner still so the mirror reads as guidance, not a second control. */
 .discrete-scrollbar::-webkit-scrollbar {
-  height: 4px;
-  width: 4px;
+  height: 3px;
+  width: 3px;
 }
 .discrete-scrollbar::-webkit-scrollbar-thumb {
   background: rgba(107, 107, 107, 0.15);
