@@ -43,6 +43,12 @@ WORKER_ID            = os.environ["WORKER_ID"]
 GOLOGIN_PORT         = int(os.environ.get("GOLOGIN_PORT", "9222"))
 POLL_INTERVAL        = int(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
 SCRAPE_TIMEOUT_S     = int(os.environ.get("SCRAPE_TIMEOUT_SECONDS", "1200"))  # 20 min
+# When interactive mode is on, the scraper may park at a wall and wait
+# for an admin to resolve via noVNC. Bump the subprocess timeout to
+# match the worst-case checkpoint TTL (default 15 min) plus the
+# regular 20 min scrape budget. Set INTERACTIVE_MODE=off to disable.
+INTERACTIVE_MODE          = os.environ.get("INTERACTIVE_MODE", "on").strip().lower() != "off"
+INTERACTIVE_TIMEOUT_S     = int(os.environ.get("INTERACTIVE_SCRAPE_TIMEOUT_SECONDS", "2400"))  # 40 min
 SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_KEY         = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 SCRAPER_PATH         = os.environ.get(
@@ -201,6 +207,7 @@ def run_scrape(
     pages: int,
     language: str = "en",
     engine: str = "google",
+    job_id: str | None = None,
 ) -> tuple[int, str, Path, Path]:
     """
     Invoke the scraper as a subprocess.
@@ -230,10 +237,22 @@ def run_scrape(
         "--language", language,
         "--engine", engine,
     ]
+    if INTERACTIVE_MODE and job_id:
+        # When interactive mode is on, hand the scraper enough context
+        # to write interactive_checkpoints rows. Subprocess timeout
+        # also bumps so paused jobs don't get TERM'd while a human is
+        # clicking through.
+        cmd += [
+            "--interactive",
+            "--job-id", job_id,
+            "--worker-id", WORKER_ID,
+        ]
+    timeout_s = INTERACTIVE_TIMEOUT_S if (INTERACTIVE_MODE and job_id) else SCRAPE_TIMEOUT_S
 
     env = {**os.environ, "DISPLAY": ":1"}
-    log.info("launching scraper (port=%d profile=%s log=%s)",
-             GOLOGIN_PORT, profile_id[:8], log_path)
+    log.info("launching scraper (port=%d profile=%s log=%s timeout=%ds interactive=%s)",
+             GOLOGIN_PORT, profile_id[:8], log_path, timeout_s,
+             "yes" if (INTERACTIVE_MODE and job_id) else "no")
 
     with open(log_path, "w", encoding="utf-8") as log_f:
         result = subprocess.run(
@@ -241,7 +260,7 @@ def run_scrape(
             env=env,
             stdout=log_f,
             stderr=subprocess.STDOUT,
-            timeout=SCRAPE_TIMEOUT_S,
+            timeout=timeout_s,
         )
 
     # Read back only what we need to classify the outcome. Scraper logs
@@ -285,11 +304,12 @@ def process_job(job: dict[str, Any]) -> None:
     try:
         exit_code, combined_log, output_path, log_path = run_scrape(
             profile_id, keyword, country_name, pages,
-            language=language, engine=engine,
+            language=language, engine=engine, job_id=job_id,
         )
     except subprocess.TimeoutExpired:
         _kill_port()
-        fail_job(job_id, f"Scraper timed out after {SCRAPE_TIMEOUT_S}s")
+        timeout_used = INTERACTIVE_TIMEOUT_S if INTERACTIVE_MODE else SCRAPE_TIMEOUT_S
+        fail_job(job_id, f"Scraper timed out after {timeout_used}s")
         return
     except Exception as exc:  # noqa: BLE001
         _kill_port()

@@ -423,19 +423,252 @@ class CaptchaDetectedException(Exception):
 # ---------------------------
 # CAPTCHA checker
 # ---------------------------
-def check_for_captcha(driver):
-    """Detect if Google is showing a CAPTCHA or unusual traffic page"""
-    current_url = driver.current_url
-    if "/sorry/" in current_url or "captcha" in current_url.lower():
-        raise CaptchaDetectedException("CAPTCHA detected in URL")
+# Human-in-the-loop interactive checkpoints
+# ---------------------------
+# When the scraper hits a wall (captcha, age verification, cookie banner)
+# AND --interactive is on, instead of failing the job we:
+#   1. Snap a viewport screenshot, upload to lead-screenshots bucket
+#   2. Insert a row into interactive_checkpoints via RPC
+#   3. Flip scrape_queue.status to 'needs_human' (RPC does this for us)
+#   4. Poll scrape_queue.status every 5s until it flips back to 'running'
+#      (operator clicked Resume) or 'failed'/'cancelled' (Cancel) or
+#      we hit the TTL (default 15 min).
+# The Chromium tab stays open the whole time so the operator's clicks
+# in the noVNC viewer affect the same session.
+
+CHECKPOINT_POLL_SECONDS = 5
+CHECKPOINT_DEFAULT_TTL_MINUTES = 15
+
+# Set by main() at startup. check_for_captcha falls back to these
+# when callers don't pass kwargs explicitly. Keeps existing
+# `check_for_captcha(driver)` callsites working unchanged.
+_HITL_CTX: dict = {
+    "job_id": None,
+    "worker_id": None,
+    "worker_port": 9222,
+    "interactive": False,
+}
+
+class InteractiveCancelException(Exception):
+    """Operator clicked Cancel in the dashboard. Job is already marked
+    failed; the scraper exits gracefully."""
+    pass
+
+
+def _supabase_request(method: str, path: str, *, json_body=None, headers=None):
+    """Lightweight Supabase REST call using requests + service role key.
+    Avoids pulling the full supabase-py client into the scraper just for
+    a couple of one-shot calls."""
+    import requests as _rq
+    base = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not base or not key:
+        raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set in env")
+    url = f"{base.rstrip('/')}{path}"
+    h = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        **(headers or {}),
+    }
+    resp = _rq.request(method, url, headers=h, json=json_body, timeout=30)
+    return resp
+
+
+def _upload_checkpoint_screenshot(driver, job_id: str) -> str | None:
+    """Snap a viewport-only screenshot of the current page and upload
+    it to the lead-screenshots Storage bucket. Returns the bucket-
+    relative path on success, None on any failure (best-effort)."""
     try:
-        page_source = driver.page_source.lower()
-        if "unusual traffic" in page_source or "recaptcha" in page_source or "captcha" in page_source:
-            raise CaptchaDetectedException("CAPTCHA detected in page source")
-    except CaptchaDetectedException:
-        raise
-    except:
-        pass
+        png = driver.get_screenshot_as_png()
+        if not png:
+            return None
+        path = f"interactive/{job_id}/{int(time.time() * 1000)}.png"
+        resp = _supabase_request(
+            "POST",
+            f"/storage/v1/object/lead-screenshots/{path}",
+            headers={"Content-Type": "image/png"},
+        )
+        # The above won't accept binary via json_body. Use a raw POST.
+        import requests as _rq
+        base = os.environ.get("SUPABASE_URL", "").rstrip("/")
+        key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+        resp = _rq.post(
+            f"{base}/storage/v1/object/lead-screenshots/{path}",
+            headers={
+                "apikey": key,
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "image/png",
+                "x-upsert": "true",
+            },
+            data=png,
+            timeout=30,
+        )
+        if 200 <= resp.status_code < 300:
+            return path
+        print(f"[WARN] checkpoint screenshot upload failed: {resp.status_code} {resp.text[:200]}",
+              file=sys.stderr)
+        return None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] checkpoint screenshot capture failed: {exc}", file=sys.stderr)
+        return None
+
+
+def request_interactive_checkpoint(
+    driver,
+    *,
+    job_id: str | None,
+    worker_id: str | None,
+    worker_port: int,
+    reason: str,
+    ttl_minutes: int = CHECKPOINT_DEFAULT_TTL_MINUTES,
+) -> bool:
+    """Pause the scrape and wait for an admin to resolve via noVNC.
+
+    Returns True when the operator clicked Resume — the caller should
+    re-check the page state and continue. Returns False when the
+    checkpoint was cancelled or timed out — the caller should treat
+    the wall as fatal (raise CaptchaDetectedException, etc).
+
+    Requires --interactive + --job-id + --worker-id to actually fire;
+    when called without them, returns False immediately so legacy
+    callers fall through to their existing fail path.
+    """
+    if not job_id:
+        print("[INFO] checkpoint: no --job-id, skipping (interactive flag ignored)")
+        return False
+
+    print(f"[INFO] checkpoint: pausing for human (reason={reason})")
+
+    try:
+        current_url = driver.current_url or None
+    except Exception:  # noqa: BLE001
+        current_url = None
+    try:
+        page_title = driver.title or None
+    except Exception:  # noqa: BLE001
+        page_title = None
+
+    screenshot_path = _upload_checkpoint_screenshot(driver, job_id)
+
+    # Insert the checkpoint row + flip scrape_queue status to needs_human
+    try:
+        resp = _supabase_request(
+            "POST",
+            "/rest/v1/rpc/create_interactive_checkpoint",
+            json_body={
+                "p_job_id": job_id,
+                "p_worker_id": worker_id or "unknown",
+                "p_worker_port": worker_port,
+                "p_reason": reason,
+                "p_current_url": current_url,
+                "p_page_title": page_title,
+                "p_screenshot_path": screenshot_path,
+                "p_ttl_minutes": ttl_minutes,
+            },
+        )
+        if resp.status_code >= 300:
+            print(f"[ERROR] checkpoint create failed: {resp.status_code} {resp.text[:200]}",
+                  file=sys.stderr)
+            return False
+        try:
+            checkpoint_id = int(resp.json())
+        except Exception:  # noqa: BLE001
+            checkpoint_id = None
+        print(f"[INFO] checkpoint created: id={checkpoint_id}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] checkpoint create raised: {exc}", file=sys.stderr)
+        return False
+
+    # Poll scrape_queue.status until it flips back to 'running' (resumed)
+    # or 'failed'/'cancelled' (cancelled) or our TTL expires.
+    deadline = time.time() + ttl_minutes * 60
+    while time.time() < deadline:
+        time.sleep(CHECKPOINT_POLL_SECONDS)
+        try:
+            resp = _supabase_request(
+                "GET",
+                f"/rest/v1/scrape_queue?id=eq.{job_id}&select=status",
+            )
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            if not data:
+                continue
+            status = data[0].get("status", "")
+            if status == "running":
+                print("[INFO] checkpoint resolved by operator — resuming scrape")
+                return True
+            if status in ("failed", "cancelled"):
+                print(f"[INFO] checkpoint cancelled (status={status}) — exiting")
+                raise InteractiveCancelException(f"operator cancelled at checkpoint: {status}")
+            # status == 'needs_human' — keep waiting
+        except InteractiveCancelException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] checkpoint poll error: {exc}", file=sys.stderr)
+
+    print("[WARN] checkpoint timed out without operator action")
+    return False
+
+
+def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, interactive=None):
+    """Detect if Google is showing a CAPTCHA or unusual traffic page.
+
+    When interactive=True AND --job-id is set, instead of raising we
+    park the job at an interactive checkpoint and wait for an admin
+    to click through via noVNC. After resume, re-check; if still
+    captcha'd, fall through to the legacy raise.
+
+    Falls back to module-level _HITL_CTX (set by main()) when
+    kwargs aren't passed, so existing call sites don't need to be
+    re-threaded.
+    """
+    if job_id is None:
+        job_id = _HITL_CTX.get("job_id")
+    if worker_id is None:
+        worker_id = _HITL_CTX.get("worker_id")
+    if worker_port is None:
+        worker_port = _HITL_CTX.get("worker_port", 9222)
+    if interactive is None:
+        interactive = _HITL_CTX.get("interactive", False)
+    def _is_captcha() -> bool:
+        try:
+            cur = driver.current_url or ""
+        except Exception:  # noqa: BLE001
+            cur = ""
+        if "/sorry/" in cur or "captcha" in cur.lower():
+            return True
+        try:
+            page = (driver.page_source or "").lower()
+        except Exception:  # noqa: BLE001
+            page = ""
+        if "unusual traffic" in page or "recaptcha" in page or "captcha" in page:
+            return True
+        return False
+
+    if not _is_captcha():
+        return
+
+    if interactive and job_id:
+        try:
+            resumed = request_interactive_checkpoint(
+                driver,
+                job_id=job_id,
+                worker_id=worker_id,
+                worker_port=worker_port,
+                reason="captcha",
+            )
+        except InteractiveCancelException:
+            # Operator clicked Cancel — bubble out as captcha so the
+            # worker logs / classifies the failure consistently.
+            raise CaptchaDetectedException("operator cancelled at captcha checkpoint")
+        if resumed and not _is_captcha():
+            return
+        # Either timed out or operator clicked Resume but the page
+        # still shows captcha. Fall through to fail.
+
+    raise CaptchaDetectedException("CAPTCHA detected")
 
 # ---------------------------
 # Google scraping
@@ -993,8 +1226,27 @@ def main():
     parser.add_argument("--webhook", default=None, help="Optional webhook URL to POST results to (not used by the Supabase worker)")
     parser.add_argument("--language", default="en", help="Search language code (en, ar, de, …)")
     parser.add_argument("--engine", default="google", choices=["google", "bing"], help="Which search engine to scrape")
+    parser.add_argument("--job-id", default=None, help="scrape_queue.id (UUID). Required for human-in-the-loop checkpoints.")
+    parser.add_argument("--worker-id", default=None, help="Worker identifier (e.g. vm1-9222). Logged on interactive checkpoints.")
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="When set, the scraper checkpoints on captcha/age-gate/cookie walls "
+             "and polls scrape_queue for the operator to resume via the dashboard "
+             "noVNC stream. When unset, walls fail the job immediately (legacy behaviour).",
+    )
 
     args = parser.parse_args()
+
+    # Stash the human-in-the-loop context where check_for_captcha can
+    # find it without us threading kwargs through every scrape helper.
+    _HITL_CTX["job_id"] = args.job_id
+    _HITL_CTX["worker_id"] = args.worker_id
+    _HITL_CTX["worker_port"] = args.port
+    _HITL_CTX["interactive"] = bool(args.interactive)
+    if args.interactive and not args.job_id:
+        print("[WARN] --interactive set without --job-id; HITL checkpoints disabled",
+              file=sys.stderr)
 
     # GoLogin API token — required, read from env to support multi-worker
     # deployments without hardcoding secrets in the source.

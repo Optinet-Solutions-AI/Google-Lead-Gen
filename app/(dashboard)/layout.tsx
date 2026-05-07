@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { DashboardShell } from './_components/dashboard-shell'
+import { InteractiveBanner } from './_components/interactive-banner'
 
 export default async function DashboardLayout({
   children,
@@ -29,6 +30,10 @@ export default async function DashboardLayout({
 
   return (
     <DashboardShell username={username} isAdmin={isAdmin}>
+      {/* Renders only when there's at least one interactive_checkpoint
+       *  in status='waiting' AND the viewer is admin. Server-rendered
+       *  on every navigation so the count stays fresh. */}
+      <InteractiveBanner />
       {children}
     </DashboardShell>
   )

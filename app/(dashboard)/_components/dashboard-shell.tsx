@@ -10,6 +10,7 @@ import {
   Clock,
   Database,
   Globe,
+  Hand,
   HelpCircle,
   KeyRound,
   LayoutDashboard,
@@ -108,6 +109,12 @@ const ADMIN_NAV_ITEMS = [
     href: '/admin/feedback',
     icon: MessageCircle,
     match: (p: string) => p.startsWith('/admin/feedback'),
+  },
+  {
+    label: 'Interactive Checkpoints (Admin)',
+    href: '/admin/interactive',
+    icon: Hand,
+    match: (p: string) => p.startsWith('/admin/interactive'),
   },
 ] as const
 

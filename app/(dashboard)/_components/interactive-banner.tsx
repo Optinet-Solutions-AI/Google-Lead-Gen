@@ -1,0 +1,43 @@
+import 'server-only'
+import Link from 'next/link'
+import { Hand } from 'lucide-react'
+import { createClient as createServerClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
+
+/**
+ * Global "N scrapes waiting for human" banner. Renders on every
+ * dashboard page when at least one interactive_checkpoint is in
+ * status='waiting'. Click → /admin/interactive.
+ *
+ * Hidden for non-admins since they can't act on it.
+ */
+export async function InteractiveBanner() {
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return null
+
+  const svc = createServiceClient()
+  const { data: isAdminFlag } = await svc.rpc('is_admin', { p_user_id: user.id })
+  if (!isAdminFlag) return null
+
+  const { count } = await svc
+    .from('interactive_checkpoints')
+    .select('id', { head: true, count: 'exact' })
+    .eq('status', 'waiting')
+  if (!count || count <= 0) return null
+
+  return (
+    <Link
+      href="/admin/interactive"
+      className="block border-b border-amber-300 bg-amber-50 px-4 py-2 text-[12px] text-amber-900 hover:bg-amber-100"
+    >
+      <span className="inline-flex items-center gap-2">
+        <Hand className="h-4 w-4 shrink-0" />
+        <strong>{count}</strong> scrape{count === 1 ? '' : 's'} waiting for a human —
+        click to resolve.
+      </span>
+    </Link>
+  )
+}
