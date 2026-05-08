@@ -26,8 +26,13 @@ body {
   -webkit-font-smoothing: antialiased;
   /* Prevent the page from ever scrolling horizontally — tables with many
      columns should scroll *inside* their own overflow-x-auto wrapper, not
-     push the layout out of the viewport. */
-  overflow-x: hidden;
+     push the layout out of the viewport.
+     IMPORTANT: `clip` (NOT `hidden`) — `overflow-x: hidden` would make
+     the body a scroll container and break position:sticky on table
+     headers (sticky descendants would pin against the body's invisible
+     scroll instead of the viewport). `overflow-x: clip` clips without
+     creating a scroll container, leaving sticky working correctly. */
+  overflow-x: clip;
 }
 
 /* Hide scrollbars on horizontal scroll containers used for mobile nav */

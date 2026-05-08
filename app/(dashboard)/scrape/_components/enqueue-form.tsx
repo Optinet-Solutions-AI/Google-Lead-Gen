@@ -2,7 +2,12 @@
 
 import { useActionState, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { ChevronDown, Search } from 'lucide-react'
 import { enqueueScrape, type EnqueueState } from '../actions'
+
+/** localStorage key — remembers whether the user wants the enqueue
+ *  form open or collapsed across sessions. Open by default. */
+const COLLAPSED_KEY = 'lg-enqueue-form-collapsed'
 
 type Profile = {
   country_code: string
@@ -51,6 +56,29 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
   const [keywordsText, setKeywordsText] = useState('')
   const [selectedCountry, setSelectedCountry] = useState('')
   const [selectedLang, setSelectedLang] = useState('en')
+  // Open by default. Collapsed state persists per-browser via
+  // localStorage so once an operator hides it, it stays hidden across
+  // page navigations.
+  const [collapsed, setCollapsed] = useState(false)
+  useEffect(() => {
+    try {
+       
+      setCollapsed(window.localStorage.getItem(COLLAPSED_KEY) === '1')
+    } catch {
+      /* localStorage unavailable */
+    }
+  }, [])
+  const toggleCollapsed = () => {
+    setCollapsed(prev => {
+      const next = !prev
+      try {
+        window.localStorage.setItem(COLLAPSED_KEY, next ? '1' : '0')
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }
   const count = useMemo(() => countKeywords(keywordsText), [keywordsText])
   const selectedProfile = useMemo(
     () => profiles.find(p => p.country_code === selectedCountry) ?? null,
@@ -82,12 +110,40 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
   }, [state, router])
 
   return (
-    <form
-      ref={formRef}
-      action={formAction}
-      className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-4"
-    >
-      <div className="grid gap-3 md:grid-cols-[1fr_160px_140px_100px_100px] md:items-start">
+    <section className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
+      {/* Collapsible header — clicking the title bar shows / hides
+       *  the form. Open by default; persists to localStorage so the
+       *  operator's preference sticks across navigations. */}
+      <button
+        type="button"
+        onClick={toggleCollapsed}
+        aria-expanded={!collapsed}
+        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left transition-colors hover:bg-[color:var(--color-bg-secondary)]"
+      >
+        <span className="inline-flex items-center gap-2 text-[13px] font-semibold text-[color:var(--color-text-primary)]">
+          <Search className="h-4 w-4 text-[color:var(--color-accent)]" />
+          Queue scrapes
+          {count > 0 && (
+            <span className="rounded-full bg-[color:var(--color-accent)]/15 px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-text-primary)]">
+              {count} keyword{count === 1 ? '' : 's'} drafted
+            </span>
+          )}
+        </span>
+        <ChevronDown
+          className={[
+            'h-4 w-4 text-[color:var(--color-text-secondary)] transition-transform',
+            collapsed ? '' : 'rotate-180',
+          ].join(' ')}
+        />
+      </button>
+
+      {!collapsed && (
+        <form
+          ref={formRef}
+          action={formAction}
+          className="border-t border-[color:var(--color-border)] p-4"
+        >
+          <div className="grid gap-3 md:grid-cols-[1fr_160px_140px_100px_100px] md:items-start">
         <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
           <span className="flex items-baseline justify-between">
             <span>Keywords</span>
@@ -241,16 +297,18 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
           once you&apos;ve signed in.
         </p>
       )}
-      {state?.status === 'ok' && (
-        <p className="mt-3 rounded-md bg-green-50 px-3 py-2 text-[12px] text-green-700">
-          {state.message}
-        </p>
+          {state?.status === 'ok' && (
+            <p className="mt-3 rounded-md bg-green-50 px-3 py-2 text-[12px] text-green-700">
+              {state.message}
+            </p>
+          )}
+          {state?.status === 'error' && (
+            <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-[12px] text-red-700">
+              {state.error}
+            </p>
+          )}
+        </form>
       )}
-      {state?.status === 'error' && (
-        <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-[12px] text-red-700">
-          {state.error}
-        </p>
-      )}
-    </form>
+    </section>
   )
 }
