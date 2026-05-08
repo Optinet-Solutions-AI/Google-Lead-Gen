@@ -271,7 +271,26 @@ export async function pushLeadToMondayAction(
   const leadId = Number(formData.get('lead_id'))
   if (!Number.isFinite(leadId)) return { status: 'error', error: 'Missing lead id.' }
 
-  const result = await pushLeadToMonday(leadId, { pushedBy: user.email ?? user.id })
+  // Resolve the pushing user's display name + Monday user id so the
+  // new item lands under their name on the Leads board (instead of
+  // the legacy default owner inherited from the n8n workflow).
+  const svc = createServiceClient()
+  const { data: profileRow } = await svc
+    .from('user_profiles')
+    .select('username, display_name, monday_user_id')
+    .eq('id', user.id)
+    .maybeSingle()
+  const profile = profileRow as
+    | { username: string | null; display_name: string | null; monday_user_id: number | null }
+    | null
+  const pushedByDisplay =
+    profile?.display_name ?? profile?.username ?? user.email ?? user.id
+  const pushedByMondayId = profile?.monday_user_id ?? null
+
+  const result = await pushLeadToMonday(leadId, {
+    pushedBy: pushedByDisplay,
+    pushedByMondayId,
+  })
   if (!result.ok) {
     return { status: 'error', error: result.error }
   }
@@ -284,6 +303,7 @@ export async function pushLeadToMondayAction(
       monday_item_id: result.monday_item_id,
       attached_file: result.attached_file,
       s_tag_update_posted: result.s_tag_update_posted,
+      monday_owner_id: pushedByMondayId,
     },
   })
 

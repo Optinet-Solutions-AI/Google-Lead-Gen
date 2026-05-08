@@ -3,6 +3,9 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { MondayApiError, mondayGQL } from '@/lib/monday/graphql'
 
 const LEADS_BOARD_ID = '1236073873'
+/** Fallback owner — used when the pushing user hasn't been mapped to
+ *  a Monday user via user_profiles.monday_user_id. Inherited from the
+ *  legacy n8n "Add Lead on Monday.com" workflow (Charisse Bartoli). */
 const DEFAULT_OWNER_ID = 46169036
 const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file'
 const API_VERSION = '2025-07'
@@ -38,7 +41,14 @@ export type PushError = {
  */
 export async function pushLeadToMonday(
   leadId: number,
-  opts?: { pushedBy?: string },
+  opts?: {
+    pushedBy?: string
+    /** Monday user ID of the operator clicking Push. Lands as the
+     *  Owner on the new item via the project_owner column. Falls
+     *  back to DEFAULT_OWNER_ID when the pushing user hasn't been
+     *  mapped (`user_profiles.monday_user_id` is null). */
+    pushedByMondayId?: number | null
+  },
 ): Promise<PushResult | PushError> {
   const svc = createServiceClient()
 
@@ -114,7 +124,10 @@ export async function pushLeadToMonday(
     date: { date: today },
     text1: sanitize(l.url ?? ''),
     project_owner: {
-      personsAndTeams: [{ id: DEFAULT_OWNER_ID, kind: 'person' }],
+      personsAndTeams: [{
+        id: opts?.pushedByMondayId ?? DEFAULT_OWNER_ID,
+        kind: 'person',
+      }],
     },
   }
 

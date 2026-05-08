@@ -1,10 +1,16 @@
 'use client'
 
-import { useActionState } from 'react'
-import { Loader2, Shield, ShieldOff, User } from 'lucide-react'
-import { setAdminFlagAction, type SetAdminState } from '../actions'
+import { useActionState, useState } from 'react'
+import { CheckCircle2, Hash, Loader2, Shield, ShieldOff, User } from 'lucide-react'
+import {
+  setAdminFlagAction,
+  setMondayUserIdAction,
+  type SetAdminState,
+  type SetMondayUserIdState,
+} from '../actions'
 
 const initial: SetAdminState = null
+const initialMondayId: SetMondayUserIdState = null
 
 type Props = {
   user: {
@@ -16,10 +22,21 @@ type Props = {
   }
   isAdmin: boolean
   isSelf: boolean
+  /** Monday.com user ID this user maps to. Owner column on every
+   *  Push-to-Monday item gets stamped with this. Null = falls back
+   *  to the legacy default owner. */
+  mondayUserId: number | null
 }
 
-export function UserListRow({ user, isAdmin, isSelf }: Props) {
+export function UserListRow({ user, isAdmin, isSelf, mondayUserId }: Props) {
   const [state, action, pending] = useActionState(setAdminFlagAction, initial)
+  const [mondayState, mondayAction, mondayPending] = useActionState(
+    setMondayUserIdAction,
+    initialMondayId,
+  )
+  const [mondayInput, setMondayInput] = useState(
+    mondayUserId === null ? '' : String(mondayUserId),
+  )
 
   // Display priority: display_name → username → fallback. Username is
   // shown as the secondary line so admins can read it out for sign-in.
@@ -86,9 +103,46 @@ export function UserListRow({ user, isAdmin, isSelf }: Props) {
         </button>
       </form>
 
+      <form action={mondayAction} className="flex items-center gap-1.5">
+        <input type="hidden" name="user_id" value={user.id} />
+        <label
+          className="inline-flex items-center gap-1 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-1.5 text-[11px] focus-within:border-[color:var(--color-accent)]"
+          title="Monday.com user ID — Push-to-Monday stamps this as the Owner. Leave blank to fall back to the default owner."
+        >
+          <Hash className="h-2.5 w-2.5 text-[color:var(--color-text-secondary)]" />
+          <input
+            type="text"
+            inputMode="numeric"
+            name="monday_user_id"
+            value={mondayInput}
+            onChange={e => setMondayInput(e.target.value.replace(/[^\d]/g, ''))}
+            placeholder="Monday ID"
+            className="w-24 bg-transparent py-1 text-[11px] text-[color:var(--color-text-primary)] focus:outline-none"
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={mondayPending || mondayInput === (mondayUserId === null ? '' : String(mondayUserId))}
+          className="inline-flex items-center gap-1 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2 py-1 text-[11px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {mondayPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+          Save
+        </button>
+      </form>
+
       {state?.status === 'error' && (
         <span className="rounded-md bg-red-100 px-2 py-0.5 text-[10px] text-red-800">
           {state.error}
+        </span>
+      )}
+      {mondayState?.status === 'error' && (
+        <span className="rounded-md bg-red-100 px-2 py-0.5 text-[10px] text-red-800">
+          {mondayState.error}
+        </span>
+      )}
+      {mondayState?.status === 'ok' && (
+        <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-800">
+          {mondayState.message}
         </span>
       )}
     </div>

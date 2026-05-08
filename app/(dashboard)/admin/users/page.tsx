@@ -19,6 +19,7 @@ type ProfileRow = {
   username: string | null
   display_name: string | null
   is_admin: boolean
+  monday_user_id: number | null
 }
 
 export default async function AdminUsersPage() {
@@ -38,7 +39,7 @@ export default async function AdminUsersPage() {
   // username + display_name driven.
   const [{ data: usersPage }, { data: profiles }] = await Promise.all([
     svc.auth.admin.listUsers({ page: 1, perPage: 200 }),
-    svc.from('user_profiles').select('id, username, display_name, is_admin'),
+    svc.from('user_profiles').select('id, username, display_name, is_admin, monday_user_id'),
   ])
 
   const profileById = new Map<string, ProfileRow>(
@@ -90,6 +91,7 @@ export default async function AdminUsersPage() {
               user={u}
               isAdmin={profileById.get(u.id)?.is_admin ?? false}
               isSelf={u.id === user.id}
+              mondayUserId={profileById.get(u.id)?.monday_user_id ?? null}
             />
           ))}
         </div>

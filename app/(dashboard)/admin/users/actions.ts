@@ -163,3 +163,59 @@ export async function setAdminFlagAction(
     message: value ? 'User promoted to admin.' : 'Admin flag cleared.',
   }
 }
+
+export type SetMondayUserIdState =
+  | { status: 'ok'; message: string }
+  | { status: 'error'; error: string }
+  | null
+
+/**
+ * Set / clear the Monday user ID for one user. The Monday ID is what
+ * Push to Monday stamps as Owner on every new lead the user creates.
+ * Empty value = clear (lead-creation falls back to the legacy default
+ * owner so a missing mapping never blocks a push).
+ */
+export async function setMondayUserIdAction(
+  _prev: SetMondayUserIdState,
+  fd: FormData,
+): Promise<SetMondayUserIdState> {
+  const auth = await requireAdmin()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+
+  const targetId = String(fd.get('user_id') ?? '').trim()
+  if (!targetId) return { status: 'error', error: 'Missing user_id.' }
+
+  const raw = String(fd.get('monday_user_id') ?? '').trim()
+  let mondayId: number | null = null
+  if (raw.length > 0) {
+    if (!/^\d+$/.test(raw)) {
+      return { status: 'error', error: 'Monday user ID must be a positive integer (or blank to clear).' }
+    }
+    mondayId = Number(raw)
+    if (!Number.isFinite(mondayId) || mondayId <= 0) {
+      return { status: 'error', error: 'Monday user ID must be a positive integer.' }
+    }
+  }
+
+  const svc = createServiceClient()
+  const { error } = await svc
+    .from('user_profiles')
+    .update({ monday_user_id: mondayId, updated_at: new Date().toISOString() })
+    .eq('id', targetId)
+  if (error) return { status: 'error', error: error.message }
+
+  await logActivity({
+    action: mondayId === null ? 'admin.clear_monday_user_id' : 'admin.set_monday_user_id',
+    entity_type: 'user',
+    entity_id: targetId,
+    details: { monday_user_id: mondayId },
+  })
+
+  revalidatePath('/admin/users')
+  return {
+    status: 'ok',
+    message: mondayId === null
+      ? 'Monday ID cleared.'
+      : `Monday ID set to ${mondayId}.`,
+  }
+}
