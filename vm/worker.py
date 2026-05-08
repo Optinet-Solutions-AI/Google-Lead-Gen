@@ -174,7 +174,7 @@ def _upload_serp_screenshots(job_id: str, results: list[dict[str, Any]]) -> None
 def fetch_profile(country_code: str) -> dict[str, Any] | None:
     result = (
         supabase.table("gologin_profiles")
-        .select("gologin_profile_id, country_name")
+        .select("gologin_profile_id, country_name, requires_google_login")
         .eq("country_code", country_code)
         .single()
         .execute()
@@ -208,6 +208,8 @@ def run_scrape(
     language: str = "en",
     engine: str = "google",
     job_id: str | None = None,
+    country_code: str | None = None,
+    requires_google_login: bool = False,
 ) -> tuple[int, str, Path, Path]:
     """
     Invoke the scraper as a subprocess.
@@ -237,6 +239,10 @@ def run_scrape(
         "--language", language,
         "--engine", engine,
     ]
+    if country_code:
+        cmd += ["--country-code", country_code]
+    if requires_google_login:
+        cmd += ["--requires-google-login"]
     if INTERACTIVE_MODE and job_id:
         # When interactive mode is on, hand the scraper enough context
         # to write interactive_checkpoints rows. Subprocess timeout
@@ -297,6 +303,7 @@ def process_job(job: dict[str, Any]) -> None:
         return
     profile_id = profile["gologin_profile_id"]
     country_name = profile.get("country_name") or country_code
+    requires_google_login = bool(profile.get("requires_google_login"))
 
     # Defensive: make sure this port is free before we start
     _kill_port()
@@ -305,6 +312,8 @@ def process_job(job: dict[str, Any]) -> None:
         exit_code, combined_log, output_path, log_path = run_scrape(
             profile_id, keyword, country_name, pages,
             language=language, engine=engine, job_id=job_id,
+            country_code=country_code,
+            requires_google_login=requires_google_login,
         )
     except subprocess.TimeoutExpired:
         _kill_port()

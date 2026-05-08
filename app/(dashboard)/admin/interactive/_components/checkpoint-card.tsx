@@ -8,6 +8,7 @@ import {
   ExternalLink,
   Eye,
   Hand,
+  KeyRound,
   Loader2,
   Monitor,
   ShieldCheck,
@@ -49,6 +50,11 @@ const REASON_META: Record<string, ReasonMeta> = {
     label: 'Cookie banner',
     icon: Cookie,
     tone: 'bg-sky-100 text-sky-800',
+  },
+  google_login_required: {
+    label: 'Google login',
+    icon: KeyRound,
+    tone: 'bg-violet-100 text-violet-800',
   },
   unknown: UNKNOWN_REASON,
 }

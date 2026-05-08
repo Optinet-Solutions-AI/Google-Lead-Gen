@@ -116,6 +116,12 @@ const ADMIN_NAV_ITEMS = [
     icon: Hand,
     match: (p: string) => p.startsWith('/admin/interactive'),
   },
+  {
+    label: 'Google Login (Admin)',
+    href: '/admin/google-login',
+    icon: KeyRound,
+    match: (p: string) => p.startsWith('/admin/google-login'),
+  },
 ] as const
 
 type Props = {

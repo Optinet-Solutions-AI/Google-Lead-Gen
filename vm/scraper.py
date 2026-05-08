@@ -442,11 +442,18 @@ CHECKPOINT_DEFAULT_TTL_MINUTES = 15
 # Set by main() at startup. check_for_captcha falls back to these
 # when callers don't pass kwargs explicitly. Keeps existing
 # `check_for_captcha(driver)` callsites working unchanged.
+#
+# country_code + requires_google_login carry the per-country context
+# that ensure_google_login_if_required() needs to look up credentials
+# in the google_login_credentials table and decide whether a missing
+# login should escalate to HITL.
 _HITL_CTX: dict = {
     "job_id": None,
     "worker_id": None,
     "worker_port": 9222,
     "interactive": False,
+    "country_code": None,
+    "requires_google_login": False,
 }
 
 class InteractiveCancelException(Exception):
@@ -610,6 +617,277 @@ def request_interactive_checkpoint(
 
     print("[WARN] checkpoint timed out without operator action")
     return False
+
+
+# ---------------------------
+# Google auto-login (per-country credentials from DB + HITL fallback)
+# ---------------------------
+# When a GoLogin profile rotates IPs aggressively, Google server-side
+# invalidates the session. We detect that on startup, fetch encrypted
+# credentials from public.google_login_credentials via service-role RPC,
+# and drive the sign-in form. If Google throws 2FA / verify-it's-you /
+# captcha mid-login, we escalate to a HITL checkpoint with reason
+# 'google_login_required' so an operator can finish via noVNC.
+
+def fetch_google_login_credential(country_code):
+    """Fetch the active credential for a country. Returns
+    {'email': str, 'password': str} or None."""
+    if not country_code:
+        return None
+    try:
+        resp = _supabase_request(
+            "POST",
+            "/rest/v1/rpc/get_google_login_credential",
+            json_body={"p_country_code": country_code},
+        )
+        if resp.status_code != 200:
+            print(f"[INFO] google login: no creds RPC ok for {country_code} (HTTP {resp.status_code})")
+            return None
+        data = resp.json()
+        if not data:
+            return None
+        row = data[0] if isinstance(data, list) else data
+        email = row.get("email")
+        password = row.get("password")
+        if email and password:
+            return {"email": email, "password": password}
+        return None
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] google login: credential fetch failed: {exc}", file=sys.stderr)
+        return None
+
+
+def mark_google_login_used(country_code, status):
+    """Best-effort stamp of last-used metadata on the active credential."""
+    if not country_code:
+        return
+    try:
+        _supabase_request(
+            "POST",
+            "/rest/v1/rpc/mark_google_login_used",
+            json_body={"p_country_code": country_code, "p_status": status},
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] google login: mark_used failed: {exc}", file=sys.stderr)
+
+
+def _login_has_challenge(driver):
+    """Detect 2FA / verify-it's-you / captcha on the login page."""
+    try:
+        cur = (driver.current_url or "").lower()
+    except Exception:  # noqa: BLE001
+        cur = ""
+    challenge_url_markers = (
+        "/signin/v2/challenge", "/signin/challenge",
+        "/signin/recaptcha", "/signin/v2/sl/challenge",
+        "/deniedsigninrejected", "/signin/usagecaptcha",
+    )
+    if any(m in cur for m in challenge_url_markers):
+        return True
+    try:
+        page = (driver.page_source or "").lower()
+    except Exception:  # noqa: BLE001
+        page = ""
+    challenge_text_markers = (
+        "verify it’s you", "verify it's you",
+        "2-step verification", "two-step verification",
+        "g.co/verifyaccount", "recaptcha",
+        "unusual sign-in", "unusual activity",
+        "couldn’t sign you in", "couldn't sign you in",
+    )
+    return any(m in page for m in challenge_text_markers)
+
+
+def attempt_google_login(driver, email, password):
+    """
+    Drive Google's sign-in form. Returns:
+      'success'   — landed on google.com / myaccount.google.com after login
+      'challenge' — Google asked for 2FA / verify-it's-you / captcha
+      'failed'    — wrong password / blocked / unknown error
+    """
+    print(f"[INFO] google login: attempting auto sign-in as {email}")
+    try:
+        driver.get(
+            "https://accounts.google.com/ServiceLogin"
+            "?continue=https%3A%2F%2Fwww.google.com%2F&hl=en"
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] google login: navigation failed: {exc}", file=sys.stderr)
+        return "failed"
+
+    # Email step ------------------------------------------------------------
+    try:
+        email_input = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, 'input[type="email"]'))
+        )
+        email_input.clear()
+        for ch in email:
+            email_input.send_keys(ch)
+            time.sleep(random.uniform(0.04, 0.14))
+        try:
+            driver.find_element(By.ID, "identifierNext").click()
+        except Exception:  # noqa: BLE001
+            email_input.send_keys(Keys.RETURN)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] google login: email step failed: {exc}", file=sys.stderr)
+        if _login_has_challenge(driver):
+            return "challenge"
+        return "failed"
+
+    time.sleep(2.5)
+    if _login_has_challenge(driver):
+        return "challenge"
+
+    # Password step ---------------------------------------------------------
+    try:
+        password_input = WebDriverWait(driver, 12).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, 'input[type="password"]'))
+        )
+        password_input.clear()
+        for ch in password:
+            password_input.send_keys(ch)
+            time.sleep(random.uniform(0.04, 0.14))
+        try:
+            driver.find_element(By.ID, "passwordNext").click()
+        except Exception:  # noqa: BLE001
+            password_input.send_keys(Keys.RETURN)
+    except Exception as exc:  # noqa: BLE001
+        # No password input usually means: account-not-found, deny page,
+        # or a challenge interstitial.
+        if _login_has_challenge(driver):
+            return "challenge"
+        print(f"[WARN] google login: password step failed: {exc}", file=sys.stderr)
+        return "failed"
+
+    # Wait for the post-login redirect --------------------------------------
+    deadline = time.time() + 25
+    while time.time() < deadline:
+        time.sleep(1.5)
+        try:
+            cur = driver.current_url or ""
+        except Exception:  # noqa: BLE001
+            cur = ""
+        if "myaccount.google.com" in cur or cur.startswith("https://www.google.com/"):
+            time.sleep(1.0)
+            return "success"
+        if _login_has_challenge(driver):
+            return "challenge"
+
+    # Final state check
+    try:
+        cur = driver.current_url or ""
+    except Exception:  # noqa: BLE001
+        cur = ""
+    if "myaccount.google.com" in cur or cur.startswith("https://www.google.com/"):
+        return "success"
+    if _login_has_challenge(driver):
+        return "challenge"
+    return "failed"
+
+
+def _request_login_checkpoint(driver):
+    """Park the scrape at a HITL checkpoint with reason='google_login_required'.
+    Returns True if the operator finished the login and the profile is now
+    signed in, False otherwise. Raises InteractiveCancelException on cancel."""
+    if not _HITL_CTX.get("interactive") or not _HITL_CTX.get("job_id"):
+        print("[WARN] google login: HITL disabled, continuing without login",
+              file=sys.stderr)
+        return False
+    resumed = request_interactive_checkpoint(
+        driver,
+        job_id=_HITL_CTX.get("job_id"),
+        worker_id=_HITL_CTX.get("worker_id"),
+        worker_port=_HITL_CTX.get("worker_port", 9222),
+        reason="google_login_required",
+        ttl_minutes=CHECKPOINT_DEFAULT_TTL_MINUTES,
+    )
+    country_code = _HITL_CTX.get("country_code")
+    if not resumed:
+        mark_google_login_used(country_code, "checkpoint_unresolved")
+        return False
+    # Operator clicked Resume — re-check state.
+    new_state = detect_login_state(driver)
+    if new_state is True:
+        mark_google_login_used(country_code, "checkpoint_success")
+        return True
+    mark_google_login_used(country_code, "checkpoint_unverified")
+    return False
+
+
+def ensure_google_login_if_required(driver):
+    """
+    Run this once after the connectivity check, before the first search.
+
+    Decision tree:
+      1. Land on google.com (so detect_login_state has signal).
+      2. detect_login_state(driver) → True ⇒ already signed in, return.
+      3. Logged-out + creds in DB ⇒ run attempt_google_login.
+         - 'success'   → stamp + return.
+         - 'challenge' → escalate to HITL.
+         - 'failed'    → stamp; if country requires login, escalate to HITL,
+                         otherwise continue best-effort.
+      4. Logged-out + NO creds ⇒ if country requires login, escalate to HITL,
+         otherwise continue without login.
+    """
+    country_code = _HITL_CTX.get("country_code")
+    requires_login = bool(_HITL_CTX.get("requires_google_login"))
+
+    try:
+        cur = driver.current_url or ""
+    except Exception:  # noqa: BLE001
+        cur = ""
+    if "google.com" not in cur:
+        try:
+            driver.get("https://www.google.com")
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] google login: nav to google.com failed: {exc}",
+                  file=sys.stderr)
+            return
+
+    # Dismiss the consent overlay so detect_login_state can read the page.
+    accept_google_consent(driver)
+
+    state = detect_login_state(driver)
+    if state is True:
+        print(f"[INFO] google login: profile already signed in (country={country_code})")
+        return
+    if state is None and not requires_login:
+        print(f"[INFO] google login: state indeterminate; country={country_code} doesn't require login — skipping")
+        return
+
+    print(f"[INFO] google login: signed-out detected (country={country_code}, requires={requires_login})")
+
+    creds = fetch_google_login_credential(country_code)
+    if creds:
+        outcome = attempt_google_login(driver, creds["email"], creds["password"])
+        if outcome == "success":
+            mark_google_login_used(country_code, "success")
+            # Reset to a clean google.com so the rest of the scrape
+            # doesn't navigate from inside the accounts.google.com domain.
+            try:
+                driver.get("https://www.google.com")
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        if outcome == "challenge":
+            mark_google_login_used(country_code, "challenge")
+            _request_login_checkpoint(driver)
+            return
+        # outcome == 'failed'
+        mark_google_login_used(country_code, "failed_login")
+        if requires_login:
+            _request_login_checkpoint(driver)
+        return
+
+    # No creds available -----------------------------------------------------
+    if requires_login:
+        print(f"[INFO] google login: no creds for {country_code} — escalating to HITL")
+        _request_login_checkpoint(driver)
+    else:
+        print(f"[INFO] google login: no creds for {country_code} — continuing without login")
 
 
 def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, interactive=None):
@@ -1220,6 +1498,8 @@ def main():
     parser.add_argument("profile_id", help="GoLogin profile ID")
     parser.add_argument("-k", "--keyword", required=True, help="Search keyword")
     parser.add_argument("-c", "--country", required=True, help="Country display name (e.g. 'Germany')")
+    parser.add_argument("--country-code", default=None, help="2-letter ISO country code (e.g. 'DE'). Used to look up Google login credentials.")
+    parser.add_argument("--requires-google-login", action="store_true", help="Treat this country as requires_google_login=true. When set, a logged-out profile escalates to HITL if no creds are configured.")
     parser.add_argument("--pages", type=int, default=10, help="Number of pages to scrape")
     parser.add_argument("--port", type=int, default=9222, help="Chrome debugger port (must be unique per concurrent worker)")
     parser.add_argument("--output", default="/tmp/google_results.json", help="Path to write the results JSON")
@@ -1238,12 +1518,15 @@ def main():
 
     args = parser.parse_args()
 
-    # Stash the human-in-the-loop context where check_for_captcha can
-    # find it without us threading kwargs through every scrape helper.
+    # Stash the human-in-the-loop context where check_for_captcha and
+    # ensure_google_login_if_required can find it without us threading
+    # kwargs through every scrape helper.
     _HITL_CTX["job_id"] = args.job_id
     _HITL_CTX["worker_id"] = args.worker_id
     _HITL_CTX["worker_port"] = args.port
     _HITL_CTX["interactive"] = bool(args.interactive)
+    _HITL_CTX["country_code"] = (args.country_code or "").strip().upper() or None
+    _HITL_CTX["requires_google_login"] = bool(args.requires_google_login)
     if args.interactive and not args.job_id:
         print("[WARN] --interactive set without --job-id; HITL checkpoints disabled",
               file=sys.stderr)
@@ -1287,6 +1570,26 @@ def main():
             print("[INFO] Checking browser connectivity...")
             if not check_browser_connectivity(driver):
                 raise Exception("Browser connectivity check failed - proxy may be unreachable")
+
+            # Step 2.5: Google login state. If the profile is signed-out
+            # (rotating IPs invalidate Google sessions) and we have
+            # credentials in DB for this country, drive the sign-in
+            # form. If Google throws 2FA / verify-it's-you / captcha,
+            # escalate to a HITL checkpoint with reason
+            # 'google_login_required'. See ensure_google_login_if_required
+            # for the full decision tree.
+            try:
+                ensure_google_login_if_required(driver)
+            except InteractiveCancelException:
+                # Operator cancelled at the checkpoint — surface as a clean
+                # failure so the worker doesn't retry.
+                print("[INFO] google login: operator cancelled at HITL checkpoint")
+                raise
+            except Exception as exc:  # noqa: BLE001
+                # Login plumbing must never block scraping. If it crashes,
+                # log + continue — the scrape will still try; PPC may just
+                # be missing.
+                print(f"[WARN] google login: orchestrator crashed: {exc}", file=sys.stderr)
 
             # Step 3: Scrape — branch on engine. Both branches return the
             # same dict shape so save / webhook / final logging stays
