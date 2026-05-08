@@ -109,7 +109,14 @@ export async function pushLeadToMonday(
   // ----- Step 1: create_item -----
   const cleanDomain = stripDomain(l.domain ?? l.url ?? '')
   const source = l.result_type === 'PPC' ? 'PPC' : 'SEO'
-  const today = new Date().toISOString().slice(0, 10)
+  // Stamp TOMORROW's date, not today's. The Leads board view is sorted
+  // by this date column DESC and operators rely on "newest on top".
+  // Stamping today (or anything the existing rows already carry) falls
+  // through to Monday's secondary sort and the item lands at the bottom.
+  // One day in the future guarantees it sits above every prior row.
+  const stampDate = new Date()
+  stampDate.setUTCDate(stampDate.getUTCDate() + 1)
+  const stampDateIso = stampDate.toISOString().slice(0, 10)
 
   const columnValues: Record<string, unknown> = {
     text86: sanitize(l.brand ?? ''),
@@ -121,7 +128,7 @@ export async function pushLeadToMonday(
     status_12: { label: null },
     status_1: { label: source },
     text0: sanitize(l.country_code ?? ''),
-    date: { date: today },
+    date: { date: stampDateIso },
     text1: sanitize(l.url ?? ''),
     project_owner: {
       personsAndTeams: [{
