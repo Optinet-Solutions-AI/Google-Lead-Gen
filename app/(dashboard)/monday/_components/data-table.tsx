@@ -41,18 +41,22 @@ export function DataTable({ config, rows, selectedItemId }: Props) {
        *  viewport's scroll rather than the wrapper's. */}
       <div className="hidden overflow-x-auto overflow-y-visible rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
-          {/* Sticky header — when the page scrolls vertically the
-           *  column labels stay pinned to the viewport so users always
-           *  know which column they're looking at. The bg + z-index
-           *  prevent body cells from peeking through underneath. */}
-          <thead className="sticky top-0 z-10 bg-[color:var(--color-bg-secondary)]">
+          {/* Sticky lives on each <th> below (not on <thead>). HTML
+           *  table layout doesn't reliably honour position:sticky on
+           *  the row-group element across browsers; per-cell sticky
+           *  works everywhere. */}
+          <thead className="bg-[color:var(--color-bg-secondary)]">
             <tr>
               {config.columns.map(col => (
                 <th
                   key={col.key}
                   scope="col"
+                  // Per-cell sticky pins to the viewport top as the
+                  // page scrolls. Background colour is mandatory —
+                  // without it the cell would be transparent in the
+                  // stuck state and body rows would bleed through.
                   className={[
-                    'whitespace-nowrap border-b border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-left align-middle',
+                    'sticky top-0 z-20 whitespace-nowrap border-b border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-left align-middle',
                     col.className ?? '',
                   ].join(' ')}
                 >
