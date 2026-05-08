@@ -235,7 +235,10 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
         />
       )}
 
-      <div className="hidden overflow-x-auto rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
+      {/* No inner overflow — page scrollbar owns horizontal + vertical
+       *  scroll. The sticky thead below then pins to the viewport
+       *  instead of an internal scroll container. */}
+      <div className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
           <thead className="sticky top-0 z-10 bg-[color:var(--color-bg-secondary)]">
             <tr>

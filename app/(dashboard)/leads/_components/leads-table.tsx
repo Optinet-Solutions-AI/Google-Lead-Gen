@@ -126,7 +126,10 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
       )}
 
       {/* Desktop — table */}
-      <div className="hidden overflow-x-auto rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
+      {/* No inner overflow — page scrollbar owns horizontal + vertical
+       *  scroll so the sticky thead pins to the viewport instead of an
+       *  internal scroll container. */}
+      <div className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
           <thead className="sticky top-0 z-10 bg-[color:var(--color-bg-secondary)]">
             <tr>

@@ -1,6 +1,5 @@
 import type { TableConfig } from '../_lib/tables'
 import { ClickableCard, ClickableRow } from './clickable-row'
-import { ScrollSync } from './scroll-sync'
 import { SortHeader } from './sort-header'
 
 type Row = Record<string, unknown>
@@ -35,8 +34,13 @@ export function DataTable({ config, rows, selectedItemId }: Props) {
 
   return (
     <>
-      {/* Desktop — table (with top mirror scrollbar + drag-to-pan) */}
-      <ScrollSync className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
+      {/* Desktop — table. No inner overflow: the page scrollbar owns
+       *  horizontal + vertical scroll, which lets the sticky thead
+       *  below pin to the viewport instead of a per-table container.
+       *  We give up the old top-mirror scrollbar + drag-to-pan from
+       *  ScrollSync; if those come back as must-haves we can layer
+       *  them back over the body scroll. */}
+      <div className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
           {/* Sticky header — when the page scrolls vertically the
            *  column labels stay pinned to the viewport so users always
@@ -100,7 +104,7 @@ export function DataTable({ config, rows, selectedItemId }: Props) {
             })}
           </tbody>
         </table>
-      </ScrollSync>
+      </div>
 
       {/* Mobile — card list */}
       <div className="flex flex-col gap-2 md:hidden">
