@@ -11,8 +11,10 @@ import {
   Play,
   Search,
   Tag,
+  X,
 } from 'lucide-react'
 import {
+  cancelEnrichmentStage,
   checkMondayDuplicates,
   runAffiliateDetection,
   runContactExtraction,
@@ -69,6 +71,11 @@ function relativeTime(iso: string | null): string {
   return `${days}d ago`
 }
 
+/** Cancellable stages map to the bare stage name in `process_stages` on
+ *  enrichment_fetch_queue. `monday` runs purely in-DB and isn't queued, so
+ *  it has no Cancel button. */
+type CancellableStage = 'affiliate' | 'rooster' | 'contact' | 'stag'
+
 type StageRowProps = {
   index: number
   stageKey: StageKey
@@ -84,6 +91,13 @@ type StageRowProps = {
    *  the operator triggers it from this row. Drives the badge next to
    *  the title so users know what to click vs. what runs by itself. */
   auto?: boolean
+  /** Backend stage name passed to cancel_enrichment_stage. Set on every
+   *  worker-driven stage so the Cancel button can fire. */
+  cancelStage?: CancellableStage
+  cancelAction?: (formData: FormData) => void
+  cancelPending?: boolean
+  cancelMessage?: string | null
+  cancelError?: string | null
 }
 
 function StageRow({
@@ -98,6 +112,11 @@ function StageRow({
   error,
   jobId,
   auto = false,
+  cancelStage,
+  cancelAction,
+  cancelPending,
+  cancelMessage,
+  cancelError,
 }: StageRowProps) {
   const done = status.total > 0
   // In-flight state — block the play button while jobs are queued/running
@@ -160,28 +179,65 @@ function StageRow({
           )}
         </span>
 
-        <form action={action} className="ml-auto">
-          <input type="hidden" name="job_id" value={jobId} />
-          <button
-            type="submit"
-            disabled={buttonDisabled}
-            aria-label={hasInflight ? `${title} already running` : `Run ${title}`}
-            title={hasInflight ? `${title} already running — wait for it to finish` : `Run ${title}`}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {hasInflight
-              ? <Loader2 className="h-3 w-3 animate-spin" />
-              : <Play className={['h-3 w-3', pending ? 'animate-pulse' : ''].join(' ')} />}
-          </button>
-        </form>
+        <div className="ml-auto flex items-center gap-1">
+          {hasInflight && cancelStage && cancelAction && (
+            <form
+              action={cancelAction}
+              onSubmit={e => {
+                if (
+                  !confirm(
+                    `Cancel ${title.toLowerCase()}? Pending rows are dropped; running rows finish their current step and stop. Partial results are kept.`,
+                  )
+                ) {
+                  e.preventDefault()
+                }
+              }}
+            >
+              <input type="hidden" name="job_id" value={jobId} />
+              <input type="hidden" name="stage" value={cancelStage} />
+              <button
+                type="submit"
+                disabled={cancelPending}
+                aria-label={`Cancel ${title}`}
+                title={`Cancel ${title.toLowerCase()} — pending dropped, running stops at next safe point`}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-red-200 bg-white text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {cancelPending
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <X className="h-3 w-3" />}
+              </button>
+            </form>
+          )}
+
+          <form action={action}>
+            <input type="hidden" name="job_id" value={jobId} />
+            <button
+              type="submit"
+              disabled={buttonDisabled}
+              aria-label={hasInflight ? `${title} already running` : `Run ${title}`}
+              title={hasInflight ? `${title} already running — wait for it to finish` : `Run ${title}`}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {hasInflight
+                ? <Loader2 className="h-3 w-3 animate-spin" />
+                : <Play className={['h-3 w-3', pending ? 'animate-pulse' : ''].join(' ')} />}
+            </button>
+          </form>
+        </div>
       </div>
-      {(message || error) && (
-        <div className="text-[11px]">
+      {(message || error || cancelMessage || cancelError) && (
+        <div className="flex flex-wrap gap-1.5 text-[11px]">
           {message && (
             <span className="rounded-md bg-green-50 px-2 py-1 text-green-700">{message}</span>
           )}
           {error && (
             <span className="rounded-md bg-red-50 px-2 py-1 text-red-700">{error}</span>
+          )}
+          {cancelMessage && (
+            <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-800">{cancelMessage}</span>
+          )}
+          {cancelError && (
+            <span className="rounded-md bg-red-50 px-2 py-1 text-red-700">{cancelError}</span>
           )}
         </div>
       )}
@@ -210,6 +266,27 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
     initialStage,
   )
   const [stagState, stagAction, stagPending] = useActionState(runStagExtraction, initialStage)
+
+  // One useActionState per cancellable stage. They share the same server
+  // action — the form's hidden `stage` input differentiates them — but
+  // they need separate state slots so the message lands next to the
+  // stage that was actually cancelled.
+  const [affCancelState, affCancelAction, affCancelPending] = useActionState(
+    cancelEnrichmentStage,
+    initialStage,
+  )
+  const [roosterCancelState, roosterCancelAction, roosterCancelPending] = useActionState(
+    cancelEnrichmentStage,
+    initialStage,
+  )
+  const [contactCancelState, contactCancelAction, contactCancelPending] = useActionState(
+    cancelEnrichmentStage,
+    initialStage,
+  )
+  const [stagCancelState, stagCancelAction, stagCancelPending] = useActionState(
+    cancelEnrichmentStage,
+    initialStage,
+  )
 
   const doneCount = (
     [summary.monday, summary.affiliate, summary.rooster, summary.contact, summary.stag] as StageStatus[]
@@ -272,6 +349,11 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
             error={affState?.status === 'error' ? affState.error : null}
             jobId={jobId}
             auto
+            cancelStage="affiliate"
+            cancelAction={affCancelAction}
+            cancelPending={affCancelPending}
+            cancelMessage={affCancelState?.status === 'ok' ? affCancelState.message : null}
+            cancelError={affCancelState?.status === 'error' ? affCancelState.error : null}
           />
           <StageRow
             index={3}
@@ -285,6 +367,11 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
             error={roosterState?.status === 'error' ? roosterState.error : null}
             jobId={jobId}
             auto
+            cancelStage="rooster"
+            cancelAction={roosterCancelAction}
+            cancelPending={roosterCancelPending}
+            cancelMessage={roosterCancelState?.status === 'ok' ? roosterCancelState.message : null}
+            cancelError={roosterCancelState?.status === 'error' ? roosterCancelState.error : null}
           />
           {/* Stages 4 & 5 are now MANUAL — auto-chain stops at Rooster
            *  (see migration 20260505040000_chain_stops_at_rooster.sql).
@@ -300,6 +387,11 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
             message={stagState?.status === 'ok' ? stagState.message : null}
             error={stagState?.status === 'error' ? stagState.error : null}
             jobId={jobId}
+            cancelStage="stag"
+            cancelAction={stagCancelAction}
+            cancelPending={stagCancelPending}
+            cancelMessage={stagCancelState?.status === 'ok' ? stagCancelState.message : null}
+            cancelError={stagCancelState?.status === 'error' ? stagCancelState.error : null}
           />
           <StageRow
             index={5}
@@ -312,6 +404,11 @@ export function EnrichmentStages({ jobId, summary }: StagesProps) {
             message={contactState?.status === 'ok' ? contactState.message : null}
             error={contactState?.status === 'error' ? contactState.error : null}
             jobId={jobId}
+            cancelStage="contact"
+            cancelAction={contactCancelAction}
+            cancelPending={contactCancelPending}
+            cancelMessage={contactCancelState?.status === 'ok' ? contactCancelState.message : null}
+            cancelError={contactCancelState?.status === 'error' ? contactCancelState.error : null}
           />
         </div>
       )}

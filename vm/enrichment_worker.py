@@ -165,10 +165,32 @@ def upload_screenshot(lead_id: int, png_bytes: bytes, suffix: str = "") -> str |
         return None
 
 
+def _is_cancel_requested(job_id: str | None) -> bool:
+    """Cheap polling check: did the dashboard ask us to abort this job?
+    Called between heavy iterations (each tracking-link redirect).
+    Best-effort — DB hiccups should never block the worker, so failures
+    fall through to False and the loop continues."""
+    if not job_id:
+        return False
+    try:
+        r = (
+            supabase.table("enrichment_fetch_queue")
+            .select("cancel_requested")
+            .eq("id", job_id)
+            .single()
+            .execute()
+        )
+        return bool(r.data and r.data.get("cancel_requested"))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("cancel-check failed for %s: %s", job_id, exc)
+        return False
+
+
 def process_stag_in_browser(
     driver: webdriver.Chrome,
     lead_id: int,
     url: str,
+    job_id: str | None = None,
 ) -> list[dict]:
     """
     End-to-end s-tag extraction in one browser session.
@@ -212,7 +234,16 @@ def process_stag_in_browser(
     # links collapse to the same short ID after truncation. This
     # matches the operator's "10 links = 10 s-tags" expectation.
     resolved: list[dict] = []
-    for i, tracking_url in enumerate(list(seen_tracking)[:30]):
+    tracking_list = list(seen_tracking)[:30]
+    for i, tracking_url in enumerate(tracking_list):
+        # Cooperative cancellation: dashboard cancel sets cancel_requested=true
+        # on this row; we bail out between redirects so partial results stick.
+        if _is_cancel_requested(job_id):
+            log.info(
+                "stag: lead=%s job=%s cancellation requested — stopping after %d/%d links",
+                lead_id, job_id, i, len(tracking_list),
+            )
+            break
         final_url, chain, screenshot = resolve_in_browser(driver, tracking_url)
         if not final_url:
             continue
@@ -547,14 +578,18 @@ def fetch_with_browser(
     url: str,
     want_screenshot: bool,
     multi_page: bool = False,
+    job_id: str | None = None,
 ) -> tuple[str | None, bytes | None, str | None]:
     """Open URL in the GoLogin profile, return (html, screenshot_bytes, error).
 
     If multi_page=True, also navigates to up to MAX_EXTRA_PAGES contact-shaped
     links on the homepage and concatenates their HTML into one blob (with
     page-break markers) so the score-row endpoint can extract from all of them.
+
+    job_id is forwarded to _open_and_fetch so it can check for cooperative
+    cancellation between contact-page navigations on long multi_page runs.
     """
-    return _open_and_fetch(profile_id, url, want_screenshot, multi_page)
+    return _open_and_fetch(profile_id, url, want_screenshot, multi_page, job_id=job_id)
 
 
 def _ensure_profile_idle(gl: "GoLogin") -> None:
@@ -587,6 +622,7 @@ def _open_and_fetch(
     url: str,
     want_screenshot: bool,
     multi_page: bool,
+    job_id: str | None = None,
 ) -> tuple[str | None, bytes | None, str | None]:
     gl = GoLogin({"token": GOLOGIN_TOKEN, "profile_id": profile_id, "port": GOLOGIN_PORT})
     driver = None
@@ -613,6 +649,14 @@ def _open_and_fetch(
 
         chunks = [f"<!-- PAGE: {url} -->", homepage]
         for extra in _pick_contact_pages(homepage, url):
+            # Cooperative cancellation between contact-page nav steps —
+            # contact extraction can visit multiple pages per lead.
+            if _is_cancel_requested(job_id):
+                log.info(
+                    "contact: job=%s cancellation requested — stopping multi-page crawl",
+                    job_id,
+                )
+                break
             extra_html = _navigate(driver, extra, settle_s=2)
             if extra_html:
                 chunks.append(f"<!-- PAGE: {extra} -->")
@@ -690,6 +734,16 @@ def process_job(job: dict[str, Any]) -> None:
         )
         return
 
+    # Defensive: if the dashboard cancelled this row between claim and
+    # the start of work, short-circuit before launching Chromium. The
+    # main cancellation point lives inside the s-tag loop, which is
+    # where the long tail actually lives — but if cancel arrived during
+    # the brief claim window, no point spinning up the browser.
+    if _is_cancel_requested(job_id):
+        log.info("enrichment job %s cancelled before processing — skipping", job_id)
+        complete_job(job_id, None, None, "cancelled by operator")
+        return
+
     # When stag is involved we own the browser session for the full
     # extract+resolve loop, so we run a richer flow that does multi-page
     # crawl + redirect resolution + screenshots inside the same Chromium.
@@ -699,6 +753,7 @@ def process_job(job: dict[str, Any]) -> None:
             lead_id,
             url,
             want_screenshot,
+            job_id=job_id,
         )
         screenshot_path: str | None = None
         if png is not None:
@@ -727,6 +782,7 @@ def process_job(job: dict[str, Any]) -> None:
     # Vanilla flow: single homepage fetch (+ multi-page for contact)
     html, png, err = fetch_with_browser(
         profile["gologin_profile_id"], url, want_screenshot, multi_page,
+        job_id=job_id,
     )
     screenshot_path = None
     if png is not None:
@@ -811,6 +867,7 @@ def run_full_browser_session(
     lead_id: int,
     url: str,
     want_screenshot: bool,
+    job_id: str | None = None,
 ) -> tuple[bool, str | None, str | None, bytes | None, list[dict] | None]:
     """
     One Chromium session covering both the homepage HTML cache write
@@ -838,7 +895,7 @@ def run_full_browser_session(
             except Exception as exc:  # noqa: BLE001
                 log.warning("homepage screenshot failed: %s", exc)
 
-        stag_results = process_stag_in_browser(driver, lead_id, url)
+        stag_results = process_stag_in_browser(driver, lead_id, url, job_id=job_id)
         return True, None, homepage_html, homepage_png, stag_results
     except Exception as exc:  # noqa: BLE001
         return False, str(exc), None, None, None

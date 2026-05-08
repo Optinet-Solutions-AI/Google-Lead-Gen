@@ -604,6 +604,64 @@ export async function runStagExtraction(
 }
 
 // ============================================================
+// Cancel an in-flight enrichment stage for one scrape job.
+//
+// Pending rows for that (scrape_job, stage) flip to status='cancelled' so
+// the worker won't pick them up. Rows already running get
+// cancel_requested=true; the worker checks this between heavy iterations
+// (e.g. between tracking-link redirects in the s-tag stage) and stops
+// early, leaving partial results intact.
+// ============================================================
+const CANCELLABLE_STAGES = ['affiliate', 'rooster', 'contact', 'stag'] as const
+type CancellableStage = (typeof CANCELLABLE_STAGES)[number]
+
+export async function cancelEnrichmentStage(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const stage = String(fd.get('stage') ?? '').trim().toLowerCase()
+  if (!CANCELLABLE_STAGES.includes(stage as CancellableStage)) {
+    return { status: 'error', error: `Unknown stage "${stage}".` }
+  }
+
+  const svc = createServiceClient()
+  const { data, error } = await svc.rpc('cancel_enrichment_stage', {
+    p_job_id: jobId,
+    p_stage: stage,
+  })
+  if (error) return { status: 'error', error: error.message }
+
+  const row = (data ?? {}) as { cancelled_pending?: number; flagged_running?: number }
+  const cancelledPending = row.cancelled_pending ?? 0
+  const flaggedRunning = row.flagged_running ?? 0
+
+  await logActivity({
+    action: 'enrichment.cancel_stage',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { stage, cancelled_pending: cancelledPending, flagged_running: flaggedRunning },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+
+  if (cancelledPending === 0 && flaggedRunning === 0) {
+    return { status: 'ok', message: `Nothing in flight for ${stage} — already finished or never started.` }
+  }
+  const parts: string[] = []
+  if (cancelledPending > 0) parts.push(`${cancelledPending} pending cancelled`)
+  if (flaggedRunning > 0) parts.push(`${flaggedRunning} running asked to stop`)
+  return {
+    status: 'ok',
+    message: `${parts.join(' · ')}. Running rows finish their current step and exit; partial results are kept.`,
+  }
+}
+
+// ============================================================
 // Epic 9 — Job lifecycle actions: pause / resume / cancel / delete
 //
 // Pause / resume = direct status flips on scrape_queue (and on the
