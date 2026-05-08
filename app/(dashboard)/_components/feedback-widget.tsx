@@ -71,7 +71,9 @@ export function FeedbackWidget() {
         aria-label={open ? 'Close feedback' : 'Send QA feedback'}
         title="Report an issue or send feedback"
         className={[
-          'fixed bottom-4 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full',
+          // bottom-20 (80px) keeps the launcher clear of the pagination
+          // bar at the foot of /scrape and /leads tables.
+          'fixed bottom-20 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full',
           'border border-[color:var(--color-border)] shadow-lg transition-all',
           'bg-[color:var(--color-accent)] text-white hover:scale-105 hover:shadow-xl',
           open ? 'rotate-45' : '',
@@ -85,7 +87,7 @@ export function FeedbackWidget() {
         <div
           role="dialog"
           aria-label="QA feedback"
-          className="fixed bottom-20 right-4 z-50 flex w-[min(380px,calc(100vw-2rem))] flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 shadow-xl"
+          className="fixed bottom-36 right-4 z-50 flex w-[min(380px,calc(100vw-2rem))] flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 shadow-xl"
         >
           <header className="flex items-center justify-between gap-2">
             <h2 className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[color:var(--color-text-primary)]">
