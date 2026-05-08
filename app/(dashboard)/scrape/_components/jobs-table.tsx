@@ -235,10 +235,12 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
         />
       )}
 
-      {/* No inner overflow — page scrollbar owns horizontal + vertical
-       *  scroll. The sticky thead below then pins to the viewport
-       *  instead of an internal scroll container. */}
-      <div className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
+      {/* overflow-x-auto restores the horizontal scrollbar for wide
+       *  tables. overflow-y-visible (explicit) tells modern browsers
+       *  NOT to treat the wrapper as a vertical scroll container, so
+       *  the sticky thead below pins to the viewport (the page-level
+       *  scroll) instead of getting clipped at the wrapper top. */}
+      <div className="hidden overflow-x-auto overflow-y-visible rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
           <thead className="sticky top-0 z-10 bg-[color:var(--color-bg-secondary)]">
             <tr>

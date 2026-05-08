@@ -34,13 +34,12 @@ export function DataTable({ config, rows, selectedItemId }: Props) {
 
   return (
     <>
-      {/* Desktop — table. No inner overflow: the page scrollbar owns
-       *  horizontal + vertical scroll, which lets the sticky thead
-       *  below pin to the viewport instead of a per-table container.
-       *  We give up the old top-mirror scrollbar + drag-to-pan from
-       *  ScrollSync; if those come back as must-haves we can layer
-       *  them back over the body scroll. */}
-      <div className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
+      {/* overflow-x-auto for the per-table horizontal scrollbar (wide
+       *  Monday boards have many columns); overflow-y-visible
+       *  explicitly tells modern browsers NOT to treat this as a
+       *  vertical scroll container, so the sticky thead pins to the
+       *  viewport's scroll rather than the wrapper's. */}
+      <div className="hidden overflow-x-auto overflow-y-visible rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
           {/* Sticky header — when the page scrolls vertically the
            *  column labels stay pinned to the viewport so users always
