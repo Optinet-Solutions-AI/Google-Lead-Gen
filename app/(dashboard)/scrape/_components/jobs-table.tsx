@@ -375,7 +375,7 @@ export function JobsCardList({ jobs }: Props) {
             <span>{job.country_code}</span>
             <EngineBadge engine={job.search_engine} />
             <span>{job.pages} {job.pages === 1 ? 'page' : 'pages'}</span>
-            <span title={mobileDurationTooltip(job)}>
+            <span title={mobileDurationTooltip(job)} suppressHydrationWarning>
               {formatTotalDuration(job)}
             </span>
             <ResultsCell summary={job.result_summary} mobile />
@@ -502,7 +502,12 @@ function DurationCell({ job, href }: { job: ScrapeJob; href: string }) {
         href={href}
         className="block whitespace-nowrap px-3 py-2"
       >
-        {total}
+        {/* Running jobs compute their duration from `Date.now()`, so the
+         *  server's render time and the client's hydration time diverge
+         *  by ~1s and trigger a hydration mismatch. The auto-refresh poll
+         *  re-renders this every 5s anyway, so we just suppress the
+         *  one-time mismatch warning on the live text. */}
+        <span suppressHydrationWarning>{total}</span>
         {job.stage_timings?.enrichment_in_progress && (
           <span className="ml-1 text-[9px] text-[color:var(--color-text-secondary)]">
             +

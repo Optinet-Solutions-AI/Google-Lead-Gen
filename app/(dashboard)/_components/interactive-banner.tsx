@@ -31,7 +31,7 @@ export async function InteractiveBanner() {
   return (
     <Link
       href="/admin/interactive"
-      className="block border-b border-amber-300 bg-amber-50 px-4 py-2 text-[12px] text-amber-900 hover:bg-amber-100"
+      className="sticky top-0 z-30 block border-b border-amber-300 bg-amber-50 px-4 py-2 text-[12px] text-amber-900 hover:bg-amber-100"
     >
       <span className="inline-flex items-center gap-2">
         <Hand className="h-4 w-4 shrink-0" />
