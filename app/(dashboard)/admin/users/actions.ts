@@ -219,3 +219,58 @@ export async function setMondayUserIdAction(
       : `Monday ID set to ${mondayId}.`,
   }
 }
+
+export type DeleteUserState =
+  | { status: 'ok'; message: string }
+  | { status: 'error'; error: string }
+  | null
+
+/**
+ * Permanently delete a user: removes the auth.users row, which cascades
+ * to user_profiles via ON DELETE CASCADE. activity_log entries are
+ * intentionally retained (user_id has no FK) so the audit trail survives.
+ *
+ * Refuses self-delete — an admin would lock themselves out and there
+ * would be no way to recover without another admin or a DB shell.
+ */
+export async function deleteUserAction(
+  _prev: DeleteUserState,
+  fd: FormData,
+): Promise<DeleteUserState> {
+  const auth = await requireAdmin()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+
+  const targetId = String(fd.get('user_id') ?? '').trim()
+  if (!targetId) return { status: 'error', error: 'Missing user_id.' }
+  if (targetId === auth.user_id) {
+    return { status: 'error', error: "You can't delete yourself." }
+  }
+
+  const svc = createServiceClient()
+
+  // Capture username + display_name before the cascade wipes the profile,
+  // so the audit-log entry is human-readable later.
+  const { data: profile } = await svc
+    .from('user_profiles')
+    .select('username, display_name')
+    .eq('id', targetId)
+    .maybeSingle()
+
+  const { error } = await svc.auth.admin.deleteUser(targetId)
+  if (error) {
+    return { status: 'error', error: error.message }
+  }
+
+  await logActivity({
+    action: 'admin.delete_user',
+    entity_type: 'user',
+    entity_id: targetId,
+    details: {
+      username: (profile as { username?: string | null } | null)?.username ?? null,
+      display_name: (profile as { display_name?: string | null } | null)?.display_name ?? null,
+    },
+  })
+
+  revalidatePath('/admin/users')
+  return { status: 'ok', message: 'User deleted.' }
+}

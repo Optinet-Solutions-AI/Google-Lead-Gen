@@ -1,16 +1,19 @@
 'use client'
 
 import { useActionState, useState } from 'react'
-import { CheckCircle2, Hash, Loader2, Shield, ShieldOff, User } from 'lucide-react'
+import { CheckCircle2, Hash, Loader2, Shield, ShieldOff, Trash2, User } from 'lucide-react'
 import {
+  deleteUserAction,
   setAdminFlagAction,
   setMondayUserIdAction,
+  type DeleteUserState,
   type SetAdminState,
   type SetMondayUserIdState,
 } from '../actions'
 
 const initial: SetAdminState = null
 const initialMondayId: SetMondayUserIdState = null
+const initialDelete: DeleteUserState = null
 
 type Props = {
   user: {
@@ -33,6 +36,10 @@ export function UserListRow({ user, isAdmin, isSelf, mondayUserId }: Props) {
   const [mondayState, mondayAction, mondayPending] = useActionState(
     setMondayUserIdAction,
     initialMondayId,
+  )
+  const [deleteState, deleteAction, deletePending] = useActionState(
+    deleteUserAction,
+    initialDelete,
   )
   const [mondayInput, setMondayInput] = useState(
     mondayUserId === null ? '' : String(mondayUserId),
@@ -130,6 +137,35 @@ export function UserListRow({ user, isAdmin, isSelf, mondayUserId }: Props) {
         </button>
       </form>
 
+      <form
+        action={deleteAction}
+        onSubmit={e => {
+          if (
+            !confirm(
+              `Permanently delete ${primary}? Their auth row and profile are removed; activity-log entries are kept for audit.`,
+            )
+          ) {
+            e.preventDefault()
+          }
+        }}
+        className="flex items-center"
+      >
+        <input type="hidden" name="user_id" value={user.id} />
+        <button
+          type="submit"
+          disabled={deletePending || isSelf}
+          title={isSelf ? "You can't delete yourself" : 'Delete user permanently'}
+          className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {deletePending ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Trash2 className="h-3 w-3" />
+          )}
+          Delete
+        </button>
+      </form>
+
       {state?.status === 'error' && (
         <span className="rounded-md bg-red-100 px-2 py-0.5 text-[10px] text-red-800">
           {state.error}
@@ -143,6 +179,11 @@ export function UserListRow({ user, isAdmin, isSelf, mondayUserId }: Props) {
       {mondayState?.status === 'ok' && (
         <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-800">
           {mondayState.message}
+        </span>
+      )}
+      {deleteState?.status === 'error' && (
+        <span className="rounded-md bg-red-100 px-2 py-0.5 text-[10px] text-red-800">
+          {deleteState.error}
         </span>
       )}
     </div>
