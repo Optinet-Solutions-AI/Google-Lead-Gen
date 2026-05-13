@@ -2,11 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase/service'
 import { MondayApiError, mondayGQL } from '@/lib/monday/graphql'
 
-const LEADS_BOARD_ID = '1236073873'
-/** Fallback owner — used when the pushing user hasn't been mapped to
- *  a Monday user via user_profiles.monday_user_id. Inherited from the
- *  legacy n8n "Add Lead on Monday.com" workflow (Charisse Bartoli). */
-const DEFAULT_OWNER_ID = 46169036
+export const LEADS_BOARD_ID = '1236073873'
 const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file'
 const API_VERSION = '2025-07'
 
@@ -22,34 +18,60 @@ export type PushError = {
   error: string
 }
 
+/** Everything the push needs after the read-only preparation phase.
+ *  `prepareLeadPushPayload` builds this; `pushLeadToMonday` consumes it
+ *  to perform the writes. The dry-run script in `scripts/monday/dry-push.ts`
+ *  prints it instead, which lets us verify the request shape, owner ID,
+ *  and positioning anchor without touching Monday. */
+export type PreparedPushPayload = {
+  /** Exact column_values dict that will be JSON.stringified into create_item.cv. */
+  columnValues: Record<string, unknown>
+  /** Item name (cleaned domain or `lead-${id}` fallback). */
+  itemName: string
+  /** Topmost (group, item) so create_item can be positioned before_at it.
+   *  null when the board has no groups, top group is empty, or the API
+   *  call failed — in that case we fall back to a plain create_item. */
+  anchor: { groupId: string; itemId: string } | null
+  /** Resolved metadata, surfaced for the dry-run printout + logging. */
+  meta: {
+    leadId: number
+    domain: string
+    primaryEmail: string
+    sTagsCount: number
+    ownerId: number
+    pushedBy: string
+    source: 'PPC' | 'SEO'
+  }
+  /** Lead row + s-tags retained so the caller can do post-create
+   *  steps (screenshot upload, s-tag update) without re-querying. */
+  lead: {
+    id: number
+    url: string | null
+    domain: string | null
+    screenshot_content_link: string | null
+  }
+  stags: Array<{ s_tag: string; brand: string | null }>
+}
+
 /**
- * Pushes one lead onto the Rooster Partners "Leads" board on Monday.com.
+ * Read-only phase of the push: fetch the lead + contact + s-tags, build
+ * the create_item column_values dict, and resolve the top-of-board anchor.
  *
- * Mirrors the legacy n8n "Add Lead on Monday.com" workflow (catalogued
- * in docs/n8n-workflows-catalog.md §2.18) — same board, same column ids,
- * same hardcoded owner, same status label, same "PPC" vs "SEO" mapping.
- *
- * Three steps:
- *   1. create_item with the column_values from the legacy spec.
- *   2. If a screenshot exists in Storage, download it and POST a
- *      multipart add_file_to_column request to attach it.
- *   3. If s-tags exist, build a multi-line "<brand> <s_tag>" body and
- *      post create_update on the new item.
- *
- * Stamps pushed_to_monday_at + monday_pushed_item_id back on the lead
- * row so the UI can show "already pushed" and prevent double-pushing.
+ * Safe to call independently of pushLeadToMonday — used by the dry-run
+ * script to verify request shape without writing to Monday.
  */
-export async function pushLeadToMonday(
+export async function prepareLeadPushPayload(
   leadId: number,
-  opts?: {
-    pushedBy?: string
-    /** Monday user ID of the operator clicking Push. Lands as the
-     *  Owner on the new item via the project_owner column. Falls
-     *  back to DEFAULT_OWNER_ID when the pushing user hasn't been
-     *  mapped (`user_profiles.monday_user_id` is null). */
-    pushedByMondayId?: number | null
-  },
-): Promise<PushResult | PushError> {
+  opts: { pushedBy: string; pushedByMondayId: number },
+): Promise<{ ok: true; data: PreparedPushPayload } | PushError> {
+  if (!opts.pushedByMondayId || !Number.isFinite(opts.pushedByMondayId)) {
+    return {
+      ok: false,
+      error:
+        'Your account is not linked to a Monday user. Ask an admin to set your Monday ID at /admin/users so pushes land under you.',
+    }
+  }
+
   const svc = createServiceClient()
 
   const { data: lead, error: leadErr } = await svc
@@ -104,19 +126,11 @@ export async function pushLeadToMonday(
 
   const primaryEmail =
     ((contactRes.data as { emails: string[] | null } | null)?.emails ?? [])[0] ?? ''
-  const stags = ((stagsRes.data ?? []) as Array<{ s_tag: string; brand: string | null }>) ?? []
+  const stags = (stagsRes.data ?? []) as Array<{ s_tag: string; brand: string | null }>
 
-  // ----- Step 1: create_item -----
   const cleanDomain = stripDomain(l.domain ?? l.url ?? '')
-  const source = l.result_type === 'PPC' ? 'PPC' : 'SEO'
-  // Stamp TOMORROW's date, not today's. The Leads board view is sorted
-  // by this date column DESC and operators rely on "newest on top".
-  // Stamping today (or anything the existing rows already carry) falls
-  // through to Monday's secondary sort and the item lands at the bottom.
-  // One day in the future guarantees it sits above every prior row.
-  const stampDate = new Date()
-  stampDate.setUTCDate(stampDate.getUTCDate() + 1)
-  const stampDateIso = stampDate.toISOString().slice(0, 10)
+  const source: 'PPC' | 'SEO' = l.result_type === 'PPC' ? 'PPC' : 'SEO'
+  const todayIso = new Date().toISOString().slice(0, 10)
 
   const columnValues: Record<string, unknown> = {
     text86: sanitize(l.brand ?? ''),
@@ -128,32 +142,123 @@ export async function pushLeadToMonday(
     status_12: { label: null },
     status_1: { label: source },
     text0: sanitize(l.country_code ?? ''),
-    date: { date: stampDateIso },
+    date: { date: todayIso },
     text1: sanitize(l.url ?? ''),
     project_owner: {
       personsAndTeams: [{
-        id: opts?.pushedByMondayId ?? DEFAULT_OWNER_ID,
+        id: opts.pushedByMondayId,
         kind: 'person',
       }],
     },
   }
 
+  const anchor = await fetchTopAnchor(LEADS_BOARD_ID)
+
+  return {
+    ok: true,
+    data: {
+      columnValues,
+      itemName: cleanDomain || `lead-${leadId}`,
+      anchor,
+      meta: {
+        leadId,
+        domain: cleanDomain,
+        primaryEmail,
+        sTagsCount: stags.length,
+        ownerId: opts.pushedByMondayId,
+        pushedBy: opts.pushedBy,
+        source,
+      },
+      lead: {
+        id: l.id,
+        url: l.url,
+        domain: l.domain,
+        screenshot_content_link: l.screenshot_content_link,
+      },
+      stags,
+    },
+  }
+}
+
+/**
+ * Pushes one lead onto the Rooster Partners "Leads" board on Monday.com.
+ *
+ * Mirrors the legacy n8n "Add Lead on Monday.com" workflow (catalogued
+ * in docs/n8n-workflows-catalog.md §2.18) — same board, same column ids,
+ * same status label, same "PPC" vs "SEO" mapping.
+ *
+ * Three steps:
+ *   1. create_item with the column_values from the legacy spec, positioned
+ *      `before_at` the current top item so it lands above existing rows.
+ *   2. If a screenshot exists in Storage, download it and POST a
+ *      multipart add_file_to_column request to attach it.
+ *   3. If s-tags exist, build a multi-line "<brand> <s_tag>" body and
+ *      post create_update on the new item.
+ *
+ * Stamps pushed_to_monday_at + monday_pushed_item_id back on the lead
+ * row so the UI can show "already pushed" and prevent double-pushing.
+ */
+export async function pushLeadToMonday(
+  leadId: number,
+  opts: {
+    pushedBy: string
+    /** Monday user ID of the operator clicking Push. Lands as the
+     *  Owner on the new item via the project_owner column. Required:
+     *  the action layer must block the push and surface a "link your
+     *  Monday account" error when `user_profiles.monday_user_id` is
+     *  null, instead of silently impersonating a default owner. */
+    pushedByMondayId: number
+  },
+): Promise<PushResult | PushError> {
+  const prepared = await prepareLeadPushPayload(leadId, opts)
+  if (!prepared.ok) return prepared
+  const { columnValues, itemName, anchor, lead, stags } = prepared.data
+
+  const svc = createServiceClient()
+
+  // ----- Step 1: create_item -----
+  // Anchor for "land on top": Monday's create_item inserts at the
+  // bottom of its group by default, so the old "+1 day on the date
+  // column" trick only worked when the operator's board view was
+  // sorted by date — which it isn't reliably. Native fix is to pass
+  // position_relative_method=before_at with the current first item
+  // of the top group as relative_to. Best-effort: if the anchor
+  // query failed or the group is empty, fall through to a plain
+  // create_item (bottom of group, same as before).
   let createdItemId: string
   try {
-    const data = await mondayGQL<{
-      create_item: { id: string }
-    }>(
-      `mutation ($board_id: ID!, $item_name: String!, $cv: JSON!) {
-        create_item(board_id: $board_id, item_name: $item_name, column_values: $cv) {
-          id
-        }
-      }`,
-      {
-        board_id: LEADS_BOARD_ID,
-        item_name: cleanDomain || `lead-${leadId}`,
-        cv: JSON.stringify(columnValues),
-      },
-    )
+    const data = anchor
+      ? await mondayGQL<{ create_item: { id: string } }>(
+          `mutation ($board_id: ID!, $group_id: String!, $item_name: String!, $cv: JSON!, $relative_to: ID!) {
+            create_item(
+              board_id: $board_id,
+              group_id: $group_id,
+              item_name: $item_name,
+              column_values: $cv,
+              position_relative_method: before_at,
+              relative_to: $relative_to
+            ) { id }
+          }`,
+          {
+            board_id: LEADS_BOARD_ID,
+            group_id: anchor.groupId,
+            item_name: itemName,
+            cv: JSON.stringify(columnValues),
+            relative_to: anchor.itemId,
+          },
+        )
+      : await mondayGQL<{ create_item: { id: string } }>(
+          `mutation ($board_id: ID!, $item_name: String!, $cv: JSON!) {
+            create_item(board_id: $board_id, item_name: $item_name, column_values: $cv) {
+              id
+            }
+          }`,
+          {
+            board_id: LEADS_BOARD_ID,
+            item_name: itemName,
+            cv: JSON.stringify(columnValues),
+          },
+        )
     createdItemId = data.create_item.id
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -162,13 +267,13 @@ export async function pushLeadToMonday(
 
   // ----- Step 2: optional screenshot upload -----
   let attachedFile = false
-  if (l.screenshot_content_link) {
+  if (lead.screenshot_content_link) {
     try {
       const { data: blob, error: dlErr } = await svc.storage
         .from('lead-screenshots')
-        .download(l.screenshot_content_link)
+        .download(lead.screenshot_content_link)
       if (!dlErr && blob) {
-        await uploadFileToMondayColumn(createdItemId, 'files', blob, fileNameFor(l))
+        await uploadFileToMondayColumn(createdItemId, 'files', blob, fileNameFor(lead))
         attachedFile = true
       }
     } catch {
@@ -205,7 +310,7 @@ export async function pushLeadToMonday(
     .update({
       pushed_to_monday_at: new Date().toISOString(),
       monday_pushed_item_id: createdItemId,
-      monday_pushed_by: opts?.pushedBy ?? null,
+      monday_pushed_by: opts.pushedBy,
     })
     .eq('id', leadId)
 
@@ -234,6 +339,45 @@ function stripDomain(raw: string): string {
 /** Remove characters that break Monday's JSON column-values payload. */
 function sanitize(s: string): string {
   return s.replace(/["'\n\r\\]/g, '').trim()
+}
+
+/**
+ * Resolve the topmost item in the board's first non-empty group so
+ * create_item can be positioned `before_at` it. Returns null when the
+ * board has no groups, every group is empty, or the API call fails —
+ * callers fall through to a plain create_item in that case.
+ */
+async function fetchTopAnchor(
+  boardId: string,
+): Promise<{ groupId: string; itemId: string } | null> {
+  try {
+    const data = await mondayGQL<{
+      boards: Array<{
+        groups: Array<{
+          id: string
+          items_page: { items: Array<{ id: string }> }
+        }> | null
+      }> | null
+    }>(
+      `query ($board: [ID!]) {
+        boards(ids: $board) {
+          groups {
+            id
+            items_page(limit: 1) { items { id } }
+          }
+        }
+      }`,
+      { board: [boardId] },
+    )
+    const groups = data.boards?.[0]?.groups ?? []
+    for (const g of groups) {
+      const firstItem = g.items_page?.items?.[0]
+      if (firstItem) return { groupId: g.id, itemId: firstItem.id }
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 function fileNameFor(l: { domain: string | null; url: string | null; id: number }): string {

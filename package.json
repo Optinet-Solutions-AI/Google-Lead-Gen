@@ -11,6 +11,7 @@
     "type-check": "tsc --noEmit",
     "prepare": "husky",
     "monday:discover": "tsx scripts/monday/discover.ts",
+    "monday:dry-push": "tsx --conditions=react-server scripts/monday/dry-push.ts",
     "monday:sync": "tsx scripts/monday/sync.ts",
     "monday:register-webhooks": "tsx scripts/monday/register-webhooks.ts",
     "monday:list-webhooks": "tsx scripts/monday/list-webhooks.ts",

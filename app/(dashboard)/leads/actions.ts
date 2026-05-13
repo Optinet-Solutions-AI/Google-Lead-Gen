@@ -272,8 +272,10 @@ export async function pushLeadToMondayAction(
   if (!Number.isFinite(leadId)) return { status: 'error', error: 'Missing lead id.' }
 
   // Resolve the pushing user's display name + Monday user id so the
-  // new item lands under their name on the Leads board (instead of
-  // the legacy default owner inherited from the n8n workflow).
+  // new item lands under their name on the Leads board. Block the push
+  // when monday_user_id is null instead of silently falling back to a
+  // shared default owner — that fallback was the source of the QA
+  // complaint where every pushed item showed up under Charisse.
   const svc = createServiceClient()
   const { data: profileRow } = await svc
     .from('user_profiles')
@@ -286,6 +288,13 @@ export async function pushLeadToMondayAction(
   const pushedByDisplay =
     profile?.display_name ?? profile?.username ?? user.email ?? user.id
   const pushedByMondayId = profile?.monday_user_id ?? null
+  if (pushedByMondayId == null) {
+    return {
+      status: 'error',
+      error:
+        'Your account is not linked to a Monday user yet. Ask an admin to set your Monday ID at /admin/users so pushes land under you.',
+    }
+  }
 
   const result = await pushLeadToMonday(leadId, {
     pushedBy: pushedByDisplay,
