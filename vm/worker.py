@@ -194,7 +194,7 @@ def _kill_port() -> None:
             capture_output=True,
             text=True,
             timeout=30,
-            env={**os.environ, "DISPLAY": ":1"},
+            env=os.environ.copy(),
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("kill_gologin failed (non-fatal): %s", exc)
@@ -255,7 +255,10 @@ def run_scrape(
         ]
     timeout_s = INTERACTIVE_TIMEOUT_S if (INTERACTIVE_MODE and job_id) else SCRAPE_TIMEOUT_S
 
-    env = {**os.environ, "DISPLAY": ":1"}
+    # DISPLAY is set per-port in the scrape-worker@<port>.service systemd
+    # drop-in so each worker writes to its own Xvfb. Don't override here
+    # or noVNC isolation breaks (everyone lands on :1).
+    env = os.environ.copy()
     log.info("launching scraper (port=%d profile=%s log=%s timeout=%ds interactive=%s)",
              GOLOGIN_PORT, profile_id[:8], log_path, timeout_s,
              "yes" if (INTERACTIVE_MODE and job_id) else "no")
