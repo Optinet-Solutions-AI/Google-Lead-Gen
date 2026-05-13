@@ -121,7 +121,7 @@ export function FeedbackRow({ row }: Props) {
               href={row.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-[11px] text-[color:var(--color-accent)] hover:text-[color:var(--color-accent-hover)]"
+              className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-[11px] text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 hover:decoration-sky-500"
               title={row.url}
             >
               <ExternalLink className="h-3 w-3 shrink-0" />
