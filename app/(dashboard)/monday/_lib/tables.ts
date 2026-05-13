@@ -67,7 +67,12 @@ const UPDATES_COLUMNS: ColumnConfig[] = [
   },
 ]
 
-const UPDATES_SEARCH: string[] = ['body_text', 'creator_name', 'creator_email']
+const UPDATES_SEARCH: string[] = [
+  'monday_item_id',
+  'body_text',
+  'creator_name',
+  'creator_email',
+]
 const UPDATES_MOBILE: MobileCardConfig = {
   heading: 'creator_name',
   body: ['body_text'],
