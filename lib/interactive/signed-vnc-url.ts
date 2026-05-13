@@ -79,14 +79,17 @@ export async function buildSignedVncUrl(
   //
   // The `path` query parameter is read by noVNC's vnc_lite.html — without
   // it the client defaults to wss://host/websockify (root path) and
-  // bypasses our /vnc/<port>/ routing. Setting it explicitly here means
-  // noVNC connects to wss://host/vnc/<port>/websockify, which is what
-  // nginx is set up to gate via auth_request.
+  // bypasses our /vnc/<port>/ routing.
+  //
+  // We embed the token INSIDE the path so noVNC's WebSocket URL becomes
+  // wss://host/vnc/<port>/websockify?token=<token>. noVNC otherwise
+  // doesn't propagate any query string from the page URL into the WS
+  // URL, so the token has to ride along inside the `path` value or the
+  // nginx auth_request subrequest sees an empty `$arg_token`.
   const trimmed = base.replace(/\/+$/, '')
-  const wsPath = `vnc/${opts.workerPort}/websockify`
+  const wsPath = `vnc/${opts.workerPort}/websockify?token=${token}`
   return (
     `${trimmed}/vnc/${opts.workerPort}/` +
-    `?token=${encodeURIComponent(token)}` +
-    `&path=${encodeURIComponent(wsPath)}`
+    `?path=${encodeURIComponent(wsPath)}`
   )
 }
