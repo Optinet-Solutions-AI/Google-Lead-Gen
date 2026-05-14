@@ -37,7 +37,7 @@ type ItemRead = {
   }> | null
 }
 
-async function readItem(): Promise<ItemRead['items'][number] | null> {
+async function readItem(): Promise<NonNullable<ItemRead['items']>[number] | null> {
   const data = await mondayGQL<ItemRead>(
     `query ($ids: [ID!]) {
       items(ids: $ids) {
