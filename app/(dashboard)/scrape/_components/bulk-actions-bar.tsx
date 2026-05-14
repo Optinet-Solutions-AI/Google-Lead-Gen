@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { useActionState, useEffect, useState } from 'react'
 import {
   AlertTriangle,
   Eye,
@@ -123,7 +123,9 @@ function DeletePanel({
   const [delState, delAction, delPending] = useActionState(bulkDeleteScrapeJobs, initial)
   const matches = confirmation === expectedConfirm
   const ready = matches && password.length > 0
-  if (delState?.status === 'ok') queueMicrotask(onSuccess)
+  useEffect(() => {
+    if (delState?.status === 'ok') onSuccess()
+  }, [delState, onSuccess])
 
   const count = idCsv.split(',').length
 

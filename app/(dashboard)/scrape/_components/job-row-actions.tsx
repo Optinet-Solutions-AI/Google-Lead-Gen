@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { useActionState, useEffect, useState } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -343,9 +343,9 @@ function DestructivePanel({
   const [deleteState, deleteAction, deleting] = useActionState(deleteScrapeJob, initial)
 
   // Close the modal on a successful delete (the row no longer exists).
-  if (deleteState?.status === 'ok') {
-    queueMicrotask(onDeleted)
-  }
+  useEffect(() => {
+    if (deleteState?.status === 'ok') onDeleted()
+  }, [deleteState, onDeleted])
 
   return (
     <div className="mt-2 flex flex-col gap-2">

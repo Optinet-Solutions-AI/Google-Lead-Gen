@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { useActionState, useEffect, useState } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -218,7 +218,9 @@ function DeletePanel({
   const [confirmation, setConfirmation] = useState('')
   const matches = confirmation === expectedConfirm
   const [delState, delAction, delPending] = useActionState(deleteLeads, initial)
-  if (delState?.status === 'ok') queueMicrotask(onSuccess)
+  useEffect(() => {
+    if (delState?.status === 'ok') onSuccess()
+  }, [delState, onSuccess])
 
   return (
     <div className="rounded-md border border-red-200 bg-red-50/60 p-2.5">

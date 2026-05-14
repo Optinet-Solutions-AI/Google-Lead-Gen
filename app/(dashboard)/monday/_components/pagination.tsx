@@ -44,7 +44,7 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
     const params = new URLSearchParams(sp.toString())
     params.set('size', String(next))
     params.delete('page')
-    router.push(`${pathname}?${params.toString()}`)
+    router.push(`${pathname}?${params.toString()}`, { scroll: false })
   }
 
   const canPrev = page > 1

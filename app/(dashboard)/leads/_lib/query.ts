@@ -137,10 +137,11 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
     query = applyFilters(query, opts.filters, LEADS_COLUMNS)
   }
 
-  // PPC always groups above Organic regardless of the user's column-click sort.
-  // PPC > Organic alphabetically, so DESC puts PPC first; nullsFirst:false
-  // keeps null result_type rows at the very bottom.
-  query = query.order('result_type', { ascending: false, nullsFirst: false })
+  // PPC > Organic alphabetically, so DESC groups PPC above Organic by default.
+  // When the user clicks the result_type header with order=asc, honor the
+  // flip so Organic groups first. nullsFirst:false keeps null rows at bottom.
+  const resultTypeAsc = opts.sort === 'result_type' && opts.order === 'asc'
+  query = query.order('result_type', { ascending: resultTypeAsc, nullsFirst: false })
 
   // Advanced multi-sort takes precedence over the legacy single-sort fields.
   if (opts.sorts && opts.sorts.length > 0) {

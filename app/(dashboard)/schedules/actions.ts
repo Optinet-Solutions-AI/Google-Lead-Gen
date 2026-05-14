@@ -167,7 +167,8 @@ export async function deleteScheduledSet(formData: FormData): Promise<void> {
   const id = String(formData.get('id') ?? '').trim()
   if (!id) return
   const svc = createServiceClient()
-  await svc.from('scheduled_keyword_sets').delete().eq('id', id)
+  const { error } = await svc.from('scheduled_keyword_sets').delete().eq('id', id)
+  if (error) throw new Error(error.message)
   await logActivity({
     action: 'schedule.delete',
     entity_type: 'scheduled_set',
@@ -183,10 +184,11 @@ export async function runScheduledSetNow(formData: FormData): Promise<void> {
   if (!id) return
   const svc = createServiceClient()
   // Force next_run_at into the past so the next /api/scheduler/tick picks it up
-  await svc
+  const { error } = await svc
     .from('scheduled_keyword_sets')
     .update({ next_run_at: new Date(Date.now() - 60_000).toISOString() })
     .eq('id', id)
+  if (error) throw new Error(error.message)
   await logActivity({
     action: 'schedule.run_now',
     entity_type: 'scheduled_set',
@@ -252,10 +254,11 @@ export async function toggleScheduledItem(formData: FormData): Promise<void> {
   const isActive = formData.get('is_active') === 'true'
   if (!itemId) return
   const svc = createServiceClient()
-  await svc
+  const { error } = await svc
     .from('scheduled_keyword_items')
     .update({ is_active: !isActive })
     .eq('id', itemId)
+  if (error) throw new Error(error.message)
   if (setId) revalidatePath(`/schedules/${setId}`)
 }
 
@@ -265,6 +268,7 @@ export async function deleteScheduledItem(formData: FormData): Promise<void> {
   const setId = String(formData.get('set_id') ?? '').trim()
   if (!itemId) return
   const svc = createServiceClient()
-  await svc.from('scheduled_keyword_items').delete().eq('id', itemId)
+  const { error } = await svc.from('scheduled_keyword_items').delete().eq('id', itemId)
+  if (error) throw new Error(error.message)
   if (setId) revalidatePath(`/schedules/${setId}`)
 }

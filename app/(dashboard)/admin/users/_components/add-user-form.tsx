@@ -20,16 +20,23 @@ const initial: CreateUserState = null
 
 export function AddUserForm() {
   const [state, action, pending] = useActionState(createUserAction, initial)
-  // Lazy initialisers run once on mount so the form is pre-filled
-  // without an extra effect-triggered render.
-  const initIdentity = () => suggestIdentity()
-  const [identity, setIdentity] = useState(initIdentity)
-  const [password, setPassword] = useState<string>(() => suggestPassword())
+  // Start blank so the SSR + client first-render markup match — Math.random()
+  // in a lazy initialiser produces a hydration mismatch on force-dynamic pages.
+  // Populate on mount; reset to a fresh suggestion after a successful create.
+  const [identity, setIdentity] = useState<{ username: string; displayName: string }>({
+    username: '',
+    displayName: '',
+  })
+  const [password, setPassword] = useState<string>('')
   const [showPassword, setShowPassword] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
 
-  // Reset all fields after a successful create so the next user the
-  // admin adds doesn't reuse the previous credentials by accident.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIdentity(suggestIdentity())
+    setPassword(suggestPassword())
+  }, [])
+
   useEffect(() => {
     if (state?.status === 'ok') {
       // eslint-disable-next-line react-hooks/set-state-in-effect

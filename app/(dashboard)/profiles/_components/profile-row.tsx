@@ -85,12 +85,19 @@ function ToggleCell({
   color?: 'green' | 'amber' | 'gray'
 }) {
   const [pending, startTransition] = useTransition()
+  const [saved, setSaved] = useState<'idle' | 'error'>('idle')
   function flip() {
     const fd = new FormData()
     fd.set('country_code', country)
     fd.set('value', value ? 'false' : 'true')
     startTransition(async () => {
-      await action(fd)
+      try {
+        await action(fd)
+        setSaved('idle')
+      } catch {
+        setSaved('error')
+        setTimeout(() => setSaved('idle'), 2500)
+      }
     })
   }
   const onCls =
@@ -100,17 +107,20 @@ function ToggleCell({
         ? 'bg-amber-100 text-amber-800'
         : 'bg-zinc-200 text-zinc-700'
   return (
-    <button
-      type="button"
-      onClick={flip}
-      disabled={pending}
-      className={[
-        'inline-block rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-opacity hover:opacity-80 disabled:opacity-50',
-        value ? onCls : 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]',
-      ].join(' ')}
-    >
-      {value ? 'Yes' : 'No'}
-    </button>
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={flip}
+        disabled={pending}
+        className={[
+          'inline-block rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-opacity hover:opacity-80 disabled:opacity-50',
+          value ? onCls : 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]',
+        ].join(' ')}
+      >
+        {value ? 'Yes' : 'No'}
+      </button>
+      {saved === 'error' && <span className="text-[10px] text-red-700">err</span>}
+    </div>
   )
 }
 
