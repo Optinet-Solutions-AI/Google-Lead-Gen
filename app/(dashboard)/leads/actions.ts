@@ -313,16 +313,25 @@ export async function pushLeadToMondayAction(
       attached_file: result.attached_file,
       s_tag_update_posted: result.s_tag_update_posted,
       monday_owner_id: pushedByMondayId,
+      stamp_warning: result.stamp_warning,
     },
   })
 
   revalidatePath('/leads')
   revalidatePath('/scrape', 'layout')
+  // stamp_warning means the Monday item is on the board but the local
+  // "already pushed" flag didn't save. Tell the operator NOT to retry —
+  // refreshing won't help (the stamp will still be missing) and another
+  // click would create a duplicate. An admin needs to set
+  // pushed_to_monday_at + monday_pushed_item_id manually.
+  const warning = result.stamp_warning
+    ? ` ⚠ Local state didn't save (${result.stamp_warning}) — do NOT click Push again, this lead is on Monday. Tell an admin to stamp it manually.`
+    : ''
   return {
     status: 'ok',
     message: `Pushed to Monday (item ${result.monday_item_id}).${
       result.attached_file ? ' Screenshot attached.' : ''
-    }${result.s_tag_update_posted ? ' S-tags posted as update.' : ''}`,
+    }${result.s_tag_update_posted ? ' S-tags posted as update.' : ''}${warning}`,
     monday_item_id: result.monday_item_id,
   }
 }

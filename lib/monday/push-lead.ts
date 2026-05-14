@@ -11,6 +11,11 @@ export type PushResult = {
   monday_item_id: string
   attached_file: boolean
   s_tag_update_posted: boolean
+  /** Non-null when the Monday item was created successfully but the local
+   *  "already pushed" stamp update failed. The push is still ok — the
+   *  caller should surface this so the user doesn't click Push again
+   *  (which would create a duplicate item on the Leads board). */
+  stamp_warning: string | null
 }
 
 export type PushError = {
@@ -305,20 +310,46 @@ export async function pushLeadToMonday(
   }
 
   // ----- Stamp the lead row so the UI shows "already pushed" -----
-  await svc
-    .from('google_lead_gen_table')
-    .update({
-      pushed_to_monday_at: new Date().toISOString(),
-      monday_pushed_item_id: createdItemId,
-      monday_pushed_by: opts.pushedBy,
-    })
-    .eq('id', leadId)
+  // The Monday item is already created at this point — we cannot fail
+  // the push on a stamp error. Retry on transient failures (rate-limit,
+  // brief network blip) before giving up: the UI reads this stamp to
+  // hide the Push button, so an unstamped row leaves the button visible
+  // and the next click creates a duplicate item on the Leads board.
+  //
+  // Three attempts: immediate, +300ms, +1000ms. Max ~1.3s extra latency
+  // when all three fail, which is acceptable on top of the Monday push
+  // the user just waited for. If all three fail, surface the error via
+  // stamp_warning so the user knows not to retry.
+  const stampPatch = {
+    pushed_to_monday_at: new Date().toISOString(),
+    monday_pushed_item_id: createdItemId,
+    monday_pushed_by: opts.pushedBy,
+  }
+  const STAMP_DELAYS_MS = [0, 300, 1000]
+  let stampErr: { message: string } | null = null
+  let stampAttempts = 0
+  for (const delay of STAMP_DELAYS_MS) {
+    if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay))
+    stampAttempts++
+    const { error } = await svc
+      .from('google_lead_gen_table')
+      .update(stampPatch)
+      .eq('id', leadId)
+    if (!error) {
+      stampErr = null
+      break
+    }
+    stampErr = error
+  }
 
   return {
     ok: true,
     monday_item_id: createdItemId,
     attached_file: attachedFile,
     s_tag_update_posted: sTagUpdatePosted,
+    stamp_warning: stampErr
+      ? `${stampErr.message} (after ${stampAttempts} attempt${stampAttempts === 1 ? '' : 's'})`
+      : null,
   }
 }
 

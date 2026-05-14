@@ -172,8 +172,8 @@ export type SetMondayUserIdState =
 /**
  * Set / clear the Monday user ID for one user. The Monday ID is what
  * Push to Monday stamps as Owner on every new lead the user creates.
- * Empty value = clear (lead-creation falls back to the legacy default
- * owner so a missing mapping never blocks a push).
+ * Empty value = clear, which BLOCKS that user's future pushes with a
+ * "link your Monday account" error (no silent default-owner fallback).
  */
 export async function setMondayUserIdAction(
   _prev: SetMondayUserIdState,
