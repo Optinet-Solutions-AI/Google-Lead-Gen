@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { useActionState } from 'react'
 import {
   CheckCircle2,
   ChevronDown,
@@ -20,7 +20,21 @@ import {
 
 const initialMut: FeedbackMutationState = null
 
-type Status = 'open' | 'in_progress' | 'resolved' | 'rejected'
+export type Status = 'open' | 'in_progress' | 'resolved' | 'rejected'
+
+export type FeedbackRowData = {
+  id: number
+  user_id: string | null
+  user_display: string | null
+  user_email: string | null
+  url: string | null
+  message: string
+  status: Status
+  resolved_at: string | null
+  resolved_by: string | null
+  created_at: string
+  updated_at: string
+}
 
 const STATUS_OPTIONS: ReadonlyArray<{ key: Status; label: string }> = [
   { key: 'open',        label: 'Open' },
@@ -37,23 +51,14 @@ const STATUS_STYLES: Record<Status, string> = {
 }
 
 type Props = {
-  row: {
-    id: number
-    user_id: string | null
-    user_display: string | null
-    user_email: string | null
-    url: string | null
-    message: string
-    status: Status
-    resolved_at: string | null
-    resolved_by: string | null
-    created_at: string
-    updated_at: string
-  }
+  row: FeedbackRowData
+  focused: boolean
+  expanded: boolean
+  onToggleExpand: () => void
+  onFocus: () => void
 }
 
-export function FeedbackRow({ row }: Props) {
-  const [expanded, setExpanded] = useState(false)
+export function FeedbackRow({ row, focused, expanded, onToggleExpand, onFocus }: Props) {
   const [statusState, statusAction, statusPending] = useActionState(
     setFeedbackStatusAction,
     initialMut,
@@ -62,12 +67,6 @@ export function FeedbackRow({ row }: Props) {
     deleteFeedbackAction,
     initialMut,
   )
-
-  // Optimistic visual after action — we let revalidatePath refresh the
-  // server data, but show the new status immediately so the user sees
-  // their click landed.
-  const lastStatus = (statusState?.status === 'ok' ? null : null) // placeholder
-  void lastStatus
 
   const errorMsg =
     statusState?.status === 'error'
@@ -82,12 +81,24 @@ export function FeedbackRow({ row }: Props) {
     : row.message
 
   return (
-    <div className="flex flex-col gap-2 px-3 py-3 text-[12px]">
+    <div
+      onClick={onFocus}
+      className={[
+        'flex cursor-pointer flex-col gap-2 border-l-2 px-3 py-3 text-[12px] transition-colors',
+        focused
+          ? 'border-l-[color:var(--color-accent)] bg-[color:var(--color-accent)]/5'
+          : 'border-l-transparent hover:bg-[color:var(--color-bg-secondary)]/40',
+      ].join(' ')}
+    >
       <div className="flex flex-wrap items-start gap-3">
         <button
           type="button"
-          onClick={() => setExpanded(e => !e)}
+          onClick={e => {
+            e.stopPropagation()
+            onToggleExpand()
+          }}
           aria-label={expanded ? 'Collapse' : 'Expand'}
+          aria-expanded={expanded}
           className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]"
         >
           {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
@@ -121,6 +132,7 @@ export function FeedbackRow({ row }: Props) {
               href={row.url}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
               className="mt-1 inline-flex max-w-full items-center gap-1 truncate text-[11px] text-sky-700 underline decoration-sky-300 underline-offset-2 hover:text-sky-900 hover:decoration-sky-500"
               title={row.url}
             >
@@ -141,7 +153,10 @@ export function FeedbackRow({ row }: Props) {
       </div>
 
       {expanded && (
-        <div className="ml-8 flex flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)]/40 p-2">
+        <div
+          onClick={e => e.stopPropagation()}
+          className="ml-8 flex flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)]/40 p-2"
+        >
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
               Status:

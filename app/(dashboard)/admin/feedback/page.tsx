@@ -2,23 +2,10 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { FeedbackRow } from './_components/feedback-row'
+import { FeedbackList } from './_components/feedback-list'
+import type { FeedbackRowData } from './_components/feedback-row'
 
 export const dynamic = 'force-dynamic'
-
-type Feedback = {
-  id: number
-  user_id: string | null
-  user_display: string | null
-  user_email: string | null
-  url: string | null
-  message: string
-  status: 'open' | 'in_progress' | 'resolved' | 'rejected'
-  resolved_at: string | null
-  resolved_by: string | null
-  created_at: string
-  updated_at: string
-}
 
 const STATUS_TABS = [
   { key: 'open',        label: 'Open' },
@@ -61,7 +48,7 @@ export default async function AdminFeedbackPage({
   if (statusFilter !== 'all') q = q.eq('status', statusFilter)
   const { data, error } = await q
   if (error) throw error
-  const rows = (data ?? []) as Feedback[]
+  const rows = (data ?? []) as FeedbackRowData[]
 
   // Per-status counts so the tabs can show "Open · 12" etc. One small
   // extra query — cheap on this table.
@@ -121,17 +108,8 @@ export default async function AdminFeedbackPage({
         })}
       </nav>
 
-      <section className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
-        {rows.length === 0 ? (
-          <p className="px-3 py-8 text-center text-[12px] text-[color:var(--color-text-secondary)]">
-            Nothing under this status. The QA team is doing fine — or
-            isn&apos;t reporting anything 🙂
-          </p>
-        ) : (
-          <div className="divide-y divide-[color:var(--color-border)]">
-            {rows.map(r => <FeedbackRow key={r.id} row={r} />)}
-          </div>
-        )}
+      <section className="overflow-hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
+        <FeedbackList rows={rows} />
       </section>
     </div>
   )
