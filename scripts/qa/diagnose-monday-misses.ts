@@ -1,15 +1,17 @@
 /**
- * One-off: diagnose Monday false-negatives.
+ * Diagnose Monday false-negatives lead-by-lead.
  *
- * For each lead ID flagged in QA feedback as "should be on Monday but
- * tool says it isn't", pull:
+ * For each lead ID passed (or the default set of Charisse's 6 QA-reported
+ * leads if none given), pull:
  *   - the lead's URL, domain, normalized form, registered (eTLD+1)
  *   - the current is_on_monday / monday_board / monday_match_kind
  *   - what search_website_on_monday() returns *now*
  *   - candidate matches across the 4 Monday board tables (exact +
  *     registered + body_domain mention) so we can see what *should* match
  *
- * Run: npx tsx scripts/qa/diagnose-monday-misses.ts
+ * Run:
+ *   npx tsx scripts/qa/diagnose-monday-misses.ts             # Charisse's 6
+ *   npx tsx scripts/qa/diagnose-monday-misses.ts 680 757 769 # any IDs
  */
 
 import { config as loadEnv } from 'dotenv'
@@ -18,7 +20,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 loadEnv({ path: join(process.cwd(), '.env.local') })
 
-const FLAGGED_LEADS = [8766, 8689, 8603, 8594, 8606, 5764]
+const DEFAULT_LEADS = [8766, 8689, 8603, 8594, 8606, 5764]
+const argIds = process.argv.slice(2).map(s => Number.parseInt(s, 10)).filter(n => Number.isFinite(n) && n > 0)
+const FLAGGED_LEADS = argIds.length > 0 ? argIds : DEFAULT_LEADS
 
 type Lead = {
   id: number
