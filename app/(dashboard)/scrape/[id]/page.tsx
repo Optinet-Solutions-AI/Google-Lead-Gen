@@ -72,7 +72,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const page = clampInt(sp.page, 1, 1_000_000, 1)
   const size = clampEnum(sp.size, LEAD_PAGE_SIZES, DEFAULT_LEAD_PAGE_SIZE)
   const sort = typeof sp.sort === 'string' ? sp.sort : 'overall_position'
-  const order: 'asc' | 'desc' = sp.order === 'asc' ? 'asc' : 'asc'
+  const order: 'asc' | 'desc' = sp.order === 'asc' ? 'asc' : 'desc'
   const q = typeof sp.q === 'string' ? sp.q : ''
   const countryCode = typeof sp.country_code === 'string' ? sp.country_code : ''
   const resultType = typeof sp.result_type === 'string' ? sp.result_type : ''
