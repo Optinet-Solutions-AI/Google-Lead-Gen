@@ -36,7 +36,6 @@ async function main() {
     const arr = r.body_domains ?? []
     console.log(`  ${arr.length} entries\n`)
     const buggy = arr.filter(d => d.startsWith('at') && d.length > 4 && !['at', 'attack', 'atom'].includes(d))
-    const correct = arr.filter(d => !d.startsWith('at') || d === 'at')
     console.log(`  Entries starting with "at" (potential glue-bug leftovers):`)
     for (const d of buggy) console.log(`    ${d}`)
     console.log(`\n  All entries (alphabetical):`)
