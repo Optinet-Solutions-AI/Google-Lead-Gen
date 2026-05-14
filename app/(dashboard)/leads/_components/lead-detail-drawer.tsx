@@ -765,9 +765,10 @@ function NotRelevantPanel({
 
   // Optimistic flip — server action revalidates the lead drawer's data
   // source on next open, but the panel updates immediately so the user
-  // sees the new state.
+  // sees the new state. Action returns the new value so toggling back
+  // and forth in the same drawer session lands on the right UI.
   const effectivelyHidden =
-    state?.status === 'ok' ? !isNotRelevant : isNotRelevant
+    state?.status === 'ok' ? state.isNotRelevant : isNotRelevant
 
   if (effectivelyHidden) {
     return (

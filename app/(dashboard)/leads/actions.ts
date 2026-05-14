@@ -343,7 +343,7 @@ export async function pushLeadToMondayAction(
 // ============================================================
 
 export type MarkNotRelevantState =
-  | { status: 'ok' }
+  | { status: 'ok'; isNotRelevant: boolean }
   | { status: 'error'; error: string }
   | null
 
@@ -410,7 +410,7 @@ export async function setNotRelevantAction(
 
   revalidatePath('/leads')
   revalidatePath('/scrape', 'layout')
-  return { status: 'ok' }
+  return { status: 'ok', isNotRelevant: wantsTrue }
 }
 
 // ============================================================
