@@ -22,9 +22,13 @@ type Props = {
   /** When true, hides Keyword/Country/Batch columns and puts Domain first.
    *  Use on /scrape/[id] where those values are shown in the page header. */
   jobContext?: boolean
+  /** Pagination metadata for cross-page drawer navigation. Without this,
+   *  the drawer's prev/next only walks within the visible page; with it,
+   *  the arrows bridge to the next/prev page automatically. */
+  pageInfo?: { page: number; size: number; total: number }
 }
 
-export function LeadsTable({ rows, jobContext = false }: Props) {
+export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
   // Drawer is URL-driven via `?lead=<id>` so QA can copy a row link
   // and any teammate clicking it lands on this exact lead's drawer.
   // Local state only as fallback for legacy callers.
@@ -44,6 +48,45 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
     },
     [router, pathname, sp],
   )
+
+  // Cross-page drawer navigation. When the drawer is at the first/last
+  // visible lead and the user clicks the back/forward arrow, jump to the
+  // adjacent page and open its last/first lead. We can't know that lead's
+  // id until the new page renders, so we stash a sentinel `open=first|last`
+  // in the URL and resolve it once `rows` updates.
+  const totalPages = pageInfo
+    ? Math.max(1, Math.ceil(pageInfo.total / pageInfo.size))
+    : 1
+  const canGoPrevPage = pageInfo !== undefined && pageInfo.page > 1
+  const canGoNextPage = pageInfo !== undefined && pageInfo.page < totalPages
+
+  const onBoundary = useCallback(
+    (dir: 'prev' | 'next') => {
+      if (!pageInfo) return
+      const target = dir === 'next' ? pageInfo.page + 1 : pageInfo.page - 1
+      if (target < 1 || target > totalPages) return
+      const params = new URLSearchParams(sp.toString())
+      params.set('page', String(target))
+      params.set('open', dir === 'next' ? 'first' : 'last')
+      params.delete('lead')
+      router.push(`${pathname}?${params.toString()}`, { scroll: false })
+    },
+    [pageInfo, totalPages, sp, router, pathname],
+  )
+
+  // Resolve the `open=first|last` sentinel to a concrete `lead=<id>` once
+  // the new page's rows arrive. Uses `replace` so the back button doesn't
+  // bounce through this intermediate state.
+  useEffect(() => {
+    const want = sp.get('open')
+    if (!want || rows.length === 0) return
+    const target = want === 'last' ? rows[rows.length - 1] : rows[0]
+    if (!target) return
+    const params = new URLSearchParams(sp.toString())
+    params.delete('open')
+    params.set('lead', String(target.id))
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }, [sp, rows, router, pathname])
 
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
@@ -436,7 +479,15 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
         ))}
       </div>
 
-      <LeadDetailDrawer leadId={openLeadId} onClose={() => setOpenLeadId(null)} />
+      <LeadDetailDrawer
+        leadId={openLeadId}
+        leadIds={visibleIds}
+        onClose={() => setOpenLeadId(null)}
+        onNavigate={setOpenLeadId}
+        onBoundary={onBoundary}
+        canGoPrevPage={canGoPrevPage}
+        canGoNextPage={canGoNextPage}
+      />
     </>
   )
 }

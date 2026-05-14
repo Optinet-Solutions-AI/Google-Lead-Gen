@@ -127,7 +127,7 @@ export default async function LeadsPage({
 
       <AdvancedFilters columns={columns} preserve={['country_code', 'result_type', 'show_hidden']} />
 
-      <LeadsTable rows={rows} />
+      <LeadsTable rows={rows} pageInfo={{ page, size, total }} />
 
       <Pagination page={page} size={size} total={total} pageSizeOptions={LEAD_PAGE_SIZES} />
     </div>

@@ -4,6 +4,8 @@ import { useActionState, useEffect, useState, useTransition } from 'react'
 import Link from 'next/link'
 import {
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   EyeOff,
   ExternalLink,
   Loader2,
@@ -58,10 +60,30 @@ async function fetchLeadDetail(leadId: number, signal: AbortSignal): Promise<Det
 
 type Props = {
   leadId: number | null
+  /** The ordered list of currently-visible lead ids; lets the drawer step
+   *  through them with prev/next without closing. Pass an empty array if
+   *  navigation isn't applicable. */
+  leadIds?: number[]
   onClose: () => void
+  /** Called when the user clicks the prev/next arrows. If omitted, arrows
+   *  are hidden. */
+  onNavigate?: (id: number) => void
+  /** Called when the user clicks past the first/last visible lead. The
+   *  caller is responsible for advancing to the prev/next page. */
+  onBoundary?: (dir: 'prev' | 'next') => void
+  canGoPrevPage?: boolean
+  canGoNextPage?: boolean
 }
 
-export function LeadDetailDrawer({ leadId, onClose }: Props) {
+export function LeadDetailDrawer({
+  leadId,
+  leadIds = [],
+  onClose,
+  onNavigate,
+  onBoundary,
+  canGoPrevPage = false,
+  canGoNextPage = false,
+}: Props) {
   const [detail, setDetail] = useState<Detail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -123,40 +145,152 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
     }
   }, [leadId, onClose])
 
+  // Keyboard shortcuts for prev/next while the drawer is open. Re-derive
+  // the navigation state inside the handler so we don't have to hoist
+  // goPrev/goNext above the early return; closure over latest props is
+  // sufficient.
+  useEffect(() => {
+    if (leadId === null) return
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+
+      // Spatial mapping: left key on the keyboard = previous, right = next.
+      const isNext = e.key === 'ArrowRight' || e.key === 'm' || e.key === 'M'
+      const isPrev = e.key === 'ArrowLeft'  || e.key === 'n' || e.key === 'N'
+      if (!isNext && !isPrev) return
+
+      const idx = leadIds.indexOf(leadId!)
+      if (idx < 0) return
+      const here = leadIds[idx]
+      const atFirstLocal = idx === 0
+      const atLastLocal = idx === leadIds.length - 1
+      const prev = atFirstLocal ? null : leadIds[idx - 1] ?? null
+      const next = atLastLocal ? null : leadIds[idx + 1] ?? null
+      void here
+
+      if (isNext) {
+        if (next !== null) {
+          e.preventDefault()
+          onNavigate?.(next)
+        } else if (atLastLocal && canGoNextPage) {
+          e.preventDefault()
+          onBoundary?.('next')
+        }
+        return
+      }
+      if (isPrev) {
+        if (prev !== null) {
+          e.preventDefault()
+          onNavigate?.(prev)
+        } else if (atFirstLocal && canGoPrevPage) {
+          e.preventDefault()
+          onBoundary?.('prev')
+        }
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [leadId, leadIds, onNavigate, onBoundary, canGoPrevPage, canGoNextPage])
+
   if (leadId === null) return null
 
   const lead = detail?.lead ?? null
+
+  // Prev/next navigation. Walks the visible lead ids the table handed
+  // us; at the boundary of the visible list, falls back to `onBoundary`
+  // to bridge to the adjacent page (if the table indicates one exists).
+  const navIndex = leadIds.indexOf(leadId)
+  const inList = navIndex >= 0
+  const atFirst = inList && navIndex === 0
+  const atLast = inList && navIndex === leadIds.length - 1
+  const prevId = inList && navIndex > 0 ? leadIds[navIndex - 1] ?? null : null
+  const nextId = inList && navIndex < leadIds.length - 1 ? leadIds[navIndex + 1] ?? null : null
+  const prevEnabled = prevId !== null || (atFirst && canGoPrevPage && onBoundary !== undefined)
+  const nextEnabled = nextId !== null || (atLast && canGoNextPage && onBoundary !== undefined)
+  const canNavigate =
+    onNavigate !== undefined && inList && (leadIds.length > 1 || canGoPrevPage || canGoNextPage)
+
+  function goPrev() {
+    if (prevId !== null) onNavigate?.(prevId)
+    else if (atFirst && canGoPrevPage) onBoundary?.('prev')
+  }
+  function goNext() {
+    if (nextId !== null) onNavigate?.(nextId)
+    else if (atLast && canGoNextPage) onBoundary?.('next')
+  }
 
   return (
     <>
       {/* Drawer — no backdrop so pagination + other rows stay clickable.
           z-50 keeps it above the sidebar (z-40) and mobile backdrop (z-30). */}
       <aside className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[460px] flex-col border-l border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] shadow-xl">
-        <header className="flex items-start justify-between gap-3 border-b border-[color:var(--color-border)] px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[14px] font-semibold text-[color:var(--color-text-primary)]">
-              {cleanDomain(lead?.domain ?? lead?.url ?? null)}
-            </p>
-            {lead?.url && (
-              <a
-                href={lead.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-0.5 flex items-start gap-1 text-[11px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
+        <header className="flex flex-col gap-2 border-b border-[color:var(--color-border)] px-4 py-3">
+          {canNavigate && (
+            <div className="flex items-center gap-1 text-[11px] text-[color:var(--color-text-secondary)]">
+              <button
+                type="button"
+                onClick={goPrev}
+                disabled={!prevEnabled}
+                aria-label={prevId === null && atFirst && canGoPrevPage ? 'Previous page (N or ←)' : 'Previous lead (N or ←)'}
+                title={prevId === null && atFirst && canGoPrevPage ? 'Previous page (N or ←)' : 'Previous lead (N or ←)'}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
               >
-                <ExternalLink className="mt-0.5 h-3 w-3 shrink-0" />
-                <span className="break-all">{lead.url}</span>
-              </a>
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={goNext}
+                disabled={!nextEnabled}
+                aria-label={nextId === null && atLast && canGoNextPage ? 'Next page (M or →)' : 'Next lead (M or →)'}
+                title={nextId === null && atLast && canGoNextPage ? 'Next page (M or →)' : 'Next lead (M or →)'}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+              <span className="ml-1 tabular-nums">
+                {navIndex + 1} <span className="opacity-60">of {leadIds.length}</span>
+              </span>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close"
+                title="Close"
+                className="ml-auto rounded-md p-1 text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[14px] font-semibold text-[color:var(--color-text-primary)]">
+                {cleanDomain(lead?.domain ?? lead?.url ?? null)}
+              </p>
+              {lead?.url && (
+                <a
+                  href={lead.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-0.5 flex items-start gap-1 text-[11px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
+                >
+                  <ExternalLink className="mt-0.5 h-3 w-3 shrink-0" />
+                  <span className="break-all">{lead.url}</span>
+                </a>
+              )}
+            </div>
+            {!canNavigate && (
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close"
+                className="rounded-md p-1 text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-md p-1 text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]"
-          >
-            <X className="h-4 w-4" />
-          </button>
         </header>
 
         <div className="flex-1 overflow-y-auto">
