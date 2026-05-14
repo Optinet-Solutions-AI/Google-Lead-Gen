@@ -45,6 +45,21 @@ export default async function LeadsPage({
   const sorts = parseSorts(sp.s)
   const showHidden = sp.show_hidden === '1'
 
+  // Build the URL for the "Show/Hide not-relevant" toggle while preserving
+  // the user's current filters, sort, q, country, etc. Page is intentionally
+  // reset because the total-row count changes when hidden rows toggle.
+  const toggleHref = (() => {
+    const next = new URLSearchParams()
+    for (const [k, v] of Object.entries(sp)) {
+      if (k === 'show_hidden' || k === 'page') continue
+      if (typeof v === 'string') next.set(k, v)
+      else if (Array.isArray(v)) for (const item of v) next.append(k, item)
+    }
+    if (!showHidden) next.set('show_hidden', '1')
+    const qs = next.toString()
+    return qs ? `/leads?${qs}` : '/leads'
+  })()
+
   const [{ rows, total }, countries, hiddenCount] = await Promise.all([
     queryLeads({
       page,
@@ -96,7 +111,7 @@ export default async function LeadsPage({
         </div>
         {hiddenCount > 0 && (
           <Link
-            href={showHidden ? '/leads' : '/leads?show_hidden=1'}
+            href={toggleHref}
             className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]"
             title={
               showHidden

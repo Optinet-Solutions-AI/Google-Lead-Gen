@@ -58,7 +58,7 @@ export async function deleteLeadScreenshot(formData: FormData): Promise<void> {
   revalidatePath('/scrape', 'layout')
 }
 
-type MondayLabelValue =
+export type MondayLabelValue =
   | 'no'
   | 'clear'
   | 'affiliates'
@@ -421,8 +421,13 @@ export async function setNotRelevantAction(
 //   - deleteLeads             — typed-confirm wipe of selected leads.
 // ============================================================
 
+export type SkippedLead = {
+  leadId: number
+  reason: 'no_url' | 'no_country' | 'affiliate_domain' | 'not_affiliate'
+}
+
 export type BulkActionState =
-  | { status: 'ok'; message: string }
+  | { status: 'ok'; message: string; skipped?: SkippedLead[] }
   | { status: 'error'; error: string }
   | null
 
@@ -463,8 +468,7 @@ export async function retryEnrichmentForLeads(
     .in('id', leadIds)
   if (leadsErr) return { status: 'error', error: leadsErr.message }
 
-  let skipped = 0
-  let filtered = 0
+  const skippedDetail: SkippedLead[] = []
   const enqueueable: Array<{
     lead_id: number
     country_code: string
@@ -483,17 +487,20 @@ export async function retryEnrichmentForLeads(
     is_affiliate: boolean | null
   }>) {
     const url = lead.url ?? ''
-    if (!url || !url.startsWith('http') || !lead.country_code) {
-      skipped++
+    if (!url || !url.startsWith('http')) {
+      skippedDetail.push({ leadId: lead.id, reason: 'no_url' })
+      continue
+    }
+    if (!lead.country_code) {
+      skippedDetail.push({ leadId: lead.id, reason: 'no_country' })
       continue
     }
     if (shouldSkipDomain(lead.domain)) {
-      skipped++
+      skippedDetail.push({ leadId: lead.id, reason: 'affiliate_domain' })
       continue
     }
-    // S-tag stage only makes sense on affiliate rows.
     if (stage === 'stag' && lead.is_affiliate !== true) {
-      filtered++
+      skippedDetail.push({ leadId: lead.id, reason: 'not_affiliate' })
       continue
     }
     enqueueable.push({
@@ -506,13 +513,16 @@ export async function retryEnrichmentForLeads(
     })
   }
 
+  const skipped = skippedDetail.length
+
   if (enqueueable.length === 0) {
     return {
       status: 'ok',
       message:
         stage === 'stag'
           ? `Nothing to enqueue — none of the selected leads are flagged as affiliates.`
-          : `Nothing to enqueue (${skipped} skipped, ${filtered} filtered).`,
+          : `Nothing to enqueue (${skipped} skipped).`,
+      skipped: skippedDetail,
     }
   }
 
@@ -526,7 +536,6 @@ export async function retryEnrichmentForLeads(
       requested: leadIds.length,
       enqueued: enqueueable.length,
       skipped,
-      filtered,
     },
   })
 
@@ -534,7 +543,8 @@ export async function retryEnrichmentForLeads(
   revalidatePath('/scrape', 'layout')
   return {
     status: 'ok',
-    message: `Re-queued ${enqueueable.length} lead${enqueueable.length === 1 ? '' : 's'} for ${stage} enrichment${skipped + filtered > 0 ? ` (${skipped + filtered} skipped)` : ''}.`,
+    message: `Re-queued ${enqueueable.length} lead${enqueueable.length === 1 ? '' : 's'} for ${stage} enrichment${skipped > 0 ? ` (${skipped} skipped)` : ''}.`,
+    skipped: skippedDetail,
   }
 }
 

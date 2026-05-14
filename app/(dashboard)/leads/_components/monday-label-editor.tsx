@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react'
 import { ChevronDown, RotateCcw } from 'lucide-react'
-import { setMondayLabel } from '../actions'
+import { setMondayLabel, type MondayLabelValue } from '../actions'
+import { invalidateLeadDetailCache } from '../_lib/detail-cache'
 
 type CategoryKey =
   | 'no'
@@ -54,25 +55,66 @@ type Props = {
 
 export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden }: Props) {
   const [open, setOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
     function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false)
+        setError(null)
+      }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
-  function submit(value: string) {
+  function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (!open) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      setOpen(false)
+      setError(null)
+      triggerRef.current?.focus()
+      return
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const items = panelRef.current?.querySelectorAll<HTMLButtonElement>('button')
+      if (!items || items.length === 0) return
+      const list = Array.from(items)
+      const current = list.indexOf(document.activeElement as HTMLButtonElement)
+      const delta = e.key === 'ArrowDown' ? 1 : -1
+      let next = current + delta
+      if (next < 0) next = list.length - 1
+      if (next >= list.length) next = 0
+      e.preventDefault()
+      list[next]?.focus()
+      return
+    }
+    if (e.key === 'Tab') {
+      setOpen(false)
+      setError(null)
+    }
+  }
+
+  function submit(value: MondayLabelValue) {
     const fd = new FormData()
     fd.set('lead_id', String(leadId))
     fd.set('value', value)
+    setError(null)
     startTransition(async () => {
-      await setMondayLabel(fd)
-      setOpen(false)
+      try {
+        await setMondayLabel(fd)
+        invalidateLeadDetailCache(leadId)
+        setOpen(false)
+      } catch (e) {
+        // Keep menu open so the user can retry without re-clicking the badge.
+        setError(e instanceof Error ? e.message : 'Failed to update label.')
+      }
     })
   }
 
@@ -81,14 +123,17 @@ export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden }: P
     isOnMonday === null ? 'unset' : isOnMonday === false ? 'no' : (board as CategoryKey | null) ?? 'unset'
 
   return (
-    <div ref={ref} className="relative inline-block">
+    <div ref={ref} className="relative inline-block" onKeyDown={onKeyDown}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(o => !o)}
         disabled={pending}
+        aria-haspopup="menu"
+        aria-expanded={open}
         title={isOverridden ? 'Manually set — click to change' : 'Auto-detected — click to override'}
         className={[
-          'inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-medium transition-opacity hover:opacity-80 disabled:opacity-50',
+          'inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-medium transition-opacity hover:opacity-80 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]',
           current.cls,
           isOverridden ? 'ring-1 ring-offset-0 ring-[color:var(--color-text-secondary)]/30' : '',
         ].join(' ')}
@@ -98,7 +143,11 @@ export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden }: P
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 min-w-[220px] rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1 shadow-md">
+        <div
+          ref={panelRef}
+          role="menu"
+          className="absolute left-0 top-full z-20 mt-1 min-w-[220px] rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1 shadow-md"
+        >
           <MenuItem
             value="no"
             currentValue={currentValue}
@@ -135,6 +184,11 @@ export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden }: P
             <RotateCcw className="h-3 w-3" />
             Reset to auto
           </button>
+          {error && (
+            <p className="mx-1 mt-1 rounded-sm bg-rose-50 px-2 py-1 text-[10px] text-rose-700">
+              {error}
+            </p>
+          )}
         </div>
       )}
     </div>

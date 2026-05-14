@@ -149,34 +149,29 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
       })()
     : null) as LeadDetail['lead']
 
-  let screenshotUrl: string | null = null
-  if (lead?.screenshot_content_link) {
-    const { data: signed } = await svc.storage
-      .from('lead-screenshots')
-      .createSignedUrl(lead.screenshot_content_link, 60 * 60)
-    screenshotUrl = signed?.signedUrl ?? null
+  // Screenshot signing is best-effort: a single bucket hiccup or
+  // missing/expired object shouldn't blow up the entire drawer load.
+  // The drawer renders fine with null URLs (hides the image block).
+  async function sign(path: string): Promise<string | null> {
+    try {
+      const { data } = await svc.storage
+        .from('lead-screenshots')
+        .createSignedUrl(path, 60 * 60)
+      return data?.signedUrl ?? null
+    } catch {
+      return null
+    }
   }
 
-  let serpScreenshotUrl: string | null = null
-  if (lead?.serp_screenshot_path) {
-    const { data: signed } = await svc.storage
-      .from('lead-screenshots')
-      .createSignedUrl(lead.serp_screenshot_path, 60 * 60)
-    serpScreenshotUrl = signed?.signedUrl ?? null
-  }
+  const [screenshotUrl, serpScreenshotUrl] = await Promise.all([
+    lead?.screenshot_content_link ? sign(lead.screenshot_content_link) : Promise.resolve(null),
+    lead?.serp_screenshot_path ? sign(lead.serp_screenshot_path) : Promise.resolve(null),
+  ])
 
   const stags = (stagsRes.data ?? []) as unknown as StagDetail[]
-  // Sign per-tag screenshot URLs in parallel
   await Promise.all(
     stags.map(async tag => {
-      if (!tag.screenshot_path) {
-        tag.screenshot_url = null
-        return
-      }
-      const { data: signed } = await svc.storage
-        .from('lead-screenshots')
-        .createSignedUrl(tag.screenshot_path, 60 * 60)
-      tag.screenshot_url = signed?.signedUrl ?? null
+      tag.screenshot_url = tag.screenshot_path ? await sign(tag.screenshot_path) : null
     }),
   )
 

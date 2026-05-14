@@ -243,7 +243,7 @@ export function LeadsTable({ rows, jobContext = false }: Props) {
                         href={row.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="truncate font-semibold underline underline-offset-2 decoration-[color:var(--color-text-primary)]"
+                        className="truncate font-semibold underline underline-offset-2 decoration-[color:var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] rounded-sm"
                         title={row.url}
                       >
                         {row.url.length > 55 ? row.url.slice(0, 55) + '…' : row.url}
@@ -492,7 +492,7 @@ function CopyRowLinkButton({ leadId }: { leadId: number }) {
       title={copied ? 'Copied row link!' : 'Copy link to this row (opens the drawer when shared)'}
       aria-label={copied ? 'Copied row link' : 'Copy row link'}
       className={[
-        'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors',
+        'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]',
         copied
           ? 'bg-emerald-100 text-emerald-700'
           : 'text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]',
@@ -526,7 +526,7 @@ function DomainButton({
     <button
       type="button"
       onClick={onOpen}
-      className="block w-full truncate px-3 py-2 text-left font-medium text-[color:var(--color-text-primary)] underline-offset-2 hover:underline"
+      className="block w-full truncate px-3 py-2 text-left font-medium text-[color:var(--color-text-primary)] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[color:var(--color-accent)]"
     >
       {domain ?? '—'}
     </button>

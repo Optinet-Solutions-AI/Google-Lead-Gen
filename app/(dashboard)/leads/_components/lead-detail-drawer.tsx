@@ -18,6 +18,11 @@ import {
 } from 'lucide-react'
 import type { LeadDetail } from '../_lib/detail-query'
 import {
+  getCachedLeadDetail,
+  invalidateLeadDetailCache,
+  setCachedLeadDetail,
+} from '../_lib/detail-cache'
+import {
   deleteLeadScreenshot,
   pushLeadToMondayAction,
   setNotRelevantAction,
@@ -50,6 +55,7 @@ async function fetchLeadDetail(leadId: number, signal: AbortSignal): Promise<Det
   return res.json()
 }
 
+
 type Props = {
   leadId: number | null
   onClose: () => void
@@ -63,16 +69,32 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
   useEffect(() => {
     if (leadId === null) return
     const controller = new AbortController()
+
+    // Stale-while-revalidate: if we've fetched this lead before, show
+    // the cached payload immediately and skip the loader. Always re-fetch
+    // in the background to pick up any server-side changes.
+    const cached = getCachedLeadDetail(leadId)
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoading(true)
-     
+    setDetail(cached ?? null)
+
     setError(null)
+    setLoading(!cached)
+
     fetchLeadDetail(leadId, controller.signal)
       .then(d => {
-        if (!controller.signal.aborted) setDetail(d)
+        if (controller.signal.aborted) return
+        setCachedLeadDetail(leadId, d)
+        setDetail(d)
       })
       .catch(e => {
         if (controller.signal.aborted) return
+        // If we showed cached data and the refresh fails, keep showing
+        // the cache rather than flashing an error — log it instead.
+        if (cached) {
+           
+          console.warn('Background refresh failed for lead', leadId, e)
+          return
+        }
         setError(e instanceof Error ? e.message : String(e))
       })
       .finally(() => {
@@ -81,13 +103,13 @@ export function LeadDetailDrawer({ leadId, onClose }: Props) {
     return () => controller.abort()
   }, [leadId])
 
-  // When the drawer closes, clear stale state so a subsequent re-open
-  // shows a loading state instead of the previous lead's data.
+  // When the drawer closes, clear UI state. We keep the module-level
+  // cache so re-opening the same lead is instant.
   useEffect(() => {
     if (leadId !== null) return
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setDetail(null)
-     
+
     setError(null)
   }, [leadId])
 
@@ -482,6 +504,7 @@ function ScreenshotSection({
     startTransition(async () => {
       try {
         await deleteLeadScreenshot(fd)
+        invalidateLeadDetailCache(leadId)
       } catch (e) {
         alert(e instanceof Error ? e.message : String(e))
       }
@@ -602,6 +625,10 @@ function NotRelevantPanel({
   const [state, action, pending] = useActionState(setNotRelevantAction, initial)
   const [confirming, setConfirming] = useState(false)
 
+  useEffect(() => {
+    if (state?.status === 'ok') invalidateLeadDetailCache(leadId)
+  }, [state, leadId])
+
   // Optimistic flip — server action revalidates the lead drawer's data
   // source on next open, but the panel updates immediately so the user
   // sees the new state.
@@ -704,6 +731,10 @@ function PushToMondayPanel({
   const initial: PushToMondayState = null
   const [state, action, pending] = useActionState(pushLeadToMondayAction, initial)
   const [confirming, setConfirming] = useState(false)
+
+  useEffect(() => {
+    if (state?.status === 'ok') invalidateLeadDetailCache(leadId)
+  }, [state, leadId])
 
   // After a successful push the row's pushedAt won't reflect immediately
   // (drawer fetches its own data via /api/leads/[id]) — but the action

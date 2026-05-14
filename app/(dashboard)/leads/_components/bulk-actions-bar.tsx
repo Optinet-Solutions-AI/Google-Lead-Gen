@@ -16,6 +16,7 @@ import {
   deleteLeads,
   retryEnrichmentForLeads,
   type BulkActionState,
+  type SkippedLead,
 } from '../actions'
 
 const initial: BulkActionState = null
@@ -35,8 +36,11 @@ export function BulkActionsBar({ selectedIds, onClear }: Props) {
   const lastMessage = retryState
   const expectedConfirm = `delete ${selectedIds.length}`
 
+  // Bottom-anchored fixed bar so it stays in view as the user scrolls
+  // the table (vertical or horizontal) and doesn't fight the sticky
+  // table header for the top slot.
   return (
-    <div className="sticky top-3 z-30 flex flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 shadow-md">
+    <div className="fixed inset-x-4 bottom-4 z-40 mx-auto flex max-w-5xl flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 shadow-lg md:inset-x-6">
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-full bg-[color:var(--color-accent)]/20 px-2 py-0.5 text-[11px] font-semibold text-[color:var(--color-text-primary)]">
           {selectedIds.length} selected
@@ -114,18 +118,58 @@ export function BulkActionsBar({ selectedIds, onClear }: Props) {
       )}
 
       {lastMessage && (
-        <p
-          className={[
-            'rounded-md px-2 py-1 text-[11px]',
-            lastMessage.status === 'ok'
-              ? 'bg-green-100 text-green-800'
-              : 'bg-red-100 text-red-800',
-          ].join(' ')}
-        >
-          {lastMessage.status === 'ok' ? lastMessage.message : lastMessage.error}
-        </p>
+        <div className="flex flex-col gap-1">
+          <p
+            className={[
+              'rounded-md px-2 py-1 text-[11px]',
+              lastMessage.status === 'ok'
+                ? 'bg-green-100 text-green-800'
+                : 'bg-red-100 text-red-800',
+            ].join(' ')}
+          >
+            {lastMessage.status === 'ok' ? lastMessage.message : lastMessage.error}
+          </p>
+          {lastMessage.status === 'ok' && lastMessage.skipped && lastMessage.skipped.length > 0 && (
+            <SkippedDetail skipped={lastMessage.skipped} />
+          )}
+        </div>
       )}
     </div>
+  )
+}
+
+const SKIP_REASON_LABEL: Record<SkippedLead['reason'], string> = {
+  no_url: 'Missing or invalid URL',
+  no_country: 'Missing country code',
+  affiliate_domain: 'Known affiliate domain — skipped by detection rules',
+  not_affiliate: 'Not flagged as affiliate (S-tags stage only runs on affiliates)',
+}
+
+function SkippedDetail({ skipped }: { skipped: SkippedLead[] }) {
+  // Group by reason so the user can see *why* each lead was dropped.
+  const groups = new Map<SkippedLead['reason'], number[]>()
+  for (const s of skipped) {
+    const arr = groups.get(s.reason) ?? []
+    arr.push(s.leadId)
+    groups.set(s.reason, arr)
+  }
+
+  return (
+    <details className="rounded-md border border-amber-200 bg-amber-50/60 px-2 py-1 text-[11px] text-amber-900">
+      <summary className="cursor-pointer select-none font-medium">
+        {skipped.length} lead{skipped.length === 1 ? '' : 's'} skipped — show details
+      </summary>
+      <ul className="mt-1 flex flex-col gap-1">
+        {Array.from(groups.entries()).map(([reason, ids]) => (
+          <li key={reason}>
+            <p className="font-medium">{SKIP_REASON_LABEL[reason]}</p>
+            <p className="break-all font-mono text-[10px] text-amber-800">
+              {ids.map(id => `#${id}`).join(', ')}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </details>
   )
 }
 
