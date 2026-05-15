@@ -251,13 +251,13 @@ export async function toggleScheduledItem(formData: FormData): Promise<void> {
   await requireAuth()
   const itemId = String(formData.get('item_id') ?? '').trim()
   const setId = String(formData.get('set_id') ?? '').trim()
-  const isActive = formData.get('is_active') === 'true'
   if (!itemId) return
   const svc = createServiceClient()
-  const { error } = await svc
-    .from('scheduled_keyword_items')
-    .update({ is_active: !isActive })
-    .eq('id', itemId)
+  // Server-side `NOT is_active` toggle via RPC — avoids the read-
+  // modify-write race where two clicks (or a stale tab) both submit
+  // the same `is_active` and produce a lost update. See migration
+  // 20260515000000_toggle_scheduled_item_atomic.sql.
+  const { error } = await svc.rpc('toggle_scheduled_item', { p_item_id: itemId })
   if (error) throw new Error(error.message)
   if (setId) revalidatePath(`/schedules/${setId}`)
 }

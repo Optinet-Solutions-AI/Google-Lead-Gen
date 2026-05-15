@@ -33,14 +33,25 @@ export async function POST(request: NextRequest) {
   const svc = createServiceClient()
   const now = new Date()
 
-  // Find sets that are due
+  // Atomically claim due sets. An UPDATE-with-RETURNING uses row-level
+  // locks: two concurrent ticks serialize, and the loser sees its WHERE
+  // clause fail the EPQ re-check (because last_run_at has just been
+  // bumped) — so each due set is enqueued exactly once even if Vercel
+  // double-fires the cron or a manual POST overlaps with the schedule.
+  // The 30s window is a defensive guard: it rejects re-claims by ticks
+  // whose request started before the previous claim finalized.
+  const claimWindow = new Date(now.getTime() - 30_000).toISOString()
   const { data: due, error: dueError } = await svc
     .from('scheduled_keyword_sets')
-    .select('id, name, cron, default_pages, next_run_at, run_enrichment')
+    .update({ last_run_at: now.toISOString() })
     .eq('is_active', true)
     .or(`next_run_at.is.null,next_run_at.lte.${now.toISOString()}`)
-    .limit(50)
-  if (dueError) return Response.json({ error: dueError.message }, { status: 500 })
+    .or(`last_run_at.is.null,last_run_at.lt.${claimWindow}`)
+    .select('id, name, cron, default_pages, next_run_at, run_enrichment')
+  if (dueError) {
+    console.error('[scheduler/tick] claim failed', dueError)
+    return Response.json({ error: 'claim failed' }, { status: 500 })
+  }
 
   const runs: Array<{ set: string; enqueued: number; next_run_at: string | null; note?: string }> = []
 
@@ -74,12 +85,22 @@ export async function POST(request: NextRequest) {
       enqueued = rows.length
     }
 
-    // Compute next_run_at from the cron expression (if set)
+    // Compute next_run_at from the cron expression (if set). Anchor
+    // from the *previous* scheduled slot when it's in the past — that
+    // way a missed firing rolls forward one slot at a time on each
+    // subsequent tick (catch-up), instead of jumping straight to the
+    // next future slot and silently dropping the intermediate runs.
     let nextRunAtIso: string | null = null
     if (set.cron) {
       try {
+        const previousScheduled =
+          set.next_run_at ? new Date(set.next_run_at) : null
+        const anchor =
+          previousScheduled && previousScheduled.getTime() < now.getTime() - 1
+            ? previousScheduled
+            : new Date(now.getTime() - 1)
         const interval = CronExpressionParser.parse(set.cron, {
-          currentDate: now,
+          currentDate: anchor,
           tz: 'UTC',
         })
         nextRunAtIso = interval.next().toDate().toISOString()
@@ -94,10 +115,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // last_run_at was already stamped during the atomic claim above —
+    // this finalize only needs to set the computed next_run_at.
     const { error: updateError } = await svc
       .from('scheduled_keyword_sets')
       .update({
-        last_run_at: now.toISOString(),
         ...(nextRunAtIso ? { next_run_at: nextRunAtIso } : { next_run_at: null }),
         updated_at: now.toISOString(),
       })

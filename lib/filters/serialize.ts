@@ -20,6 +20,10 @@ export function parseFilters(raw: string | string[] | undefined): Filter[] {
     if (parts.length < 2) continue
     const [col, op, v, v2] = parts
     if (!col || !op) continue
+    // `between` requires both bounds. Without them the filter is a
+    // no-op downstream (see applyOne in ./apply.ts), and we'd rather
+    // drop it than carry a half-formed row through the URL.
+    if (op === 'between' && (!v || !v2)) continue
     const row: Filter = { col, op }
     if (v !== undefined) row.v = v
     if (v2 !== undefined) row.v2 = v2
@@ -40,14 +44,26 @@ export function parseSorts(raw: string | string[] | undefined): Sort[] {
 }
 
 export function serializeFilters(filters: Filter[]): string[] {
-  return filters
-    .filter(f => f.col && f.op)
-    .map(f => {
-      const parts = [f.col, f.op]
-      if (f.v !== undefined && f.v !== '') parts.push(f.v)
-      if (f.v2 !== undefined && f.v2 !== '') parts.push(f.v2)
-      return parts.join(':')
-    })
+  const out: string[] = []
+  for (const f of filters) {
+    if (!f.col || !f.op) continue
+    if (f.op === 'between') {
+      // Both bounds must be present — without them the filter is a
+      // no-op, and emitting `col:between:5` would position-collapse
+      // on the next parse (v2 silently slides into v).
+      if (!f.v || !f.v2) continue
+      out.push(`${f.col}:${f.op}:${f.v}:${f.v2}`)
+      continue
+    }
+    // All other ops use only v; never emit v2 in this slot, since the
+    // positional encoding would otherwise let v2 leak into v on parse.
+    if (f.v !== undefined && f.v !== '') {
+      out.push(`${f.col}:${f.op}:${f.v}`)
+    } else {
+      out.push(`${f.col}:${f.op}`)
+    }
+  }
+  return out
 }
 
 export function serializeSorts(sorts: Sort[]): string[] {

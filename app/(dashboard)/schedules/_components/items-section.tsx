@@ -138,7 +138,6 @@ export function ItemsSection({ setId, items, countries }: Props) {
                     <form action={toggleScheduledItem}>
                       <input type="hidden" name="item_id" value={it.id} />
                       <input type="hidden" name="set_id" value={setId} />
-                      <input type="hidden" name="is_active" value={String(it.is_active)} />
                       <button
                         type="submit"
                         title={it.is_active ? 'Disable' : 'Enable'}

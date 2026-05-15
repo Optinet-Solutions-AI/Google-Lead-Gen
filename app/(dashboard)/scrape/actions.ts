@@ -20,14 +20,11 @@ export async function checkMondayDuplicates(
   _prev: CheckMondayState,
   formData: FormData,
 ): Promise<CheckMondayState> {
-  const supabase = await createServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return { status: 'error', error: 'Not signed in.' }
-
   const jobId = String(formData.get('job_id') ?? '').trim()
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
   const { data, error } = await svc.rpc('mark_monday_duplicates_for_job', {
@@ -245,6 +242,41 @@ async function requireSignedIn(): Promise<{ ok: true } | { ok: false; error: str
   return { ok: true }
 }
 
+/**
+ * Authorise a per-job action: the caller must either own the job
+ * (matched on `created_by_email`) or be an admin. Used by the
+ * pause/resume/dup-check/affiliate-rerun control actions, all of
+ * which previously only checked "is the caller signed in" — leaving
+ * any signed-in user able to mutate any job_id they could guess.
+ */
+async function requireJobAccess(
+  jobId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, error: 'Not signed in.' }
+
+  const svc = createServiceClient()
+  const { data: job, error: jobErr } = await svc
+    .from('scrape_queue')
+    .select('created_by_email')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (jobErr) return { ok: false, error: jobErr.message }
+  if (!job) return { ok: false, error: 'Job not found.' }
+
+  const ownerEmail = (job as { created_by_email: string | null }).created_by_email
+  if (ownerEmail && user.email && ownerEmail.toLowerCase() === user.email.toLowerCase()) {
+    return { ok: true }
+  }
+  const { data: isAdmin, error: adminErr } = await svc.rpc('is_admin', { p_user_id: user.id })
+  if (adminErr) return { ok: false, error: adminErr.message }
+  if (isAdmin) return { ok: true }
+  return { ok: false, error: 'You do not have access to this job.' }
+}
+
 function jobIdFrom(fd: FormData): string {
   return String(fd.get('job_id') ?? '').trim()
 }
@@ -254,10 +286,10 @@ export async function runAffiliateDetection(
   _prev: StageRunState,
   fd: FormData,
 ): Promise<StageRunState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
   const { data: leads, error: leadsErr } = await svc
@@ -731,10 +763,10 @@ export async function resetCaptchaRetries(
 }
 
 export async function pauseScrapeJob(_prev: JobActionState, fd: FormData): Promise<JobActionState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const r = await flipScrapeStatus(jobId, ['pending'], 'paused')
   if (!r.ok) return { status: 'error', error: r.error }
@@ -751,10 +783,10 @@ export async function pauseScrapeJob(_prev: JobActionState, fd: FormData): Promi
 }
 
 export async function resumeScrapeJob(_prev: JobActionState, fd: FormData): Promise<JobActionState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const r = await flipScrapeStatus(jobId, ['paused'], 'pending')
   if (!r.ok) return { status: 'error', error: r.error }
