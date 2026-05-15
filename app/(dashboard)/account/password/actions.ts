@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { verifyUserPassword } from '@/lib/auth/verify-password'
 
 export type ChangePasswordState =
   | { status: 'ok'; message: string }
@@ -40,12 +41,10 @@ export async function changePasswordAction(
     redirect('/login')
   }
 
-  // Re-authenticate with current password to verify.
-  const { error: signInError } = await supabase.auth.signInWithPassword({
-    email: user.email,
-    password: currentPassword,
-  })
-  if (signInError) {
+  // Verify the current password against a stateless anon client so the
+  // user's session JWT cookies aren't silently rotated by the check.
+  const ok = await verifyUserPassword(user.email, currentPassword)
+  if (!ok) {
     return { status: 'error', error: 'Current password is incorrect.' }
   }
 

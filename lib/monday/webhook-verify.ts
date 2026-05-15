@@ -48,12 +48,33 @@ export async function verifyMondayWebhook(
 
   let payload: MondayWebhookClaims
   try {
-    const verified = await jwtVerify(token, secret, { algorithms: ['HS256'] })
+    // `maxTokenAge: '5m'` requires an `iat` claim and rejects tokens
+    // older than 5 minutes — protects against replay of a captured
+    // signed request (without this option the token is valid until
+    // its explicit `exp`, which Monday doesn't always set).
+    const verified = await jwtVerify(token, secret, {
+      algorithms: ['HS256'],
+      maxTokenAge: '5m',
+    })
     payload = verified.payload as MondayWebhookClaims
   } catch (err) {
     throw new WebhookVerificationError(
       `JWT verification failed: ${err instanceof Error ? err.message : String(err)}`,
     )
+  }
+
+  // Defence in depth: even if jose's maxTokenAge check passes, refuse
+  // a token whose iat is in the future or wildly stale. 60s of clock
+  // skew is plenty for server-to-server JWTs.
+  const nowSec = Math.floor(Date.now() / 1000)
+  if (typeof payload.iat !== 'number') {
+    throw new WebhookVerificationError('iat claim missing')
+  }
+  if (payload.iat > nowSec + 60) {
+    throw new WebhookVerificationError('iat is in the future')
+  }
+  if (nowSec - payload.iat > 300) {
+    throw new WebhookVerificationError('token too old (iat > 5m)')
   }
 
   // Optional: pin to our app ID. Skip silently if MONDAY_APP_ID is unset

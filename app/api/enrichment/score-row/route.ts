@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { requireBearer } from '@/lib/auth/bearer'
 import { scoreAffiliate, shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { findRoosterBrandLinks } from '@/lib/affiliate-detection/rooster'
 import { extractContacts } from '@/lib/contact-extraction/extract'
@@ -22,12 +23,12 @@ export const dynamic = 'force-dynamic'
  * and the VM .env). This is NOT a user-facing endpoint.
  */
 export async function POST(req: Request): Promise<Response> {
-  const auth = req.headers.get('authorization') ?? ''
-  const expected = process.env.INTERNAL_API_TOKEN
-  if (!expected) return NextResponse.json({ error: 'Server missing INTERNAL_API_TOKEN' }, { status: 500 })
-  if (auth !== `Bearer ${expected}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const check = requireBearer(
+    req.headers.get('authorization'),
+    process.env.INTERNAL_API_TOKEN,
+    { secretName: 'INTERNAL_API_TOKEN' },
+  )
+  if (!check.ok) return NextResponse.json({ error: check.error }, { status: check.status })
 
   type StagExtra = {
     s_tag?: string

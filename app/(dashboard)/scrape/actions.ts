@@ -5,6 +5,7 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { logActivity } from '@/lib/activity-log'
+import { verifyUserPassword } from '@/lib/auth/verify-password'
 
 export type EnqueueState =
   | { status: 'ok'; message: string }
@@ -1296,12 +1297,11 @@ export async function bulkDeleteScrapeJobs(
   if (!auth.user_email) {
     return { status: 'error', error: 'Cannot verify password — no email on file.' }
   }
-  // signInWithPassword issues a fresh JWT but doesn't invalidate the
-  // existing session; safe to use as a one-shot password check.
-  const reauth = await createServerClient().then(c =>
-    c.auth.signInWithPassword({ email: auth.user_email!, password }),
-  )
-  if (reauth.error) {
+  // Verify via a stateless anon client so the admin's session cookies
+  // aren't rotated by this check (the cookie-bound client would have
+  // overwritten the JWT mid-action).
+  const reauthOk = await verifyUserPassword(auth.user_email, password)
+  if (!reauthOk) {
     return { status: 'error', error: 'Password is incorrect.' }
   }
 

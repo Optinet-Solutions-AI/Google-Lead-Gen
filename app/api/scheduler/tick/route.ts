@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { CronExpressionParser } from 'cron-parser'
 import { createServiceClient } from '@/lib/supabase/service'
+import { requireBearer } from '@/lib/auth/bearer'
 
 // Vercel cron sends GET — alias to the same handler as manual POSTs.
 export async function GET(request: NextRequest) {
@@ -22,13 +23,12 @@ export async function GET(request: NextRequest) {
  * `Authorization: Bearer <CRON_SECRET>` if the secret is configured.
  */
 export async function POST(request: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = request.headers.get('authorization') ?? ''
-    if (auth !== `Bearer ${secret}`) {
-      return Response.json({ error: 'unauthorized' }, { status: 401 })
-    }
-  }
+  const check = requireBearer(
+    request.headers.get('authorization'),
+    process.env.CRON_SECRET,
+    { secretName: 'CRON_SECRET' },
+  )
+  if (!check.ok) return Response.json({ error: check.error }, { status: check.status })
 
   const svc = createServiceClient()
   const now = new Date()

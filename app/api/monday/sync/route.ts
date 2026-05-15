@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { runMondaySync } from '@/lib/monday/sync-runner'
+import { requireBearer } from '@/lib/auth/bearer'
 
 // Allow up to 5 minutes — full re-sync of 4 boards can run several
 // minutes given the 700ms inter-request throttle. Vercel Pro caps at 300s.
@@ -22,13 +23,12 @@ export async function GET(request: NextRequest) {
  * use the same header.
  */
 export async function POST(request: NextRequest) {
-  const secret = process.env.CRON_SECRET
-  if (secret) {
-    const auth = request.headers.get('authorization') ?? ''
-    if (auth !== `Bearer ${secret}`) {
-      return Response.json({ error: 'unauthorized' }, { status: 401 })
-    }
-  }
+  const check = requireBearer(
+    request.headers.get('authorization'),
+    process.env.CRON_SECRET,
+    { secretName: 'CRON_SECRET' },
+  )
+  if (!check.ok) return Response.json({ error: check.error }, { status: check.status })
 
   const result = await runMondaySync()
 

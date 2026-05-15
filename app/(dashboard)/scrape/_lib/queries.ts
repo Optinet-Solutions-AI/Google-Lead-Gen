@@ -108,18 +108,25 @@ export async function fetchStageSummary(jobId: string): Promise<StageSummary> {
     stag: EMPTY_STATUS(),
     stagCheck: EMPTY_STATUS(),
   }
-  // We also need s-tag-check matches from s_tags_table — query it once and
-  // aggregate matched counts per job.
-  const { data: tagData, error: tagErr } = await svc
-    .from('s_tags_table')
-    .select('lead_id, is_existing_on_monday')
-    .not('is_existing_on_monday', 'is', null)
-  if (tagErr) throw tagErr
+  // Scope the tag scan to this job's leads — otherwise this fetches
+  // every s_tags_table row in the DB and counts matches that belong
+  // to other jobs against the current job's summary.
+  const summaryLeadIds = rows
+    .map(r => r.id as number | undefined)
+    .filter((id): id is number => typeof id === 'number')
   const tagMatchedByLead = new Map<number, boolean>()
-  for (const t of tagData ?? []) {
-    const leadId = t.lead_id as number
-    if (t.is_existing_on_monday === true) tagMatchedByLead.set(leadId, true)
-    else if (!tagMatchedByLead.has(leadId)) tagMatchedByLead.set(leadId, false)
+  if (summaryLeadIds.length > 0) {
+    const { data: tagData, error: tagErr } = await svc
+      .from('s_tags_table')
+      .select('lead_id, is_existing_on_monday')
+      .not('is_existing_on_monday', 'is', null)
+      .in('lead_id', summaryLeadIds)
+    if (tagErr) throw tagErr
+    for (const t of tagData ?? []) {
+      const leadId = t.lead_id as number
+      if (t.is_existing_on_monday === true) tagMatchedByLead.set(leadId, true)
+      else if (!tagMatchedByLead.has(leadId)) tagMatchedByLead.set(leadId, false)
+    }
   }
 
   // ----- in-flight enrichment-fetch-queue counts -----
@@ -292,21 +299,28 @@ async function fetchEnrichmentStatus(
   const { data, error } = await svc
     .from('google_lead_gen_table')
     .select(
-      'scrape_job_id, is_on_monday, affiliate_checked_at, rooster_checked_at, contact_checked_at, s_tags_checked_at, s_tag_id',
+      'id, scrape_job_id, is_on_monday, affiliate_checked_at, rooster_checked_at, contact_checked_at, s_tags_checked_at, s_tag_id',
     )
     .in('scrape_job_id', jobIds)
   if (error) throw error
 
   // s_tag_check stage applied if any s_tags_table row for the job has a
-  // non-null is_existing_on_monday — fetch that separately.
-  const { data: stagDup, error: stagErr } = await svc
-    .from('s_tags_table')
-    .select('lead_id, is_existing_on_monday')
-    .not('is_existing_on_monday', 'is', null)
-  if (stagErr) throw stagErr
-  const leadIdsWithStagCheck = new Set<number>(
-    (stagDup ?? []).map(r => r.lead_id as number),
-  )
+  // non-null is_existing_on_monday — fetch that separately, scoped to
+  // this job's leads (was previously a full-table scan that picked up
+  // matches from unrelated jobs).
+  const leadIdsForStag = (data ?? [])
+    .map(r => r.id as number | undefined)
+    .filter((id): id is number => typeof id === 'number')
+  const leadIdsWithStagCheck = new Set<number>()
+  if (leadIdsForStag.length > 0) {
+    const { data: stagDup, error: stagErr } = await svc
+      .from('s_tags_table')
+      .select('lead_id, is_existing_on_monday')
+      .not('is_existing_on_monday', 'is', null)
+      .in('lead_id', leadIdsForStag)
+    if (stagErr) throw stagErr
+    for (const r of stagDup ?? []) leadIdsWithStagCheck.add(r.lead_id as number)
+  }
 
   for (const row of data ?? []) {
     const jobId = row.scrape_job_id as string | null

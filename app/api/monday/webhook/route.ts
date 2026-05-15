@@ -23,31 +23,47 @@ import { handleEvent } from '@/lib/monday/event-handlers'
  * spam retries for things we deliberately skip.
  */
 export async function POST(request: NextRequest): Promise<Response> {
-  let body: unknown
-  try {
-    body = await request.json()
-  } catch {
-    return Response.json({ error: 'invalid JSON' }, { status: 400 })
+  // Branch on the Authorization header BEFORE parsing the body — Monday's
+  // setup-time challenge handshake is the only unsigned request and is
+  // recognised by the missing Authorization. Event deliveries get
+  // verified up-front so we never run JSON parsing on attacker-controlled
+  // bodies before checking authenticity.
+  const authHeader = request.headers.get('authorization')
+
+  if (!authHeader) {
+    // Challenge handshake — read body and echo back the random.
+    let body: unknown
+    try {
+      body = await request.json()
+    } catch {
+      return Response.json({ error: 'invalid JSON' }, { status: 400 })
+    }
+    if (
+      typeof body === 'object' &&
+      body !== null &&
+      'challenge' in body &&
+      typeof (body as { challenge: unknown }).challenge === 'string'
+    ) {
+      return Response.json({ challenge: (body as { challenge: string }).challenge })
+    }
+    return Response.json({ error: 'unauthorized' }, { status: 401 })
   }
 
-  // 1. Challenge handshake — no signature required, just echo back.
-  if (
-    typeof body === 'object' &&
-    body !== null &&
-    'challenge' in body &&
-    typeof (body as { challenge: unknown }).challenge === 'string'
-  ) {
-    return Response.json({ challenge: (body as { challenge: string }).challenge })
-  }
-
-  // 2. Event delivery — verify signature first.
+  // Event delivery — verify the JWT FIRST, before touching the body.
   try {
-    await verifyMondayWebhook(request.headers.get('authorization'))
+    await verifyMondayWebhook(authHeader)
   } catch (err) {
     return Response.json(
       { error: err instanceof Error ? err.message : 'unauthorized' },
       { status: 401 },
     )
+  }
+
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    return Response.json({ error: 'invalid JSON' }, { status: 400 })
   }
 
   // Extract the event payload.
