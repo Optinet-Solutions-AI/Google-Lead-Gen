@@ -10,7 +10,6 @@ import {
   Clock,
   Database,
   Globe,
-  Hand,
   HelpCircle,
   KeyRound,
   LayoutDashboard,
@@ -110,12 +109,17 @@ const ADMIN_NAV_ITEMS = [
     icon: MessageCircle,
     match: (p: string) => p.startsWith('/admin/feedback'),
   },
-  {
-    label: 'Interactive Checkpoints (Admin)',
-    href: '/admin/interactive',
-    icon: Hand,
-    match: (p: string) => p.startsWith('/admin/interactive'),
-  },
+  // Interactive Checkpoints (captcha resolver) hidden until noVNC config
+  // (NEXT_PUBLIC_VNC_BASE_URL + INTERACTIVE_VNC_HMAC_SECRET + VM-side
+  // setup per docs/runbook-novnc.md) is finished. Backend still creates
+  // checkpoints on captcha hits; route /admin/interactive still works
+  // for direct access. Re-enable by uncommenting once VNC is wired.
+  // {
+  //   label: 'Interactive Checkpoints (Admin)',
+  //   href: '/admin/interactive',
+  //   icon: Hand,
+  //   match: (p: string) => p.startsWith('/admin/interactive'),
+  // },
   {
     label: 'Google Login (Admin)',
     href: '/admin/google-login',
