@@ -120,9 +120,6 @@ export async function setFeedbackStatusAction(
   if (next === 'resolved' || next === 'rejected') {
     patch.resolved_at = new Date().toISOString()
     patch.resolved_by = auth.display
-  } else {
-    patch.resolved_at = null
-    patch.resolved_by = null
   }
   const { error } = await svc.from('qa_feedback').update(patch).eq('id', id)
   if (error) return { status: 'error', error: error.message }

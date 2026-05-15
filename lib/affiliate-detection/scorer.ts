@@ -105,10 +105,17 @@ const LICENSE_KEYWORDS = [
   'regulated by ukgc',
 ]
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function countOccurrences(str: string, patterns: string[]): number {
   let count = 0
   for (const pattern of patterns) {
-    const regex = new RegExp(pattern, 'gi')
+    // Patterns are treated as literal substrings, not regex — escape
+    // meta chars so an entry like "rated 5.0" doesn't silently match
+    // "rated 5X0".
+    const regex = new RegExp(escapeRegExp(pattern), 'gi')
     const matches = str.match(regex)
     if (matches) count += matches.length
   }
@@ -241,9 +248,12 @@ export function scoreAffiliate(html: string, inputUrl: string): AffiliateScoreRe
   }
 
   // 5. Pros/cons structure
+  // Require the colon form or the longer "advantages/disadvantages" —
+  // bare `pros`/`cons` false-positives on "process", "prospectus",
+  // "consider", "console" which appear on almost every page.
   const hasProsCons =
-    (text.includes('pros:') || text.includes('pros') || text.includes('advantages:')) &&
-    (text.includes('cons:') || text.includes('cons') || text.includes('disadvantages:'))
+    (text.includes('pros:') || text.includes('advantages:')) &&
+    (text.includes('cons:') || text.includes('disadvantages:'))
   if (hasProsCons) {
     affiliateScore += 5
     indicators.push('Pros/cons review structure')

@@ -82,7 +82,9 @@ function applyOne(q: AnyQuery, f: Filter, def: ColumnDef): AnyQuery {
       return q.is(def.key, null)
     case 'notempty':
       if (def.type === 'text') {
-        return q.not(def.key, 'is', null)
+        // Mirror the 'empty' branch — for text columns, both NULL and
+        // empty-string count as empty, so notempty must exclude both.
+        return q.not(def.key, 'is', null).neq(def.key, '')
       }
       return q.not(def.key, 'is', null)
     case 'istrue':

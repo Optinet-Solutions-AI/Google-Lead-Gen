@@ -98,13 +98,27 @@ export function parseStagFromUrl(rawUrl: string): { tag: string; param: string }
   return null
 }
 
+// Common "second-level TLDs" — when a 2-char country TLD follows one
+// of these, the actual brand lives one level deeper (e.g. `casino.co.uk`
+// → `casino`, not `casino.co`). Lower-case, no trailing dot.
+const SECOND_LEVEL_TLDS = new Set([
+  'co', 'com', 'org', 'net', 'gov', 'edu', 'ac', 'mil',
+])
+
 export function guessBrandFromUrl(rawUrl: string): string | null {
   try {
     const host = new URL(rawUrl).hostname.toLowerCase().replace(/^www\./, '')
-    // Brand = the second-level domain name (e.g. "casino123" from "casino123.com").
     const parts = host.split('.')
     if (parts.length < 2) return null
-    return parts.slice(0, -1).join('.') || null
+    // Treat e.g. `co.uk`, `com.au`, `org.uk` as a single TLD when a
+    // 2-letter country code follows a known generic.
+    const last = parts[parts.length - 1] ?? ''
+    const penult = parts[parts.length - 2] ?? ''
+    const tldDepth =
+      parts.length >= 3 && last.length === 2 && SECOND_LEVEL_TLDS.has(penult) ? 2 : 1
+    const brandParts = parts.slice(0, parts.length - tldDepth)
+    if (brandParts.length === 0) return null
+    return brandParts.join('.') || null
   } catch {
     return null
   }

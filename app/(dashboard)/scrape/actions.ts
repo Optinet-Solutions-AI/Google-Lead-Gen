@@ -134,9 +134,10 @@ export async function enqueueScrape(
     return { status: 'error', error: `Country ${country_code} has no GoLogin profile configured.` }
   }
   // Reject a language that isn't valid for this country (UI filters but
-  // a hand-crafted POST could still slip through).
+  // a hand-crafted POST could still slip through). Falls back to the
+  // first allowed language if the requested one isn't on the list.
   const allowedLangs = (profile as { languages: string[] | null }).languages ?? ['en']
-  const finalLang = allowedLangs.includes(language) || language === 'en' ? language : 'en'
+  const finalLang = allowedLangs.includes(language) ? language : (allowedLangs[0] ?? 'en')
 
   // Cross-product: one row per (keyword × engine). Stamp queueing
   // attribution so /scrape can show "by <name>" without a join, and
@@ -967,7 +968,10 @@ async function checkConfirmation(
   if (error) return { ok: false, error: error.message }
   if (!data) return { ok: false, error: 'Job not found.' }
   const keyword = (data as { keyword: string }).keyword
-  if (confirmationText.trim() !== keyword) {
+  // Trim both sides — keywords are stored trimmed on insert, but a
+  // one-sided trim still misclassifies legitimate matches if the DB
+  // value ever picks up whitespace from another path.
+  if (confirmationText.trim() !== keyword.trim()) {
     return {
       ok: false,
       error: `Confirmation text doesn't match the keyword "${keyword}".`,

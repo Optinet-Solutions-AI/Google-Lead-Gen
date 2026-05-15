@@ -291,8 +291,11 @@ export async function pushLeadToMonday(
   let sTagUpdatePosted = false
   if (stags.length > 0) {
     const body = stags
-      .map(t => `${(t.brand ?? '').trim()} ${(t.s_tag ?? '').trim()}`)
-      .filter(line => line.trim().length > 0)
+      // Require both sides — otherwise a one-sided row produces a
+      // line like " s_tag" or "brand " which renders garbled in
+      // Monday and breaks downstream parsers.
+      .filter(t => (t.brand ?? '').trim() && (t.s_tag ?? '').trim())
+      .map(t => `${t.brand!.trim()} ${t.s_tag!.trim()}`)
       .join('\n')
     if (body.length > 0) {
       try {

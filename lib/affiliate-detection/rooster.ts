@@ -52,7 +52,10 @@ export function findRoosterBrandLinks(
       const name = b.brand_name.trim().toLowerCase()
       if (name.length >= MIN_STEM) brandsByToken.set(name, b)
     }
-    const stem = dom.split('.')[0] ?? ''
+    // Strip a leading `www.` so the stem reflects the brand, not the
+    // subdomain — otherwise every `www.<anything>.com` brand collapses
+    // to the single token "www".
+    const stem = dom.replace(/^www\./, '').split('.')[0] ?? ''
     if (stem.length >= MIN_STEM) brandsByToken.set(stem, b)
   }
 

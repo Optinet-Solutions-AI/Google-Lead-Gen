@@ -56,6 +56,16 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
   const [keywordsText, setKeywordsText] = useState('')
   const [selectedCountry, setSelectedCountry] = useState('')
   const [selectedLang, setSelectedLang] = useState('en')
+  // `datetime-local` returns "YYYY-MM-DDTHH:mm" with no zone. We
+  // convert to ISO with UTC offset in the browser (where the local TZ
+  // is meaningful) so the server doesn't reinterpret the wall-clock
+  // time as UTC.
+  const [scheduledAtLocal, setScheduledAtLocal] = useState('')
+  const scheduledAtIso = useMemo(() => {
+    if (!scheduledAtLocal) return ''
+    const d = new Date(scheduledAtLocal)
+    return Number.isFinite(d.getTime()) ? d.toISOString() : ''
+  }, [scheduledAtLocal])
   // Open by default. Collapsed state persists per-browser via
   // localStorage so once an operator hides it, it stays hidden across
   // page navigations.
@@ -104,6 +114,7 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
       // tell this only runs on a state change, not on every render.
        
       setKeywordsText('')
+      setScheduledAtLocal('')
       // Refresh the jobs table to show the new rows immediately
       router.refresh()
     }
@@ -262,9 +273,11 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
           </span>
           <input
             type="datetime-local"
-            name="scheduled_at"
+            value={scheduledAtLocal}
+            onChange={e => setScheduledAtLocal(e.target.value)}
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-1.5 text-[12px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none"
           />
+          <input type="hidden" name="scheduled_at" value={scheduledAtIso} />
         </label>
       </div>
 

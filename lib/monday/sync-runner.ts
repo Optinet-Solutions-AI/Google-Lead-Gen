@@ -118,7 +118,10 @@ async function syncBoard(
         `[${board.monday_board_name}] page ${pageNumber}: ${itemRows.length} items (+${updateRows.length} updates) — total items ${totalItems}`,
       )
 
-      if (!page.cursor) break
+      // Only `null`/`undefined` signals "no more pages". An empty
+      // string is a valid (if unusual) cursor — treating it as
+      // terminal silently truncates the sync mid-stream.
+      if (page.cursor == null) break
       await sleep(SLEEP_BETWEEN_REQUESTS_MS)
       page = await fetchNextPage(page.cursor)
     }

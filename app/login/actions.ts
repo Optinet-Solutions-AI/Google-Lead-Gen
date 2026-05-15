@@ -40,5 +40,8 @@ export async function signInAction(
 }
 
 function isSafePath(path: string): boolean {
+  // Reject CRLF (response-splitting) and backslashes (some browsers
+  // collapse `/\example.com` into a protocol-relative URL).
+  if (/[\r\n\\]/.test(path)) return false
   return path.startsWith('/') && !path.startsWith('//') && !path.startsWith('/login')
 }
