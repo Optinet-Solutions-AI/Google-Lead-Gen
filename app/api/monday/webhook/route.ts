@@ -66,8 +66,13 @@ export async function POST(request: NextRequest): Promise<Response> {
   const result = await handleEvent(event as Parameters<typeof handleEvent>[0])
 
   if (result.status === 'error') {
+    // Log full details server-side; reply to Monday with a generic
+    // shape so Supabase error text doesn't surface in their UI/logs.
     console.error('[monday-webhook]', result)
-    return Response.json(result, { status: 500 })
+    return Response.json(
+      { status: 'error', event_type: result.event_type, board: result.board },
+      { status: 500 },
+    )
   }
 
   return Response.json(result, { status: 200 })

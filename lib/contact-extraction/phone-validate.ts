@@ -24,8 +24,13 @@ export function validatePhones(
   const valid = new Set<string>()
   for (const raw of candidates) {
     if (!raw) continue
+    const trimmed = raw.trim()
+    // Without a country anchor, only accept E.164-prefixed candidates.
+    // Otherwise libphonenumber will happily classify any 10-digit run
+    // (product SKUs, dates, order numbers) as a valid US/CA number.
+    if (!country && !trimmed.startsWith('+')) continue
     try {
-      const parsed = parsePhoneNumberFromString(raw, country)
+      const parsed = parsePhoneNumberFromString(trimmed, country)
       if (parsed && parsed.isValid()) {
         valid.add(parsed.formatInternational())
       }

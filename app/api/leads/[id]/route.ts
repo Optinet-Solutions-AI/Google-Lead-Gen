@@ -29,7 +29,9 @@ export async function GET(
       },
     })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: message }, { status: 500 })
+    // Log the real error server-side; don't leak Supabase schema /
+    // table names back to the client.
+    console.error(`[api/leads/${leadId}]`, err)
+    return NextResponse.json({ error: 'Failed to load lead' }, { status: 500 })
   }
 }

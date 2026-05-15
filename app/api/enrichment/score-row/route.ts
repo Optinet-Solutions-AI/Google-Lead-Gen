@@ -60,7 +60,10 @@ export async function POST(req: Request): Promise<Response> {
     .select('id, url, domain, country_code, result_type, is_contact_overridden_at')
     .eq('id', leadId)
     .maybeSingle()
-  if (leadErr) return NextResponse.json({ error: leadErr.message }, { status: 500 })
+  if (leadErr) {
+    console.error('[score-row] lead lookup failed', { leadId, leadErr })
+    return NextResponse.json({ error: 'Database error' }, { status: 500 })
+  }
   if (!lead) return NextResponse.json({ error: 'lead not found' }, { status: 404 })
 
   const { data: cache, error: cacheErr } = await svc
@@ -68,7 +71,10 @@ export async function POST(req: Request): Promise<Response> {
     .select('html, fetch_error')
     .eq('lead_id', leadId)
     .maybeSingle()
-  if (cacheErr) return NextResponse.json({ error: cacheErr.message }, { status: 500 })
+  if (cacheErr) {
+    console.error('[score-row] cache lookup failed', { leadId, cacheErr })
+    return NextResponse.json({ error: 'Database error' }, { status: 500 })
+  }
 
   const now = new Date().toISOString()
   const fetchError = cache?.fetch_error ?? null
@@ -203,7 +209,10 @@ export async function POST(req: Request): Promise<Response> {
     // Pull the active brand list fresh on every call so brand additions
     // / removals from /brands take effect immediately.
     const { data: brandRows, error: brandErr } = await svc.rpc('list_rooster_brand_domains')
-    if (brandErr) return NextResponse.json({ error: brandErr.message }, { status: 500 })
+    if (brandErr) {
+      console.error('[score-row] brand list lookup failed (rooster)', { leadId, brandErr })
+      return NextResponse.json({ error: 'Database error' }, { status: 500 })
+    }
     const brandList = (brandRows ?? []) as Array<{
       domain: string
       brand_name: string | null
@@ -266,7 +275,10 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const { data: brandRows, error: brandErr } = await svc.rpc('list_rooster_brand_domains')
-    if (brandErr) return NextResponse.json({ error: brandErr.message }, { status: 500 })
+    if (brandErr) {
+      console.error('[score-row] brand list lookup failed (rooster_deep)', { leadId, brandErr })
+      return NextResponse.json({ error: 'Database error' }, { status: 500 })
+    }
     const brandList = (brandRows ?? []) as Array<{
       domain: string
       brand_name: string | null
@@ -379,7 +391,10 @@ export async function POST(req: Request): Promise<Response> {
       })
       .eq('id', leadId)
       .is('is_rooster_overridden_at', null)
-    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
+    if (updErr) {
+      console.error('[score-row] rooster_deep update failed', { leadId, updErr })
+      return NextResponse.json({ error: 'Database error' }, { status: 500 })
+    }
 
     return NextResponse.json({ ok: true, partner: true, match_count: matches.length })
   }
@@ -545,7 +560,10 @@ export async function POST(req: Request): Promise<Response> {
       p_lead_id: leadId,
       p_tags: tags,
     })
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      console.error('[score-row] s_tags rpc failed', { leadId, error })
+      return NextResponse.json({ error: 'Database error' }, { status: 500 })
+    }
 
     const row = (Array.isArray(data) ? data[0] : data) as
       | { inserted: number; matched: number; rooster: number }

@@ -34,6 +34,11 @@ export function htmlToText(html: string): string {
     .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
+    // Strip again after entity decoding — an attacker can hide tags
+    // as `&lt;script&gt;…&lt;/script&gt;` in the source HTML, which
+    // survives the first pass and would otherwise resurrect as real
+    // tags in the plain-text output.
+    .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }

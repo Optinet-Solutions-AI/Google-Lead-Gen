@@ -126,13 +126,24 @@ export async function POST(request: NextRequest) {
 
   const advances: Array<{ id: string; status: string | null; error?: string }> = []
   if (!pendingErr && pending) {
-    for (const row of pending) {
-      const id = (row as { id: string }).id
-      const { data, error } = await svc.rpc('advance_enrichment_chain', { p_job_id: id })
-      if (error) {
-        advances.push({ id, status: null, error: error.message })
-      } else {
-        advances.push({ id, status: typeof data === 'string' ? data : null })
+    // Fan out the per-job RPC calls in capped-concurrency batches so a
+    // pendng queue of 50 doesn't serialize into ~50 round-trips and
+    // blow Vercel's 10s budget. The RPC is independent per job, so any
+    // ordering effects are intentional (already deterministic on the
+    // DB side).
+    const BATCH = 10
+    const ids = pending.map(row => (row as { id: string }).id)
+    for (let i = 0; i < ids.length; i += BATCH) {
+      const slice = ids.slice(i, i + BATCH)
+      const results = await Promise.all(
+        slice.map(async id => {
+          const { data, error } = await svc.rpc('advance_enrichment_chain', { p_job_id: id })
+          return { id, data, error }
+        }),
+      )
+      for (const r of results) {
+        if (r.error) advances.push({ id: r.id, status: null, error: r.error.message })
+        else advances.push({ id: r.id, status: typeof r.data === 'string' ? r.data : null })
       }
     }
   }

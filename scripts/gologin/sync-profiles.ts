@@ -45,8 +45,11 @@ type SeededRow = {
 async function listGoLoginProfiles(): Promise<GoLoginProfile[]> {
   if (!GOLOGIN_TOKEN) throw new Error('GOLOGIN_API_TOKEN is not set')
 
-  // Request a big page so 15 profiles (and then some) fit in one call
-  const url = `${GOLOGIN_API_URL}/browser/v2?limit=200`
+  // Request a big page. The account is expected to hold ≲ a few dozen
+  // profiles; if it ever grows past LIMIT we fail loudly below instead
+  // of silently truncating.
+  const LIMIT = 1000
+  const url = `${GOLOGIN_API_URL}/browser/v2?limit=${LIMIT}`
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${GOLOGIN_TOKEN}`,
@@ -62,6 +65,13 @@ async function listGoLoginProfiles(): Promise<GoLoginProfile[]> {
 
   const body: unknown = await res.json()
   const profiles = extractProfiles(body)
+  if (profiles.length >= LIMIT) {
+    throw new Error(
+      `GoLogin returned ${profiles.length} profiles, hitting the ${LIMIT} page limit. ` +
+        `Implement pagination (page/offset) in this script before re-running, ` +
+        `otherwise profiles beyond the first ${LIMIT} are silently invisible.`,
+    )
+  }
   return profiles
 }
 
