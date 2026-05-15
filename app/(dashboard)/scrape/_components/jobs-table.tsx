@@ -413,7 +413,12 @@ function Th({ children }: { children: React.ReactNode }) {
   )
 }
 
-/** <td><Link> — whole cell becomes the click target for row navigation. */
+/** <td><Link> — whole cell becomes the click target for row navigation.
+ *  prefetch={false}: at "Rows: All" the table has ~10 Links per row × hundreds
+ *  of rows, and Next prefetches every visible Link by default. That floods
+ *  Chrome with "resource was preloaded but not used" warnings and wastes
+ *  bandwidth on routes the user never opens. Navigation still works on click;
+ *  it's just not warmed up ahead of time. */
 function LinkTd({
   href,
   children,
@@ -429,6 +434,7 @@ function LinkTd({
     <td className="p-0 align-middle">
       <Link
         href={href}
+        prefetch={false}
         {...(title ? { title } : {})}
         className={['block whitespace-nowrap px-3 py-2', className ?? ''].join(' ')}
       >

@@ -222,6 +222,31 @@ const JOBS_SEARCH_COLUMNS = [
 /** Soft cap for the "All rows" dropdown option on /scrape. */
 const JOBS_ROWS_ALL_CAP = 10_000
 
+/** Max IDs per `.in(col, [...])` chunk. PostgREST sends `.in()` as a URL
+ *  parameter, so a single call with hundreds of UUIDs overflows the server's
+ *  URL-length limit (typically 4–8 KB) and returns a generic PostgrestError.
+ *  Splitting into ~100-id chunks keeps each request comfortably under the cap. */
+const IN_CHUNK_SIZE = 100
+
+/** Run a query in chunks of IDs and concat the results. Bails on the first
+ *  error so the caller can throw exactly as it would with a single `.in()`.
+ *  The Row type stays loose (`unknown[]`) because Supabase's typed-select
+ *  parser collapses to `GenericStringError[]` for multi-line column lists —
+ *  callers cast at the iteration site, same as before. */
+async function selectInChunks<V>(
+  ids: V[],
+  build: (chunk: V[]) => PromiseLike<{ data: unknown; error: unknown }>,
+): Promise<unknown[]> {
+  const out: unknown[] = []
+  for (let i = 0; i < ids.length; i += IN_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + IN_CHUNK_SIZE)
+    const { data, error } = await build(chunk)
+    if (error) throw error
+    if (Array.isArray(data)) out.push(...data)
+  }
+  return out
+}
+
 export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult> {
   const svc = createServiceClient()
   let query = svc
@@ -296,33 +321,46 @@ async function fetchEnrichmentStatus(
   if (jobIds.length === 0) return out
 
   const svc = createServiceClient()
-  const { data, error } = await svc
-    .from('google_lead_gen_table')
-    .select(
-      'id, scrape_job_id, is_on_monday, affiliate_checked_at, rooster_checked_at, contact_checked_at, s_tags_checked_at, s_tag_id',
-    )
-    .in('scrape_job_id', jobIds)
-  if (error) throw error
+  type LeadRow = {
+    id: number
+    scrape_job_id: string | null
+    is_on_monday: boolean | null
+    affiliate_checked_at: string | null
+    rooster_checked_at: string | null
+    contact_checked_at: string | null
+    s_tags_checked_at: string | null
+    s_tag_id: number | null
+  }
+  const data = (await selectInChunks(jobIds, chunk =>
+    svc
+      .from('google_lead_gen_table')
+      .select(
+        'id, scrape_job_id, is_on_monday, affiliate_checked_at, rooster_checked_at, contact_checked_at, s_tags_checked_at, s_tag_id',
+      )
+      .in('scrape_job_id', chunk),
+  )) as unknown as LeadRow[]
 
   // s_tag_check stage applied if any s_tags_table row for the job has a
   // non-null is_existing_on_monday — fetch that separately, scoped to
   // this job's leads (was previously a full-table scan that picked up
   // matches from unrelated jobs).
-  const leadIdsForStag = (data ?? [])
+  const leadIdsForStag = data
     .map(r => r.id as number | undefined)
     .filter((id): id is number => typeof id === 'number')
   const leadIdsWithStagCheck = new Set<number>()
   if (leadIdsForStag.length > 0) {
-    const { data: stagDup, error: stagErr } = await svc
-      .from('s_tags_table')
-      .select('lead_id, is_existing_on_monday')
-      .not('is_existing_on_monday', 'is', null)
-      .in('lead_id', leadIdsForStag)
-    if (stagErr) throw stagErr
-    for (const r of stagDup ?? []) leadIdsWithStagCheck.add(r.lead_id as number)
+    type StagDupRow = { lead_id: number; is_existing_on_monday: boolean | null }
+    const stagDup = (await selectInChunks(leadIdsForStag, chunk =>
+      svc
+        .from('s_tags_table')
+        .select('lead_id, is_existing_on_monday')
+        .not('is_existing_on_monday', 'is', null)
+        .in('lead_id', chunk),
+    )) as unknown as StagDupRow[]
+    for (const r of stagDup) leadIdsWithStagCheck.add(r.lead_id as number)
   }
 
-  for (const row of data ?? []) {
+  for (const row of data) {
     const jobId = row.scrape_job_id as string | null
     if (!jobId) continue
     const acc = out.get(jobId) ?? {}
@@ -355,17 +393,18 @@ async function fetchStageTimings(
   const svc = createServiceClient()
 
   // Pull every lead's stage timestamps + id (for the s_tag_check join below).
-  const { data: leadRows, error: leadErr } = await svc
-    .from('google_lead_gen_table')
-    .select(
-      [
-        'id, scrape_job_id',
-        'monday_checked_at, affiliate_checked_at, rooster_checked_at',
-        'contact_checked_at, s_tags_checked_at, stag_check_checked_at',
-      ].join(', '),
-    )
-    .in('scrape_job_id', jobIds)
-  if (leadErr) throw leadErr
+  const leadRows = await selectInChunks(jobIds, chunk =>
+    svc
+      .from('google_lead_gen_table')
+      .select(
+        [
+          'id, scrape_job_id',
+          'monday_checked_at, affiliate_checked_at, rooster_checked_at',
+          'contact_checked_at, s_tags_checked_at, stag_check_checked_at',
+        ].join(', '),
+      )
+      .in('scrape_job_id', chunk),
+  )
 
   // s_tag_check_checked_at lives on the lead row, but the actual stage
   // operates per s_tags_table row; fall back to per-lead column which is
@@ -401,7 +440,7 @@ async function fetchStageTimings(
   }
 
   const perJob = new Map<string, StageMax>()
-  for (const r of (leadRows ?? []) as unknown as LeadRow[]) {
+  for (const r of leadRows as unknown as LeadRow[]) {
     if (!r.scrape_job_id) continue
     const acc = perJob.get(r.scrape_job_id) ?? {
       monday: null,
