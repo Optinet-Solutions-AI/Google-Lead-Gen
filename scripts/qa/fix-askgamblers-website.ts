@@ -12,8 +12,11 @@
  * Run dry first (default — prints what it would do):
  *   npx tsx scripts/qa/fix-askgamblers-website.ts
  *
- * Apply for real:
+ * Apply for real (when text1 is empty):
  *   npx tsx scripts/qa/fix-askgamblers-website.ts --apply
+ *
+ * To overwrite an existing non-empty text1, also pass --force-overwrite
+ * (this is the only way to clobber a populated value, per BUGS.md R2-37).
  */
 
 import { config as loadEnv } from 'dotenv'
@@ -28,6 +31,7 @@ const WEBSITE_COLUMN_ID = 'text1'
 const NEW_VALUE = 'https://www.askgamblers.com'
 
 const APPLY = process.argv.includes('--apply')
+const FORCE_OVERWRITE = process.argv.includes('--force-overwrite')
 
 type ItemRead = {
   items: Array<{
@@ -95,11 +99,22 @@ async function main() {
     process.exit(1)
   }
   if (beforeText1.trim().length > 0) {
-    console.warn(`Note: text1 is already populated ("${beforeText1}"). Re-run with --apply only if you intend to overwrite.`)
+    console.warn(`Note: text1 is already populated ("${beforeText1}").`)
     if (!APPLY) {
       console.log('\nDry-run complete. Nothing written.')
       return
     }
+    if (!FORCE_OVERWRITE) {
+      // BUGS.md R2-37 — previously --apply alone was enough to clobber
+      // a populated value, but the dry-run warning only said "re-run
+      // with --apply only if you intend to overwrite". A casual rerun
+      // after the warning silently overwrote the existing value. Now
+      // requires an explicit second flag.
+      console.error(`Refusing to overwrite a non-empty text1 without --force-overwrite. Aborting.`)
+      console.error('  To proceed: re-run with --apply --force-overwrite')
+      process.exit(1)
+    }
+    console.warn('*** --force-overwrite acknowledged — clobbering existing value ***')
   }
 
   if (!APPLY) {

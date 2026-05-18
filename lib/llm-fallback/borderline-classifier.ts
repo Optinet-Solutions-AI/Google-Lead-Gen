@@ -26,9 +26,17 @@ export function htmlToText(html: string): string {
   if (!html) return ''
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    // Self-closing script form: `<script src="x.js" />` (XHTML / inline
+    // SVG style) isn't caught by the paired-tag regex above because
+    // there's no `</script>` for the lazy `*?` to anchor on. Without
+    // this strip the attributes would survive to the next pass and
+    // resurface as text. See BUGS.md R2-34.
+    .replace(/<script(?:\s[^>]*)?\/>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<style(?:\s[^>]*)?\/>/gi, ' ')
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
     .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
+    .replace(/<svg(?:\s[^>]*)?\/>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')

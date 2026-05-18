@@ -443,17 +443,23 @@ export type BulkActionState =
 
 const VALID_STAGES = new Set(['affiliate', 'rooster', 'contact', 'stag'])
 
+/** Max lead IDs accepted per bulk submit. Mirrors the 200 cap used by
+ *  `bulkRerunScrapeJobs` in scrape/actions.ts so all non-admin bulk
+ *  paths share the same blast radius. See BUGS.md R2-33. */
+const LEAD_IDS_CAP = 200
+
 function parseLeadIds(fd: FormData): number[] {
   const raw = String(fd.get('lead_ids') ?? '').trim()
   if (!raw) return []
-  return Array.from(
+  const all = Array.from(
     new Set(
       raw
         .split(',')
         .map(s => Number(s.trim()))
-        .filter(n => Number.isFinite(n) && n > 0),
+        .filter(n => Number.isInteger(n) && n > 0),
     ),
   )
+  return all.slice(0, LEAD_IDS_CAP)
 }
 
 export async function retryEnrichmentForLeads(

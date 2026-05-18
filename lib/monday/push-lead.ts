@@ -290,12 +290,18 @@ export async function pushLeadToMonday(
   // ----- Step 3: s-tags as an item update -----
   let sTagUpdatePosted = false
   if (stags.length > 0) {
+    // Flatten whitespace inside each field so a `brand` value with
+    // embedded newlines, tabs, or quotes doesn't produce a multi-line
+    // row that breaks the downstream `<brand> <s_tag>` line parser.
+    // The collapse is just for the update *body* — the structured
+    // column values remain untouched.
+    const flatten = (s: string): string => s.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim()
     const body = stags
       // Require both sides — otherwise a one-sided row produces a
       // line like " s_tag" or "brand " which renders garbled in
       // Monday and breaks downstream parsers.
-      .filter(t => (t.brand ?? '').trim() && (t.s_tag ?? '').trim())
-      .map(t => `${t.brand!.trim()} ${t.s_tag!.trim()}`)
+      .filter(t => flatten(t.brand ?? '') && flatten(t.s_tag ?? ''))
+      .map(t => `${flatten(t.brand!)} ${flatten(t.s_tag!)}`)
       .join('\n')
     if (body.length > 0) {
       try {

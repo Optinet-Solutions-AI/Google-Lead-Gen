@@ -81,7 +81,12 @@ function NameField({ id, initial }: { id: number; initial: string | null }) {
   const [saved, setSaved] = useState<'idle' | 'ok' | 'error'>('idle')
 
   function save() {
-    if (value === (initial ?? '')) return
+    // Compare trimmed — the server action trims on receipt, so a user
+    // tab-out after typing a stray leading/trailing space was sending
+    // a server write even when the effective value was identical
+    // (logging an activity_log row + revalidating /brands every time).
+    // See BUGS.md R2-36.
+    if (value.trim() === (initial ?? '').trim()) return
     const fd = new FormData()
     fd.set('id', String(id))
     fd.set('brand_name', value)
@@ -123,7 +128,8 @@ function NotesField({ id, initial }: { id: number; initial: string | null }) {
   const [saved, setSaved] = useState<'idle' | 'ok' | 'error'>('idle')
 
   function save() {
-    if (value === (initial ?? '')) return
+    // Trim before compare — see NameField above for context (R2-36).
+    if (value.trim() === (initial ?? '').trim()) return
     const fd = new FormData()
     fd.set('id', String(id))
     fd.set('notes', value)
