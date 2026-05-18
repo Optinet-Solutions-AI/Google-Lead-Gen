@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Play, Trash2 } from 'lucide-react'
-import { deleteScheduledSet, runScheduledSetNow } from '../actions'
+import { ArrowLeft, Play } from 'lucide-react'
+import { runScheduledSetNow } from '../actions'
+import { DeleteScheduleSetButton } from '../_components/delete-set-button'
 import { ItemsSection } from '../_components/items-section'
 import { SetForm } from '../_components/set-form'
 import { describeCron } from '../_lib/cron-presets'
@@ -96,16 +97,7 @@ export default async function ScheduleDetailPage({ params }: Props) {
           </button>
         </form>
 
-        <form action={deleteScheduledSet} className="ml-auto">
-          <input type="hidden" name="id" value={set.id} />
-          <button
-            type="submit"
-            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-3 py-1.5 text-[12px] font-medium text-red-700 hover:bg-red-50"
-          >
-            <Trash2 className="h-3 w-3" />
-            Delete schedule
-          </button>
-        </form>
+        <DeleteScheduleSetButton id={set.id} name={set.name} />
       </section>
     </div>
   )

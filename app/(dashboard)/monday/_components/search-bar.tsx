@@ -24,7 +24,7 @@ export function SearchBar() {
     if (trimmed) params.set('q', trimmed)
     else params.delete('q')
     params.delete('page')
-    router.push(`${pathname}?${params.toString()}`)
+    router.push(`${pathname}?${params.toString()}`, { scroll: false })
   }
 
   function clear() {
@@ -32,7 +32,7 @@ export function SearchBar() {
     const params = new URLSearchParams(sp.toString())
     params.delete('q')
     params.delete('page')
-    router.push(`${pathname}?${params.toString()}`)
+    router.push(`${pathname}?${params.toString()}`, { scroll: false })
   }
 
   return (

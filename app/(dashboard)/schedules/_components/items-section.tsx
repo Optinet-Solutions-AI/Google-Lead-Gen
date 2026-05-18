@@ -154,7 +154,14 @@ export function ItemsSection({ setId, items, countries }: Props) {
                     </form>
                   </Td>
                   <Td>
-                    <form action={deleteScheduledItem}>
+                    <form
+                      action={deleteScheduledItem}
+                      onSubmit={e => {
+                        if (!confirm(`Remove "${it.keyword}" (${it.country_code}) from this schedule?`)) {
+                          e.preventDefault()
+                        }
+                      }}
+                    >
                       <input type="hidden" name="item_id" value={it.id} />
                       <input type="hidden" name="set_id" value={setId} />
                       <button

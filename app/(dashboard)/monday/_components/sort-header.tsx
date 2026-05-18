@@ -36,7 +36,7 @@ export function SortHeader({ columnKey, label, sortable, className }: Props) {
       params.delete('order')
     }
     params.delete('page')
-    router.push(`${pathname}?${params.toString()}`)
+    router.push(`${pathname}?${params.toString()}`, { scroll: false })
   }
 
   if (!sortable) {
