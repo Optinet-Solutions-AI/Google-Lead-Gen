@@ -108,7 +108,13 @@ export function CredentialRow({ country, credential }: Props) {
             )}
           </p>
           {hasCreds && credential && (
-            <p className="truncate text-[11px] text-[color:var(--color-text-secondary)]">
+            <p
+              className="truncate text-[11px] text-[color:var(--color-text-secondary)]"
+              // Locale-formatted timestamp differs between Node's en-US
+              // SSR and the browser's locale; suppress the hydration
+              // warning. See BUGS.md R2-20.
+              suppressHydrationWarning
+            >
               {credential.email}
               {credential.last_used_at && (
                 <>

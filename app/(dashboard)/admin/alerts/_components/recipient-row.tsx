@@ -87,7 +87,14 @@ export function RecipientRow({ recipient }: Props) {
             </span>
           )}
         </p>
-        <p className="truncate text-[10px] text-[color:var(--color-text-secondary)]">
+        <p
+          className="truncate text-[10px] text-[color:var(--color-text-secondary)]"
+          // SSR uses Node's default en-US locale; the browser uses the
+          // user's locale. The formatted date strings differ → React
+          // logs a hydration mismatch. Same pattern as jobs-table.tsx
+          // and the BUGS.md R2-20 cluster.
+          suppressHydrationWarning
+        >
           {recipient.notes ? <span>{recipient.notes} · </span> : null}
           added {new Date(recipient.created_at).toLocaleDateString()}
           {recipient.created_by ? ` by ${recipient.created_by}` : ''}

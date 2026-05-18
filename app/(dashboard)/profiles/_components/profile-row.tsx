@@ -49,7 +49,13 @@ export function ProfileRowEditor({ profile }: { profile: ProfileRow }) {
       <Td className="text-[color:var(--color-text-secondary)]">
         {profile.google_login_verified_at ? (
           <>
-            <span className="text-[color:var(--color-text-primary)]">
+            <span
+              className="text-[color:var(--color-text-primary)]"
+              // SSR uses Node's en-US locale, browser uses the user's
+              // locale; suppress the hydration mismatch warning. See
+              // BUGS.md R2-20.
+              suppressHydrationWarning
+            >
               {new Date(profile.google_login_verified_at).toLocaleString(undefined, {
                 year: 'numeric',
                 month: 'short',

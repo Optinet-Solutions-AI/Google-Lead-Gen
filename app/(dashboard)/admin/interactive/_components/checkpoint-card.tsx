@@ -108,23 +108,23 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl }: Props) {
         ? cancelState.error
         : null
 
-  // Lazy initialiser keeps the Date.now() call out of the render
-  // path; the interval below ticks the value every minute so the
-  // "N min left" pill stays honest.
-  const [minutesLeft, setMinutesLeft] = useState(() =>
-    Math.max(0, Math.ceil((new Date(row.expires_at).getTime() - Date.now()) / 60_000)),
-  )
+  // Start as null so SSR and the first client render produce the same
+  // markup (a `—` placeholder). The Date.now()-driven value populates
+  // in useEffect after mount, so a minute boundary crossing between
+  // SSR and hydration no longer causes a hydration mismatch warning
+  // (BUGS.md R2-22). The interval continues to tick every 30s.
+  const [minutesLeft, setMinutesLeft] = useState<number | null>(null)
   useEffect(() => {
     if (row.status !== 'waiting') return
     const tick = () =>
-       
       setMinutesLeft(
         Math.max(0, Math.ceil((new Date(row.expires_at).getTime() - Date.now()) / 60_000)),
       )
+    tick()
     const id = setInterval(tick, 30_000)
     return () => clearInterval(id)
   }, [row.expires_at, row.status])
-  const expiryWarn = row.status === 'waiting' && minutesLeft <= 3
+  const expiryWarn = row.status === 'waiting' && minutesLeft !== null && minutesLeft <= 3
 
   return (
     <article className="flex flex-col gap-3 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 md:flex-row">
@@ -178,7 +178,7 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl }: Props) {
               ].join(' ')}
             >
               <Timer className="h-2.5 w-2.5" />
-              {minutesLeft} min left
+              {minutesLeft ?? '—'} min left
             </span>
           )}
         </header>

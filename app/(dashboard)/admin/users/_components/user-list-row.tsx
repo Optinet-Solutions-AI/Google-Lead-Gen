@@ -69,7 +69,12 @@ export function UserListRow({ user, isAdmin, isSelf, mondayUserId }: Props) {
             </span>
           )}
         </p>
-        <p className="truncate text-[10px] text-[color:var(--color-text-secondary)]">
+        <p
+          className="truncate text-[10px] text-[color:var(--color-text-secondary)]"
+          // Locale-formatted timestamps differ between Node's en-US SSR
+          // and the browser's locale. See BUGS.md R2-20.
+          suppressHydrationWarning
+        >
           {secondary ? <span className="font-mono">{secondary}</span> : <span className="italic">no username set</span>}
           {' · '}created {new Date(user.created_at).toLocaleDateString()}
           {user.last_sign_in_at

@@ -115,11 +115,14 @@ export function FeedbackRow({ row, focused, expanded, onToggleExpand, onFocus }:
               {row.user_display ?? row.user_email ?? 'Unknown user'}
             </span>
             <span>·</span>
-            <span>{created}</span>
+            {/* SSR uses Node en-US locale, browser uses the user's
+                locale; suppress the hydration mismatch warning. See
+                BUGS.md R2-20. */}
+            <span suppressHydrationWarning>{created}</span>
             {row.resolved_at && (
               <>
                 <span>·</span>
-                <span>
+                <span suppressHydrationWarning>
                   resolved {new Date(row.resolved_at).toLocaleDateString()}
                   {row.resolved_by ? ` by ${row.resolved_by}` : ''}
                 </span>

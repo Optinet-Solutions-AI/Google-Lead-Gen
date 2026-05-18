@@ -164,7 +164,15 @@ function StageRow({
             {auto ? 'auto' : 'manual'}
           </span>
         </span>
-        <span className="text-[11px] text-[color:var(--color-text-secondary)]">
+        <span
+          className="text-[11px] text-[color:var(--color-text-secondary)]"
+          // relativeTime() uses Date.now() during render — if the
+          // minute boundary falls between SSR and client hydration
+          // the strings diverge ("5 min ago" vs "6 min ago") and
+          // React logs a hydration mismatch. Same pattern as
+          // jobs-table.tsx. See BUGS.md R2-21.
+          suppressHydrationWarning
+        >
           {hasInflight ? (
             <span className="font-medium text-amber-700">
               {inflightRunning > 0 && `${inflightRunning} running`}
