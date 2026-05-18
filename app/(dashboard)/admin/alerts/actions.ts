@@ -96,7 +96,7 @@ export async function setRecipientActiveAction(
   if (!auth.ok) return { status: 'error', error: auth.error }
 
   const id = Number(fd.get('id'))
-  if (!Number.isFinite(id)) return { status: 'error', error: 'Missing recipient id.' }
+  if (!Number.isInteger(id) || id <= 0) return { status: 'error', error: 'Missing recipient id.' }
 
   const wantsActive = String(fd.get('value') ?? '').toLowerCase() === 'true'
 
@@ -126,7 +126,7 @@ export async function deleteRecipientAction(
   if (!auth.ok) return { status: 'error', error: auth.error }
 
   const id = Number(fd.get('id'))
-  if (!Number.isFinite(id)) return { status: 'error', error: 'Missing recipient id.' }
+  if (!Number.isInteger(id) || id <= 0) return { status: 'error', error: 'Missing recipient id.' }
 
   const svc = createServiceClient()
   const { data: row } = await svc

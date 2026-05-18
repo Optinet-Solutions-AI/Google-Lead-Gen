@@ -43,7 +43,7 @@ export async function resolveCheckpointAction(
   if (!auth.ok) return { status: 'error', error: auth.error }
 
   const id = Number(fd.get('id'))
-  if (!Number.isFinite(id)) return { status: 'error', error: 'Missing checkpoint id.' }
+  if (!Number.isInteger(id) || id <= 0) return { status: 'error', error: 'Missing checkpoint id.' }
 
   const note = String(fd.get('note') ?? '').trim() || null
 
@@ -75,7 +75,7 @@ export async function cancelCheckpointAction(
   if (!auth.ok) return { status: 'error', error: auth.error }
 
   const id = Number(fd.get('id'))
-  if (!Number.isFinite(id)) return { status: 'error', error: 'Missing checkpoint id.' }
+  if (!Number.isInteger(id) || id <= 0) return { status: 'error', error: 'Missing checkpoint id.' }
 
   const note = String(fd.get('note') ?? '').trim() || null
 

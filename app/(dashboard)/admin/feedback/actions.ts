@@ -108,7 +108,7 @@ export async function setFeedbackStatusAction(
   if (!auth.ok) return { status: 'error', error: auth.error }
 
   const id = Number(fd.get('id'))
-  if (!Number.isFinite(id)) return { status: 'error', error: 'Missing feedback id.' }
+  if (!Number.isInteger(id) || id <= 0) return { status: 'error', error: 'Missing feedback id.' }
 
   const next = String(fd.get('status') ?? '').trim()
   if (!VALID_STATUSES.has(next)) {
@@ -143,7 +143,7 @@ export async function deleteFeedbackAction(
   if (!auth.ok) return { status: 'error', error: auth.error }
 
   const id = Number(fd.get('id'))
-  if (!Number.isFinite(id)) return { status: 'error', error: 'Missing feedback id.' }
+  if (!Number.isInteger(id) || id <= 0) return { status: 'error', error: 'Missing feedback id.' }
 
   const svc = createServiceClient()
   const { error } = await svc.from('qa_feedback').delete().eq('id', id)

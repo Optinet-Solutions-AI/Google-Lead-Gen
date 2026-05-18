@@ -63,7 +63,7 @@ export async function setRoosterBrandActive(formData: FormData): Promise<void> {
   await assertAdmin()
   const id = Number(formData.get('id'))
   const value = formData.get('value') === 'true'
-  if (!Number.isFinite(id)) throw new Error('Missing id.')
+  if (!Number.isInteger(id) || id <= 0) throw new Error('Missing id.')
 
   const svc = createServiceClient()
   const { error } = await svc
@@ -87,7 +87,7 @@ export async function updateRoosterBrandName(formData: FormData): Promise<void> 
   await assertAdmin()
   const id = Number(formData.get('id'))
   const brand_name = String(formData.get('brand_name') ?? '').trim() || null
-  if (!Number.isFinite(id)) throw new Error('Missing id.')
+  if (!Number.isInteger(id) || id <= 0) throw new Error('Missing id.')
 
   const svc = createServiceClient()
   const { error } = await svc
@@ -110,7 +110,7 @@ export async function updateRoosterBrandNotes(formData: FormData): Promise<void>
   await assertAdmin()
   const id = Number(formData.get('id'))
   const notes = String(formData.get('notes') ?? '').trim() || null
-  if (!Number.isFinite(id)) throw new Error('Missing id.')
+  if (!Number.isInteger(id) || id <= 0) throw new Error('Missing id.')
 
   const svc = createServiceClient()
   const { error } = await svc
@@ -132,7 +132,7 @@ export async function updateRoosterBrandNotes(formData: FormData): Promise<void>
 export async function deleteRoosterBrand(formData: FormData): Promise<void> {
   await assertAdmin()
   const id = Number(formData.get('id'))
-  if (!Number.isFinite(id)) throw new Error('Missing id.')
+  if (!Number.isInteger(id) || id <= 0) throw new Error('Missing id.')
 
   const svc = createServiceClient()
   const { error } = await svc.from('rooster_brands').delete().eq('id', id)

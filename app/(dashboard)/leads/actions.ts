@@ -7,6 +7,16 @@ import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { logActivity } from '@/lib/activity-log'
 import { pushLeadToMonday } from '@/lib/monday/push-lead'
 
+/** Log the raw Supabase/Postgrest error server-side for debugging but
+ *  return a generic message to the caller. Supabase error messages
+ *  routinely include table names, column names, and constraint names
+ *  that shouldn't reach the browser through the server-action error
+ *  boundary. Cousin of round-1 #28 (which fixed the API-route variant). */
+function safeError(err: unknown, fallback: string): string {
+  console.error('[leads/actions]', err)
+  return fallback
+}
+
 // getLeadDetails used to live here as a server action but server actions
 // trigger a full page-tree re-render on every call, which made the drawer
 // feel sluggish. The fetch was moved to /api/leads/[id] — see
@@ -20,7 +30,7 @@ import { pushLeadToMonday } from '@/lib/monday/push-lead'
 export async function deleteLeadScreenshot(formData: FormData): Promise<void> {
   await assertSignedIn()
   const leadId = Number(formData.get('lead_id'))
-  if (!Number.isFinite(leadId)) throw new Error('Missing lead id.')
+  if (!Number.isInteger(leadId) || leadId <= 0) throw new Error('Missing lead id.')
 
   const svc = createServiceClient()
   const { data: lead, error: readErr } = await svc
@@ -28,7 +38,7 @@ export async function deleteLeadScreenshot(formData: FormData): Promise<void> {
     .select('screenshot_content_link')
     .eq('id', leadId)
     .maybeSingle()
-  if (readErr) throw new Error(readErr.message)
+  if (readErr) throw new Error(safeError(readErr, 'Failed to load lead.'))
 
   const path = (lead as { screenshot_content_link: string | null } | null)?.screenshot_content_link
   if (path) {
@@ -45,7 +55,7 @@ export async function deleteLeadScreenshot(formData: FormData): Promise<void> {
     .from('google_lead_gen_table')
     .update({ screenshot_content_link: null, screenshot_view_link: null })
     .eq('id', leadId)
-  if (updErr) throw new Error(updErr.message)
+  if (updErr) throw new Error(safeError(updErr, 'Failed to clear screenshot.'))
 
   await logActivity({
     action: 'screenshot.delete',
@@ -99,7 +109,7 @@ export async function setMondayLabel(formData: FormData): Promise<void> {
 
   const leadId = Number(formData.get('lead_id'))
   const rawValue = String(formData.get('value') ?? '')
-  if (!Number.isFinite(leadId)) throw new Error('Missing lead id.')
+  if (!Number.isInteger(leadId) || leadId <= 0) throw new Error('Missing lead id.')
   if (!VALID.has(rawValue)) throw new Error(`Invalid value: ${rawValue}`)
   const value = rawValue as MondayLabelValue
 
@@ -133,7 +143,7 @@ export async function setMondayLabel(formData: FormData): Promise<void> {
   }
 
   const { error } = await svc.from('google_lead_gen_table').update(patch).eq('id', leadId)
-  if (error) throw new Error(error.message)
+  if (error) throw new Error(safeError(error, 'Failed to save override.'))
 
   await logActivity({
     action: 'override.monday',
@@ -161,7 +171,7 @@ async function setBooleanFlag(params: {
   extraPatch?: Record<string, unknown>
 }) {
   const { leadId, value, valueColumn, overrideColumn, logAction, extraPatch } = params
-  if (!Number.isFinite(leadId)) throw new Error('Missing lead id.')
+  if (!Number.isInteger(leadId) || leadId <= 0) throw new Error('Missing lead id.')
   if (!BOOL_VALUES.has(value)) throw new Error(`Invalid value: ${value}`)
 
   const svc = createServiceClient()
@@ -178,7 +188,7 @@ async function setBooleanFlag(params: {
   }
 
   const { error } = await svc.from('google_lead_gen_table').update(patch).eq('id', leadId)
-  if (error) throw new Error(error.message)
+  if (error) throw new Error(safeError(error, 'Failed to save override.'))
 
   await logActivity({
     action: logAction,
@@ -269,7 +279,7 @@ export async function pushLeadToMondayAction(
   if (!user) return { status: 'error', error: 'Not signed in.' }
 
   const leadId = Number(formData.get('lead_id'))
-  if (!Number.isFinite(leadId)) return { status: 'error', error: 'Missing lead id.' }
+  if (!Number.isInteger(leadId) || leadId <= 0) return { status: 'error', error: 'Missing lead id.' }
 
   // Resolve the pushing user's display name + Monday user id so the
   // new item lands under their name on the Leads board. Block the push
@@ -358,7 +368,7 @@ export async function setNotRelevantAction(
   if (!user) return { status: 'error', error: 'Not signed in.' }
 
   const leadId = Number(formData.get('lead_id'))
-  if (!Number.isFinite(leadId)) return { status: 'error', error: 'Missing lead id.' }
+  if (!Number.isInteger(leadId) || leadId <= 0) return { status: 'error', error: 'Missing lead id.' }
 
   // 'on' from a checkbox-style hidden input maps to true; empty string = false (unmark).
   const wantsTrue = String(formData.get('value') ?? '').toLowerCase() === 'true'
@@ -389,7 +399,7 @@ export async function setNotRelevantAction(
     .from('google_lead_gen_table')
     .update(update)
     .eq('id', leadId)
-  if (updErr) return { status: 'error', error: updErr.message }
+  if (updErr) return { status: 'error', error: safeError(updErr, 'Failed to update lead.') }
 
   if (wantsTrue) {
     // Cancel any pending/paused enrichment for this lead so the worker
@@ -466,7 +476,7 @@ export async function retryEnrichmentForLeads(
     .from('google_lead_gen_table')
     .select('id, url, domain, country_code, result_type, is_affiliate')
     .in('id', leadIds)
-  if (leadsErr) return { status: 'error', error: leadsErr.message }
+  if (leadsErr) return { status: 'error', error: safeError(leadsErr, 'Failed to load leads.') }
 
   const skippedDetail: SkippedLead[] = []
   const enqueueable: Array<{
@@ -527,7 +537,7 @@ export async function retryEnrichmentForLeads(
   }
 
   const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
-  if (qErr) return { status: 'error', error: qErr.message }
+  if (qErr) return { status: 'error', error: safeError(qErr, 'Failed to enqueue retry.') }
 
   await logActivity({
     action: `enrichment.${stage}.retry`,
@@ -597,7 +607,7 @@ export async function deleteLeads(
   }
 
   const { data, error } = await svc.rpc('delete_leads_cascade', { p_lead_ids: leadIds })
-  if (error) return { status: 'error', error: error.message }
+  if (error) return { status: 'error', error: safeError(error, 'Failed to delete leads.') }
   const deleted = typeof data === 'number' ? data : 0
 
   await logActivity({
@@ -623,7 +633,7 @@ export async function setStagVerifiedLabel(formData: FormData): Promise<void> {
   await assertSignedIn()
   const leadId = Number(formData.get('lead_id'))
   const value = String(formData.get('value') ?? '')
-  if (!Number.isFinite(leadId)) throw new Error('Missing lead id.')
+  if (!Number.isInteger(leadId) || leadId <= 0) throw new Error('Missing lead id.')
   if (!BOOL_VALUES.has(value)) throw new Error(`Invalid value: ${value}`)
 
   const svc = createServiceClient()
@@ -639,7 +649,7 @@ export async function setStagVerifiedLabel(formData: FormData): Promise<void> {
     .from('google_lead_gen_table')
     .update(patch)
     .eq('id', leadId)
-  if (error) throw new Error(error.message)
+  if (error) throw new Error(safeError(error, 'Failed to save verification.'))
 
   await logActivity({
     action: 'override.stag_verified',

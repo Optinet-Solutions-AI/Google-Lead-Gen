@@ -108,6 +108,15 @@ export async function enqueueScrape(
   )
 
   if (keywords.length === 0) return { status: 'error', error: 'Enter at least one keyword.' }
+  // Cap per-submit volume so a 10k-keyword paste can't flood scrape_queue
+  // in a single round-trip (and 2× when engine=both). 200 is well above
+  // any realistic batch but well below "DoS the workers" territory.
+  if (keywords.length > 200) {
+    return {
+      status: 'error',
+      error: `Too many keywords in one submit (${keywords.length}); max 200 per batch.`,
+    }
+  }
   const tooLong = keywords.find(k => k.length > 500)
   if (tooLong) {
     return {

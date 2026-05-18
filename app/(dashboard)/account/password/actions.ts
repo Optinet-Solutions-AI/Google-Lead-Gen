@@ -20,8 +20,11 @@ export async function changePasswordAction(
   if (!currentPassword || !newPassword || !confirmPassword) {
     return { status: 'error', error: 'Fill in all three fields.' }
   }
-  if (newPassword.length < 8) {
-    return { status: 'error', error: 'New password must be at least 8 characters.' }
+  // Min length matches the admin-create policy in admin/users/actions.ts.
+  // Without parity, an admin-set 12-char password could be downgraded to
+  // 8 by the user immediately after first login.
+  if (newPassword.length < 12) {
+    return { status: 'error', error: 'New password must be at least 12 characters.' }
   }
   if (newPassword !== confirmPassword) {
     return { status: 'error', error: 'New password and confirmation do not match.' }

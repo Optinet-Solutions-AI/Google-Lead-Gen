@@ -81,7 +81,7 @@ export type LeadDetail = {
 }
 
 export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
-  if (!Number.isFinite(leadId)) throw new Error('Missing lead id.')
+  if (!Number.isInteger(leadId) || leadId <= 0) throw new Error('Missing lead id.')
   const svc = createServiceClient()
 
   const [leadRes, contactRes, stagsRes] = await Promise.all([

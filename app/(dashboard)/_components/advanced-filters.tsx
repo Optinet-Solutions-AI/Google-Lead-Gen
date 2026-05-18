@@ -33,6 +33,18 @@ type Props = {
   preserve?: ReadonlyArray<string>
 }
 
+/** A draft row carries a stable UI key alongside the actual filter/sort
+ *  data so React can correctly re-use DOM/state when middle rows are
+ *  removed via `remove(i)`. Using the array index as React's key (the
+ *  previous shape) caused the row that moved up into the removed slot
+ *  to re-mount with the *previous* row's input/select state. See
+ *  BUGS.md R2-29. The `_key` field is ignored by serializeFilters /
+ *  serializeSorts so it never reaches the URL. */
+type Keyed<T> = T & { _key: string }
+function withKey<T>(row: T): Keyed<T> {
+  return { ...row, _key: crypto.randomUUID() }
+}
+
 export function AdvancedFilters({ columns, preserve = [] }: Props) {
   const router = useRouter()
   const pathname = usePathname()
@@ -47,15 +59,15 @@ export function AdvancedFilters({ columns, preserve = [] }: Props) {
 
   const [filterOpen, setFilterOpen] = useState(false)
   const [sortOpen, setSortOpen] = useState(false)
-  const [draftFilters, setDraftFilters] = useState<FilterRow[]>(filters)
-  const [draftSorts, setDraftSorts] = useState<SortRow[]>(sorts)
+  const [draftFilters, setDraftFilters] = useState<Keyed<FilterRow>[]>(() => filters.map(withKey))
+  const [draftSorts, setDraftSorts] = useState<Keyed<SortRow>[]>(() => sorts.map(withKey))
 
   // Re-sync drafts whenever URL state changes (e.g. user clicked a chip).
   useEffect(() => {
-    setDraftFilters(filters)
+    setDraftFilters(filters.map(withKey))
   }, [filters])
   useEffect(() => {
-    setDraftSorts(sorts)
+    setDraftSorts(sorts.map(withKey))
   }, [sorts])
 
   function commit(input: {
@@ -243,8 +255,8 @@ function FilterPanel({
   onClear,
 }: {
   columns: ReadonlyArray<ColumnDef>
-  draft: FilterRow[]
-  setDraft: React.Dispatch<React.SetStateAction<FilterRow[]>>
+  draft: Keyed<FilterRow>[]
+  setDraft: React.Dispatch<React.SetStateAction<Keyed<FilterRow>[]>>
   onApply: () => void
   onClear: () => void
 }) {
@@ -252,7 +264,7 @@ function FilterPanel({
   const addRow = () => {
     if (!firstCol) return
     const ops = operatorsFor(firstCol.type)
-    setDraft(prev => [...prev, { col: firstCol.key, op: ops[0]!.value, v: '', v2: '' }])
+    setDraft(prev => [...prev, withKey({ col: firstCol.key, op: ops[0]!.value, v: '', v2: '' })])
   }
   const update = (i: number, patch: Partial<FilterRow>) => {
     setDraft(prev => prev.map((f, ix) => (ix === i ? { ...f, ...patch } : f)))
@@ -285,7 +297,7 @@ function FilterPanel({
           const range = RANGE_OPS.has(row.op)
           return (
             <div
-              key={i}
+              key={row._key}
               className="grid grid-cols-[8ch_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1.5"
             >
               <span className="px-1 text-[10px] uppercase tracking-wide text-[color:var(--color-text-secondary)]">
@@ -485,15 +497,15 @@ function SortPanel({
   onClear,
 }: {
   columns: ReadonlyArray<ColumnDef>
-  draft: SortRow[]
-  setDraft: React.Dispatch<React.SetStateAction<SortRow[]>>
+  draft: Keyed<SortRow>[]
+  setDraft: React.Dispatch<React.SetStateAction<Keyed<SortRow>[]>>
   onApply: () => void
   onClear: () => void
 }) {
   const firstCol = columns[0]
   const addRow = () => {
     if (!firstCol) return
-    setDraft(prev => [...prev, { col: firstCol.key, dir: 'asc' }])
+    setDraft(prev => [...prev, withKey({ col: firstCol.key, dir: 'asc' })])
   }
   const update = (i: number, patch: Partial<SortRow>) => {
     setDraft(prev => prev.map((s, ix) => (ix === i ? { ...s, ...patch } : s)))
@@ -519,7 +531,7 @@ function SortPanel({
         )}
         {draft.map((row, i) => (
           <div
-            key={i}
+            key={row._key}
             className="grid grid-cols-[8ch_minmax(0,1fr)_auto_auto] items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1.5"
           >
             <span className="px-1 text-[10px] uppercase tracking-wide text-[color:var(--color-text-secondary)]">
