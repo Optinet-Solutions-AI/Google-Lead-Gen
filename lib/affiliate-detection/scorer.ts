@@ -122,10 +122,20 @@ function countOccurrences(str: string, patterns: string[]): number {
   return count
 }
 
+/** Normalise a hostname for comparison: lowercase and strip a single
+ *  leading `www.` so `www.casino.com`, `Casino.COM`, and `casino.com`
+ *  all collapse to the same key. Without this, the external-casino
+ *  link count double-counts the same site and the CASINO_KEYWORDS
+ *  `includes` check on the raw hostname misses uppercase letters.
+ *  Same bug family as fixed #20 (`guessBrandFromUrl`). */
+function normaliseHost(host: string): string {
+  return host.toLowerCase().replace(/^www\./, '')
+}
+
 function getDomain(urlString: string): string | null {
   try {
     if (!urlString.startsWith('http')) return null
-    return new URL(urlString).hostname
+    return normaliseHost(new URL(urlString).hostname)
   } catch {
     return null
   }
@@ -134,7 +144,7 @@ function getDomain(urlString: string): string | null {
 function countCasinoOutboundLinks(html: string, currentUrl: string): number {
   let currentDomain = ''
   try {
-    currentDomain = new URL(currentUrl).hostname
+    currentDomain = normaliseHost(new URL(currentUrl).hostname)
   } catch {
     /* keep '' */
   }

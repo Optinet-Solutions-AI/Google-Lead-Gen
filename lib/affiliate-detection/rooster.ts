@@ -46,7 +46,11 @@ export function findRoosterBrandLinks(
   const brandsByToken = new Map<string, BrandRow>()
   for (const b of brandList) {
     if (!b.domain) continue
-    const dom = b.domain.toLowerCase()
+    // Strip a leading `www.` so brands stored as `www.spinjo.com` are
+    // keyed the same as `spinjo.com` — the href host has already had
+    // `www.` removed at line 70, and without this the equality check
+    // silently misses.
+    const dom = b.domain.toLowerCase().replace(/^www\./, '')
     brandsByDomain.set(dom, { brand_name: b.brand_name, monday_item_id: b.monday_item_id })
     if (b.brand_name) {
       const name = b.brand_name.trim().toLowerCase()

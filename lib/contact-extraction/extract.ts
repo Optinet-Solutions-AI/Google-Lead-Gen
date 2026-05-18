@@ -87,10 +87,23 @@ export function extractContacts(html: string, baseUrl: string): ContactResult {
   let mailtoCount = 0
 
   for (const m of decoded.matchAll(MAILTO_RE)) {
-    if (m[1]) {
-      const e = m[1].trim().toLowerCase()
-      if (isPlausibleEmail(e)) emails.add(e)
-      mailtoCount++
+    if (!m[1]) continue
+    mailtoCount++
+    // RFC 6068: mailto local-parts may be percent-encoded (`User%40…`
+    // for `@`) and multiple recipients are comma- or semicolon-
+    // separated. Without decoding, an encoded `%40` capture has no `@`
+    // and `isPlausibleEmail` silently rejects it; without splitting,
+    // a `mailto:a@b,c@d` capture has two `@`s and also fails. Both
+    // cases drop legitimate contact-page emails to the LLM fallback.
+    let decodedHref: string
+    try {
+      decodedHref = decodeURIComponent(m[1])
+    } catch {
+      decodedHref = m[1]
+    }
+    for (const raw of decodedHref.split(/[,;]/)) {
+      const e = raw.trim().toLowerCase()
+      if (e && isPlausibleEmail(e)) emails.add(e)
     }
   }
 

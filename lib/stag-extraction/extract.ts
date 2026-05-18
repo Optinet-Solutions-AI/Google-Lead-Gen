@@ -31,6 +31,17 @@ const EXCLUDED_DOMAINS = new Set([
   'wikipedia.org',
 ])
 
+/** True if `host` is one of the excluded domains OR a subdomain of one.
+ *  Exact-set membership alone misses `m.youtube.com`, `fr.wikipedia.org`,
+ *  `l.facebook.com`, `lm.facebook.com` etc., which are the same property
+ *  the exclude-list is meant to skip. */
+function isExcludedHost(host: string): boolean {
+  for (const ex of EXCLUDED_DOMAINS) {
+    if (host === ex || host.endsWith('.' + ex)) return true
+  }
+  return false
+}
+
 export type ExtractedStag = {
   s_tag: string
   source_param: string
@@ -75,7 +86,7 @@ export function findTrackingLinks(html: string, baseUrl: string): string[] {
     } catch {
       continue
     }
-    if (EXCLUDED_DOMAINS.has(host)) continue
+    if (isExcludedHost(host)) continue
     // Skip same-host links (we want OUTBOUND tracking)
     if (host === baseHost) continue
     out.add(abs)
