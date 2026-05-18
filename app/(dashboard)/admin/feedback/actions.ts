@@ -80,6 +80,27 @@ export async function submitFeedbackAction(
   }
 
   const svc = createServiceClient()
+
+  // Per-user cooldown: refuse a second submit from the same user within
+  // COOLDOWN_MS. Catches double-clicks and naive spam without needing
+  // Redis or a dedicated rate-limit table. Determined spammers can
+  // still space requests beyond the window — that's a deeper problem
+  // worth proper infra (see BUGS.md R2-32 deferral note).
+  const COOLDOWN_MS = 5_000
+  const since = new Date(Date.now() - COOLDOWN_MS).toISOString()
+  const { data: recent } = await svc
+    .from('qa_feedback')
+    .select('id')
+    .eq('user_id', auth.user_id)
+    .gte('created_at', since)
+    .limit(1)
+  if (recent && recent.length > 0) {
+    return {
+      status: 'error',
+      error: 'You just submitted feedback — give it a moment before sending another.',
+    }
+  }
+
   const { error } = await svc.from('qa_feedback').insert({
     user_id: auth.user_id,
     user_display: auth.display,
