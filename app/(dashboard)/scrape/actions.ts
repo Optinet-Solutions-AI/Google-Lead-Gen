@@ -234,21 +234,12 @@ export type StageRunState =
   | { status: 'error'; error: string }
   | null
 
-async function requireSignedIn(): Promise<{ ok: true } | { ok: false; error: string }> {
-  const supabase = await createServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return { ok: false, error: 'Not signed in.' }
-  return { ok: true }
-}
-
 /**
  * Authorise a per-job action: the caller must either own the job
- * (matched on `created_by_email`) or be an admin. Used by the
- * pause/resume/dup-check/affiliate-rerun control actions, all of
- * which previously only checked "is the caller signed in" — leaving
- * any signed-in user able to mutate any job_id they could guess.
+ * (matched on `created_by_email`) or be an admin. All per-job
+ * actions in this file route through this — previously several
+ * only checked "is the caller signed in" (BUGS.md #27, R2-1..R2-5),
+ * leaving any signed-in user able to mutate any job_id they guessed.
  */
 async function requireJobAccess(
   jobId: string,
@@ -389,10 +380,10 @@ export async function runRoosterCheck(
   _prev: StageRunState,
   fd: FormData,
 ): Promise<StageRunState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
   const { data: leads, error: leadsErr } = await svc
@@ -475,10 +466,10 @@ export async function runContactExtraction(
   _prev: StageRunState,
   fd: FormData,
 ): Promise<StageRunState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
   const { data: leads, error: leadsErr } = await svc
@@ -563,10 +554,10 @@ export async function runStagExtraction(
   _prev: StageRunState,
   fd: FormData,
 ): Promise<StageRunState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
   const { data: leads, error: leadsErr } = await svc
@@ -653,10 +644,10 @@ export async function cancelEnrichmentStage(
   _prev: StageRunState,
   fd: FormData,
 ): Promise<StageRunState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const stage = String(fd.get('stage') ?? '').trim().toLowerCase()
   if (!CANCELLABLE_STAGES.includes(stage as CancellableStage)) {
@@ -736,10 +727,10 @@ export async function resetCaptchaRetries(
   _prev: JobActionState,
   fd: FormData,
 ): Promise<JobActionState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
   const { data, error } = await svc.rpc('reset_captcha_retries', { p_job_id: jobId })
@@ -807,10 +798,10 @@ export async function pauseEnrichmentForJob(
   _prev: JobActionState,
   fd: FormData,
 ): Promise<JobActionState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
   const { data: leadRows } = await svc
@@ -849,10 +840,10 @@ export async function forceCompleteEnrichment(
   _prev: JobActionState,
   fd: FormData,
 ): Promise<JobActionState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
   const { data, error } = await svc.rpc('force_complete_enrichment', { p_job_id: jobId })
@@ -877,10 +868,10 @@ export async function resumeEnrichmentForJob(
   _prev: JobActionState,
   fd: FormData,
 ): Promise<JobActionState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
   const { data: leadRows } = await svc
@@ -924,10 +915,10 @@ export async function rerunScrapeFiltered(
   _prev: EnqueueState,
   fd: FormData,
 ): Promise<EnqueueState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   // result_type_filter accepts:
   //   'PPC'     → only PPC rows land in the table
@@ -1014,10 +1005,10 @@ async function checkConfirmation(
 }
 
 export async function cancelScrapeJob(_prev: JobActionState, fd: FormData): Promise<JobActionState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const confirmation = String(fd.get('confirmation_text') ?? '')
   const check = await checkConfirmation(jobId, confirmation)
@@ -1045,10 +1036,10 @@ export async function cancelScrapeJob(_prev: JobActionState, fd: FormData): Prom
 }
 
 export async function deleteScrapeJob(_prev: JobActionState, fd: FormData): Promise<JobActionState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const confirmation = String(fd.get('confirmation_text') ?? '')
   const check = await checkConfirmation(jobId, confirmation)
@@ -1126,10 +1117,10 @@ export async function runStagDuplicateCheck(
   _prev: StageRunState,
   fd: FormData,
 ): Promise<StageRunState> {
-  const auth = await requireSignedIn()
-  if (!auth.ok) return { status: 'error', error: auth.error }
   const jobId = jobIdFrom(fd)
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
   const { data, error } = await svc.rpc('mark_s_tag_duplicates_for_job', {
