@@ -29,6 +29,11 @@ loadEnv({ path: join(process.cwd(), '.env.local') })
 const LEAD_IDS = [757, 769, 770, 782, 789]
 const APPLY = process.argv.includes('--apply')
 
+// Audit attribution — never write activity_log rows with a null operator.
+// Honour OPERATOR_EMAIL if set; otherwise stamp the script path so log
+// readers can see *which* CLI ran the cleanup.
+const OPERATOR_EMAIL = (process.env.OPERATOR_EMAIL || '').trim() || 'cli:scripts/qa/clear-glue-bug-overrides.ts'
+
 type Lead = {
   id: number
   url: string | null
@@ -133,7 +138,7 @@ async function main() {
 
     await svc.from('activity_log').insert({
       user_id: null,
-      user_email: null,
+      user_email: OPERATOR_EMAIL,
       action: 'monday.clear_stale_override',
       entity_type: 'lead',
       entity_id: String(lead.id),

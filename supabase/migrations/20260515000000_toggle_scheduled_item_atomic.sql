@@ -17,8 +17,9 @@
 -- lost updates.
 --
 -- Apply with:
---   tsx scripts/db/apply-migration.ts \
+--   tsx scripts/db/apply-migration.ts --apply \
 --     supabase/migrations/20260515000000_toggle_scheduled_item_atomic.sql
+-- (omit --apply for a dry-run preview)
 -- ============================================================
 
 create or replace function public.toggle_scheduled_item(p_item_id uuid)

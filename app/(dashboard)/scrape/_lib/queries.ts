@@ -188,7 +188,12 @@ function bump(target: StageStatus, ts: string | null, positive: boolean, errored
   target.total += 1
   if (positive) target.positive += 1
   if (errored) target.errored += 1
-  if (!target.lastRunAt || ts > target.lastRunAt) target.lastRunAt = ts
+  // Compare as parsed instants — string `>` mishandles equivalent
+  // representations like `+00:00` vs `Z` (lexicographic `+` < `Z`).
+  const tsMs = Date.parse(ts)
+  if (!Number.isFinite(tsMs)) return
+  const curMs = target.lastRunAt ? Date.parse(target.lastRunAt) : NaN
+  if (!Number.isFinite(curMs) || tsMs > curMs) target.lastRunAt = ts
 }
 
 export async function listRecentJobs(limit = 30): Promise<ScrapeJob[]> {
