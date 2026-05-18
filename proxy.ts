@@ -28,16 +28,43 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next()
   }
 
-  const { response, user } = await updateSession(request)
+  // If Supabase's auth call throws (e.g. consumed refresh token after a
+  // long idle), don't let it crash the proxy — that produces a 500 +
+  // "This page couldn't load" UI and the stale cookie keeps re-firing
+  // on every nav until manual sign-out. Treat the throw as
+  // "session expired", clear the broken sb-* cookies, and redirect to
+  // /login so the user gets a clean re-auth.
+  let result: Awaited<ReturnType<typeof updateSession>> | null = null
+  let refreshError: unknown = null
+  try {
+    result = await updateSession(request)
+  } catch (e) {
+    refreshError = e
+  }
 
-  if (!user) {
+  if (refreshError || !result?.user) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     url.searchParams.set('from', pathname)
-    return NextResponse.redirect(url)
+    if (refreshError) {
+      url.searchParams.set('reason', 'session_expired')
+      console.warn('[proxy] session refresh threw — clearing auth cookies', refreshError)
+    }
+    const redirect = NextResponse.redirect(url)
+    if (refreshError) {
+      // Wipe every Supabase auth cookie so the next request to /login
+      // (and the sign-in attempt itself) doesn't re-trigger the same
+      // throw on the stale refresh token.
+      for (const c of request.cookies.getAll()) {
+        if (c.name.startsWith('sb-') && c.name.includes('-auth-token')) {
+          redirect.cookies.delete(c.name)
+        }
+      }
+    }
+    return redirect
   }
 
-  return response
+  return result.response
 }
 
 export const config = {
