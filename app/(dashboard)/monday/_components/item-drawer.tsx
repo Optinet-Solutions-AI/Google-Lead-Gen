@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { X } from 'lucide-react'
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 
 type Update = Record<string, unknown>
 type Item = Record<string, unknown>
@@ -22,6 +22,19 @@ export function ItemDrawer({ itemId, item, updates, boardLabel }: Props) {
 
   const open = itemId.length > 0
 
+  // useCallback so the function reference is stable when sp/pathname/
+  // router don't change. The Esc effect deps include `close`, so it
+  // re-attaches only when those URL inputs actually change — this is
+  // what fixes the stale-searchParams bug (BUGS.md R2-30): filtering
+  // the table while the drawer is open used to leave the Esc handler
+  // closed over the OLD sp, silently dropping filter changes on close.
+  const close = useCallback(() => {
+    const params = new URLSearchParams(sp.toString())
+    params.delete('item')
+    const qs = params.toString()
+    router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+  }, [sp, pathname, router])
+
   // Esc to close
   useEffect(() => {
     if (!open) return
@@ -30,8 +43,7 @@ export function ItemDrawer({ itemId, item, updates, boardLabel }: Props) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [open, close])
 
   // Lock body scroll while open
   useEffect(() => {
@@ -42,13 +54,6 @@ export function ItemDrawer({ itemId, item, updates, boardLabel }: Props) {
       document.body.style.overflow = original
     }
   }, [open])
-
-  function close() {
-    const params = new URLSearchParams(sp.toString())
-    params.delete('item')
-    const qs = params.toString()
-    router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
-  }
 
   const heading = stringish(item?.name) ?? (itemId ? `Item ${itemId}` : 'Item')
 

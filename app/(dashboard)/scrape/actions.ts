@@ -944,9 +944,13 @@ export async function rerunScrapeFiltered(
   }
 
   const svc = createServiceClient()
+  // Carry over created_by_* from the source so the clone preserves
+  // ownership lineage — otherwise the new row is orphaned and
+  // requireJobAccess() would refuse to let the original owner mutate
+  // their own re-run (BUGS.md R2-14).
   const { data: job, error: readErr } = await svc
     .from('scrape_queue')
-    .select('keyword, country_code, pages, priority, with_enrichment, language, search_engine')
+    .select('keyword, country_code, pages, priority, with_enrichment, language, search_engine, created_by_email, created_by_username, created_by_display')
     .eq('id', jobId)
     .maybeSingle()
   if (readErr) return { status: 'error', error: readErr.message }
@@ -959,6 +963,9 @@ export async function rerunScrapeFiltered(
     with_enrichment: boolean
     language: string | null
     search_engine: 'google' | 'bing' | null
+    created_by_email: string | null
+    created_by_username: string | null
+    created_by_display: string | null
   }
 
   const { error: insertError } = await svc.from('scrape_queue').insert({
@@ -970,6 +977,9 @@ export async function rerunScrapeFiltered(
     language: j.language ?? 'en',
     search_engine: j.search_engine ?? 'google',
     result_type_filter: filterValue,
+    created_by_email: j.created_by_email,
+    created_by_username: j.created_by_username,
+    created_by_display: j.created_by_display,
   })
   if (insertError) return { status: 'error', error: insertError.message }
 
@@ -1220,9 +1230,13 @@ export async function bulkRerunScrapeJobs(
   if (jobIds.length > 200) return { status: 'error', error: 'Too many jobs selected (max 200).' }
 
   const svc = createServiceClient()
+  // Same created_by_* lineage fix as rerunScrapeFiltered (BUGS.md
+  // R2-15). Clones inherit the source row's owner so requireJobAccess
+  // still permits the original owner to control the re-run, and the
+  // audit log shows continuous attribution.
   const { data: jobs, error: readErr } = await svc
     .from('scrape_queue')
-    .select('id, keyword, country_code, pages, priority, with_enrichment, language, search_engine, result_type_filter')
+    .select('id, keyword, country_code, pages, priority, with_enrichment, language, search_engine, result_type_filter, created_by_email, created_by_username, created_by_display')
     .in('id', jobIds)
   if (readErr) return { status: 'error', error: readErr.message }
 
@@ -1236,6 +1250,9 @@ export async function bulkRerunScrapeJobs(
     language: string | null
     search_engine: 'google' | 'bing' | null
     result_type_filter: 'PPC' | 'Organic' | null
+    created_by_email: string | null
+    created_by_username: string | null
+    created_by_display: string | null
   }
   const rows = (jobs ?? []) as Row[]
   if (rows.length === 0) return { status: 'error', error: 'No matching jobs found.' }
@@ -1252,6 +1269,9 @@ export async function bulkRerunScrapeJobs(
     language: r.language ?? 'en',
     search_engine: r.search_engine ?? 'google',
     result_type_filter: r.result_type_filter,
+    created_by_email: r.created_by_email,
+    created_by_username: r.created_by_username,
+    created_by_display: r.created_by_display,
   }))
   const { error: insertErr } = await svc.from('scrape_queue').insert(inserts)
   if (insertErr) return { status: 'error', error: insertErr.message }
