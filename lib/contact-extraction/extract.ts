@@ -11,11 +11,27 @@
  * enrichment cascade then escalates to GPT-4o + Hunter.io.
  */
 
-const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi
+// TLD class allows letters/digits/hyphens after a leading letter, with
+// a 63-char cap (RFC 1035). Without this, punycode IDN TLDs like
+// `.xn--p1ai` (`.рф`) and `.xn--80akhbyknj4f` are rejected, so domains
+// under those TLDs yield zero emails from the regex tier and fall
+// straight to the LLM/Hunter fallback.
+const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z][A-Z0-9-]{1,62}/gi
 const MAILTO_RE = /href=["']mailto:([^"'?]+)/gi
 const TEL_RE = /href=["']tel:([^"']+)/gi
-const PHONE_RE = /(?<!\d)(\+?\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{3,4}(?!\d)/g
-const CONTACT_LINK_RE = /href=["']([^"']*\b(contact|kontakt|about|impressum)[^"']*)["']/gi
+// Dropped `.` from the separator class — without it, version strings
+// like `v1.2.3.4567` and EU prices like `12.345.678,90` were matched
+// as phones, both of which then survived the digit-count filter at the
+// callsite. Dotted-phone formats like `+1.555.123.4567` (mostly US
+// internal) are no longer caught; non-dotted formats (`+1 555-123-4567`,
+// `(555) 123-4567`, `+44 20 7123 4567`) still match.
+const PHONE_RE = /(?<!\d)(\+?\d{1,3}[\s-]?)?\(?\d{2,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}(?!\d)/g
+// Match contact-shaped paths only when the keyword is followed by a
+// real boundary character (path separator, dot, dash, query, hash, or
+// end-of-href quote). Without the lookahead the bare `\b(about)` form
+// matched `aboutads.info`, `aboutme.com`, `aboutus-policy`, even though
+// only `/about`, `/about-us`, `/about.html`, `/about?...` are legit.
+const CONTACT_LINK_RE = /href=["']([^"']*\b(contact|kontakt|about|impressum)(?=[-_/.?#]|["'])[^"']*)["']/gi
 
 const EXCLUDED_EMAIL_TLDS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'css', 'js', 'pdf'])
 

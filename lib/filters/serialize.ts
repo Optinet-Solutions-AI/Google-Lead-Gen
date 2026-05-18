@@ -7,10 +7,21 @@ import type { Filter, Sort } from './types'
  *   ?s=created_at:desc
  *   ?q=foo
  *
- * Multiple `f=` and `s=` entries are allowed. We use plain colons because
- * none of our column / operator names contain them; values that might
- * (rare) get URI-encoded by the browser anyway.
+ * Multiple `f=` and `s=` entries are allowed. Column and operator names
+ * never contain `:`, so we use `:` as the field separator. Values may
+ * contain `:` (ISO timestamps, URLs) — those positions are
+ * percent-encoded via encodeURIComponent so the split below never
+ * collides with the separator. Encoding is a no-op for alphanumerics,
+ * so legacy URLs without embedded colons parse identically.
  */
+
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s)
+  } catch {
+    return s
+  }
+}
 
 export function parseFilters(raw: string | string[] | undefined): Filter[] {
   const all = Array.isArray(raw) ? raw : raw ? [raw] : []
@@ -18,8 +29,10 @@ export function parseFilters(raw: string | string[] | undefined): Filter[] {
   for (const r of all) {
     const parts = r.split(':')
     if (parts.length < 2) continue
-    const [col, op, v, v2] = parts
+    const [col, op, vEnc, v2Enc] = parts
     if (!col || !op) continue
+    const v = vEnc !== undefined ? safeDecode(vEnc) : undefined
+    const v2 = v2Enc !== undefined ? safeDecode(v2Enc) : undefined
     // `between` requires both bounds. Without them the filter is a
     // no-op downstream (see applyOne in ./apply.ts), and we'd rather
     // drop it than carry a half-formed row through the URL.
@@ -52,13 +65,13 @@ export function serializeFilters(filters: Filter[]): string[] {
       // no-op, and emitting `col:between:5` would position-collapse
       // on the next parse (v2 silently slides into v).
       if (!f.v || !f.v2) continue
-      out.push(`${f.col}:${f.op}:${f.v}:${f.v2}`)
+      out.push(`${f.col}:${f.op}:${encodeURIComponent(f.v)}:${encodeURIComponent(f.v2)}`)
       continue
     }
     // All other ops use only v; never emit v2 in this slot, since the
     // positional encoding would otherwise let v2 leak into v on parse.
     if (f.v !== undefined && f.v !== '') {
-      out.push(`${f.col}:${f.op}:${f.v}`)
+      out.push(`${f.col}:${f.op}:${encodeURIComponent(f.v)}`)
     } else {
       out.push(`${f.col}:${f.op}`)
     }

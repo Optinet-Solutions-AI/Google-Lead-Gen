@@ -34,10 +34,22 @@ export function htmlToText(html: string): string {
     .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
+    // Numeric entities (decimal + hex) — without these, pages that
+    // encode punctuation as `&#8217;` (curly apostrophe), `&#169;`
+    // (©), `&#8364;` (€) etc. reach the GPT-4o-mini prompt as literal
+    // `&#8217;` tokens, wasting context and obscuring keywords.
+    .replace(/&#(\d+);/g, (_, n) => {
+      const cp = parseInt(n, 10)
+      return Number.isFinite(cp) ? String.fromCodePoint(cp) : ' '
+    })
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => {
+      const cp = parseInt(n, 16)
+      return Number.isFinite(cp) ? String.fromCodePoint(cp) : ' '
+    })
     // Strip again after entity decoding — an attacker can hide tags
-    // as `&lt;script&gt;…&lt;/script&gt;` in the source HTML, which
-    // survives the first pass and would otherwise resurrect as real
-    // tags in the plain-text output.
+    // as `&lt;script&gt;…&lt;/script&gt;` or `&#60;script&#62;` in
+    // the source HTML, which survives the first pass and would
+    // otherwise resurrect as real tags in the plain-text output.
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()

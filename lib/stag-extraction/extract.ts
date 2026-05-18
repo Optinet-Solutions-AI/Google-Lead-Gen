@@ -90,7 +90,13 @@ export function findTrackingLinks(html: string, baseUrl: string): string[] {
     // Skip same-host links (we want OUTBOUND tracking)
     if (host === baseHost) continue
     out.add(abs)
-    if (out.size >= 30) break // sanity cap per page
+    // Sanity cap per page. Bumped from 30 → 50 because aggregator
+    // pages with heavy nav/footer tracking links often consumed the
+    // budget on repetitive nav before reaching the mid-page review
+    // CTAs (which are what we actually want for s-tag extraction).
+    // Each link costs ~1–2s of Playwright redirect-resolution time
+    // downstream, so this stays bounded.
+    if (out.size >= 50) break
   }
   return Array.from(out)
 }
