@@ -1,16 +1,16 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { logActivity } from '@/lib/activity-log'
+import { requireAdmin } from '@/lib/auth/require-admin'
 
-async function assertSignedIn(): Promise<void> {
-  const supabase = await createServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not signed in.')
+// All brand mutations write via the service-role client (bypasses RLS),
+// so the action MUST gate on admin or any signed-in user could flip
+// brands on/off, rename, or delete them. See BUGS.md #1.
+async function assertAdmin(): Promise<void> {
+  const check = await requireAdmin()
+  if (!check.ok) throw new Error(check.error)
 }
 
 function normaliseDomain(raw: unknown): string {
@@ -31,7 +31,7 @@ export async function addRoosterBrand(
   _prev: AddBrandState,
   formData: FormData,
 ): Promise<AddBrandState> {
-  await assertSignedIn()
+  await assertAdmin()
   const domain = normaliseDomain(formData.get('domain'))
   const brand_name = String(formData.get('brand_name') ?? '').trim() || null
   if (!domain) return { status: 'error', error: 'Domain required.' }
@@ -60,7 +60,7 @@ export async function addRoosterBrand(
 }
 
 export async function setRoosterBrandActive(formData: FormData): Promise<void> {
-  await assertSignedIn()
+  await assertAdmin()
   const id = Number(formData.get('id'))
   const value = formData.get('value') === 'true'
   if (!Number.isFinite(id)) throw new Error('Missing id.')
@@ -84,7 +84,7 @@ export async function setRoosterBrandActive(formData: FormData): Promise<void> {
 }
 
 export async function updateRoosterBrandName(formData: FormData): Promise<void> {
-  await assertSignedIn()
+  await assertAdmin()
   const id = Number(formData.get('id'))
   const brand_name = String(formData.get('brand_name') ?? '').trim() || null
   if (!Number.isFinite(id)) throw new Error('Missing id.')
@@ -107,7 +107,7 @@ export async function updateRoosterBrandName(formData: FormData): Promise<void> 
 }
 
 export async function updateRoosterBrandNotes(formData: FormData): Promise<void> {
-  await assertSignedIn()
+  await assertAdmin()
   const id = Number(formData.get('id'))
   const notes = String(formData.get('notes') ?? '').trim() || null
   if (!Number.isFinite(id)) throw new Error('Missing id.')
@@ -130,7 +130,7 @@ export async function updateRoosterBrandNotes(formData: FormData): Promise<void>
 }
 
 export async function deleteRoosterBrand(formData: FormData): Promise<void> {
-  await assertSignedIn()
+  await assertAdmin()
   const id = Number(formData.get('id'))
   if (!Number.isFinite(id)) throw new Error('Missing id.')
 

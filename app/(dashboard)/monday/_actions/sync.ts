@@ -1,8 +1,8 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createClient as createServerClient } from '@/lib/supabase/server'
 import { logActivity } from '@/lib/activity-log'
+import { requireAdmin } from '@/lib/auth/require-admin'
 import { runMondaySync } from '@/lib/monday/sync-runner'
 
 export type MondaySyncState =
@@ -13,7 +13,9 @@ export type MondaySyncState =
 /**
  * Manually trigger a full Monday → Supabase re-sync of all 4 boards.
  * Same logic as the nightly cron at /api/monday/sync, just gated by
- * a signed-in user instead of CRON_SECRET.
+ * admin caller instead of CRON_SECRET (BUGS.md #1 — previously any
+ * signed-in user could fire this off and consume the full Monday API
+ * budget for minutes).
  *
  * Long-running — full sync of all boards takes minutes. The button
  * shows a spinner the whole time.
@@ -24,11 +26,8 @@ export async function manualMondaySyncAction(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _formData: FormData,
 ): Promise<MondaySyncState> {
-  const supabase = await createServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return { status: 'error', error: 'Not signed in.' }
+  const auth = await requireAdmin()
+  if (!auth.ok) return { status: 'error', error: auth.error }
 
   const result = await runMondaySync()
 

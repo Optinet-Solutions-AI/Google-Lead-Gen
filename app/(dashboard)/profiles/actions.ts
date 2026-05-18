@@ -1,16 +1,17 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { logActivity } from '@/lib/activity-log'
+import { requireAdmin } from '@/lib/auth/require-admin'
 
-async function assertSignedIn(): Promise<void> {
-  const supabase = await createServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not signed in.')
+// gologin_profile mutations write via the service-role client (bypasses
+// RLS); without an admin gate any signed-in user could flip the
+// "requires login" or "is logged in" flag and break the scrape worker.
+// See BUGS.md #1.
+async function assertAdmin(): Promise<void> {
+  const check = await requireAdmin()
+  if (!check.ok) throw new Error(check.error)
 }
 
 function normaliseCountry(raw: unknown): string {
@@ -18,7 +19,7 @@ function normaliseCountry(raw: unknown): string {
 }
 
 export async function setRequiresGoogleLogin(formData: FormData): Promise<void> {
-  await assertSignedIn()
+  await assertAdmin()
   const country = normaliseCountry(formData.get('country_code'))
   if (!country) throw new Error('Missing country code.')
   const value = formData.get('value') === 'true'
@@ -42,7 +43,7 @@ export async function setRequiresGoogleLogin(formData: FormData): Promise<void> 
 }
 
 export async function setIsGoogleLoggedIn(formData: FormData): Promise<void> {
-  await assertSignedIn()
+  await assertAdmin()
   const country = normaliseCountry(formData.get('country_code'))
   if (!country) throw new Error('Missing country code.')
   const value = formData.get('value') === 'true'
@@ -72,7 +73,7 @@ export async function setIsGoogleLoggedIn(formData: FormData): Promise<void> {
 }
 
 export async function setProfileNotes(formData: FormData): Promise<void> {
-  await assertSignedIn()
+  await assertAdmin()
   const country = normaliseCountry(formData.get('country_code'))
   if (!country) throw new Error('Missing country code.')
   const notes = String(formData.get('notes') ?? '').trim()

@@ -3,22 +3,21 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { CronExpressionParser } from 'cron-parser'
-import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { logActivity } from '@/lib/activity-log'
+import { requireAdmin } from '@/lib/auth/require-admin'
 
 export type ActionState =
   | { status: 'ok'; message: string }
   | { status: 'error'; error: string }
   | null
 
-async function requireAuth() {
-  const supabase = await createServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not signed in.')
-  return user
+// Schedule CRUD + the "run now" / item toggles all write via the
+// service-role client (RLS-bypassing) and a stray click could enqueue
+// a full scrape or wipe a schedule. Gate on admin. See BUGS.md #1.
+async function assertAdmin(): Promise<void> {
+  const check = await requireAdmin()
+  if (!check.ok) throw new Error(check.error)
 }
 
 /** Given a cron expression (or null), compute the first future fire. */
@@ -60,7 +59,7 @@ export async function createScheduledSet(
   formData: FormData,
 ): Promise<ActionState> {
   try {
-    await requireAuth()
+    await assertAdmin()
   } catch (e) {
     return { status: 'error', error: e instanceof Error ? e.message : 'unauthorized' }
   }
@@ -114,7 +113,7 @@ export async function updateScheduledSet(
   formData: FormData,
 ): Promise<ActionState> {
   try {
-    await requireAuth()
+    await assertAdmin()
   } catch (e) {
     return { status: 'error', error: e instanceof Error ? e.message : 'unauthorized' }
   }
@@ -163,7 +162,7 @@ export async function updateScheduledSet(
 }
 
 export async function deleteScheduledSet(formData: FormData): Promise<void> {
-  await requireAuth()
+  await assertAdmin()
   const id = String(formData.get('id') ?? '').trim()
   if (!id) return
   const svc = createServiceClient()
@@ -179,7 +178,7 @@ export async function deleteScheduledSet(formData: FormData): Promise<void> {
 }
 
 export async function runScheduledSetNow(formData: FormData): Promise<void> {
-  await requireAuth()
+  await assertAdmin()
   const id = String(formData.get('id') ?? '').trim()
   if (!id) return
   const svc = createServiceClient()
@@ -207,7 +206,7 @@ export async function addScheduledItem(
   formData: FormData,
 ): Promise<ActionState> {
   try {
-    await requireAuth()
+    await assertAdmin()
   } catch (e) {
     return { status: 'error', error: e instanceof Error ? e.message : 'unauthorized' }
   }
@@ -248,7 +247,7 @@ export async function addScheduledItem(
 }
 
 export async function toggleScheduledItem(formData: FormData): Promise<void> {
-  await requireAuth()
+  await assertAdmin()
   const itemId = String(formData.get('item_id') ?? '').trim()
   const setId = String(formData.get('set_id') ?? '').trim()
   if (!itemId) return
@@ -263,7 +262,7 @@ export async function toggleScheduledItem(formData: FormData): Promise<void> {
 }
 
 export async function deleteScheduledItem(formData: FormData): Promise<void> {
-  await requireAuth()
+  await assertAdmin()
   const itemId = String(formData.get('item_id') ?? '').trim()
   const setId = String(formData.get('set_id') ?? '').trim()
   if (!itemId) return
