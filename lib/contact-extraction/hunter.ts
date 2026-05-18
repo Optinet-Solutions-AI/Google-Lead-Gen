@@ -26,9 +26,13 @@ export async function findContactsWithHunter(domain: string): Promise<HunterResu
   }
   if (!domain) return null
 
+  // Auth via Authorization header rather than the `api_key=` query
+  // parameter (BUGS.md #37). Hunter v2 supports three auth modes:
+  // `?api_key=…`, `X-API-KEY: …`, or `Authorization: Bearer …`. The
+  // header forms keep the secret out of access logs, URL referers,
+  // and any intermediate request loggers.
   const params = new URLSearchParams({
     domain,
-    api_key: apiKey,
     limit: String(RESULT_LIMIT),
   })
   const url = `${HUNTER_URL}?${params.toString()}`
@@ -37,7 +41,10 @@ export async function findContactsWithHunter(domain: string): Promise<HunterResu
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
   try {
-    const res = await fetch(url, { signal: controller.signal })
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       console.warn(`[contact-hunter] ${res.status}: ${body.slice(0, 200)}`)
