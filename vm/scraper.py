@@ -5,6 +5,8 @@ import json
 import random
 import argparse
 import requests
+import shutil
+import zipfile
 
 from gologin import GoLogin
 from urllib.parse import quote_plus, urlparse
@@ -1809,6 +1811,28 @@ def check_browser_connectivity(driver):
 # ---------------------------
 MAX_RETRIES = 3
 
+# Backoff (seconds) for transient GoLogin profile-download failures
+# (BadZipFile = GoLogin API returned JSON/HTML error instead of a zip).
+# Index by attempt number, capped at length.
+BADZIP_BACKOFF_SECONDS = [30, 60, 120]
+
+
+def clear_gologin_tmp(profile_id: str) -> None:
+    """Remove the /tmp/gologin_<profile_id> dir if it exists.
+
+    Called between BadZipFile retries — GoLogin's library will leave a
+    partially-extracted profile behind on failed downloads, and re-using
+    it on the next attempt keeps the zip-extract path failing.
+    """
+    tmp_path = os.path.join("/tmp", f"gologin_{profile_id}")
+    try:
+        if os.path.isdir(tmp_path):
+            shutil.rmtree(tmp_path, ignore_errors=True)
+            print(f"[INFO] Cleared stale GoLogin cache at {tmp_path}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] Could not clear {tmp_path}: {exc}", file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Start GoLogin profile and scrape Google or Bing search results"
@@ -1970,6 +1994,31 @@ def main():
                 pass
             print("[RESULT] CAPTCHA")
             sys.exit(1)
+
+        except zipfile.BadZipFile as e:
+            # GoLogin's profile API returned non-zip data (rate-limit,
+            # CDN blip, or an API JSON error). Distinct from a real
+            # scrape failure — clear the half-written cache and back
+            # off exponentially so the API has time to recover.
+            print(f"[WARN] Attempt {attempt} hit GoLogin transient (BadZipFile): {e}",
+                  file=sys.stderr)
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
+            try:
+                gl.stop()
+            except:
+                pass
+            clear_gologin_tmp(args.profile_id)
+
+            if attempt < MAX_RETRIES:
+                backoff = BADZIP_BACKOFF_SECONDS[
+                    min(attempt - 1, len(BADZIP_BACKOFF_SECONDS) - 1)
+                ]
+                print(f"[INFO] GoLogin transient — backing off {backoff}s before retry...")
+                time.sleep(backoff)
 
         except Exception as e:
             print(f"[ERROR] Attempt {attempt} failed: {e}", file=sys.stderr)
