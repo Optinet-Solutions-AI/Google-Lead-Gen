@@ -186,6 +186,80 @@ def _is_cancel_requested(job_id: str | None) -> bool:
         return False
 
 
+# Recent iPhone Safari UA — kept close to the CDP helper so it's easy
+# to bump when Apple rolls Safari forward and casino-affiliate sites
+# start UA-sniffing for newer versions.
+_MOBILE_IPHONE_UA = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+    "Version/17.4 Mobile/15E148 Safari/604.1"
+)
+
+
+def _set_mobile_viewport(driver: webdriver.Chrome) -> bool:
+    """Switch the running tab to iPhone UA + 375x812 viewport via CDP.
+    The override sticks for the rest of the driver session; we're inside
+    a per-job GoLogin profile that gets torn down after each lead, so
+    leaking into another lead can't happen. Returns True on success."""
+    try:
+        driver.execute_cdp_cmd("Network.setUserAgentOverride", {
+            "userAgent": _MOBILE_IPHONE_UA,
+            "platform": "iPhone",
+            "userAgentMetadata": {
+                "platform": "iOS",
+                "platformVersion": "17.4",
+                "architecture": "",
+                "model": "iPhone",
+                "mobile": True,
+            },
+        })
+        driver.execute_cdp_cmd("Emulation.setDeviceMetricsOverride", {
+            "width": 375,
+            "height": 812,
+            "deviceScaleFactor": 3,
+            "mobile": True,
+        })
+        driver.execute_cdp_cmd("Emulation.setTouchEmulationEnabled", {
+            "enabled": True,
+            "maxTouchPoints": 5,
+        })
+        return True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("mobile viewport CDP override failed: %s", exc)
+        return False
+
+
+def _crawl_for_tracking_links(
+    driver: webdriver.Chrome,
+    url: str,
+    lead_id: int,
+    label: str,
+) -> set[str]:
+    """Load homepage + up to MAX_EXTRA_PAGES casino-listing pages, return
+    the deduped set of tracking-link URLs found across them. Shared by
+    both the desktop and mobile passes."""
+    home_html = _navigate(driver, url)
+    if not home_html:
+        return set()
+
+    pages_html: list[tuple[str, str]] = [(url, home_html)]
+    for extra_url in _pick_stag_pages(home_html, url):
+        chunk = _navigate(driver, extra_url, settle_s=2)
+        if chunk:
+            pages_html.append((extra_url, chunk))
+
+    seen_tracking: set[str] = set()
+    for page_url, page_html in pages_html:
+        for link in extract_tracking_links(page_html, page_url):
+            seen_tracking.add(link)
+
+    log.info(
+        "stag: lead=%s pass=%s found %d tracking links across %d pages",
+        lead_id, label, len(seen_tracking), len(pages_html),
+    )
+    return seen_tracking
+
+
 def process_stag_in_browser(
     driver: webdriver.Chrome,
     lead_id: int,
@@ -203,31 +277,33 @@ def process_stag_in_browser(
       5. Parse [btag, stag, cxd, mid, affid] from the final URL
       6. Return deduped tags as a list of dicts ready for the RPC
 
+    Conditional mobile-pass retry: when the desktop crawl returns zero
+    tracking links, switch the tab to iPhone UA + 375x812 viewport via
+    CDP and re-crawl. Many casino-affiliate sites only render their
+    tracking-link stack under a mobile UA / pointer:coarse media query;
+    this catches those without paying the cost of a second pass on
+    pages that already returned links on desktop.
+
     Heavy on browser navigations — count one per tracking link plus N+1
     page loads. Relies on the country lock to stay single-occupant.
     """
-    home_html = _navigate(driver, url)
-    if not home_html:
-        return []
+    # Desktop pass.
+    seen_tracking = _crawl_for_tracking_links(driver, url, lead_id, label="desktop")
+    extracted_via = "desktop"
 
-    pages_html: list[tuple[str, str]] = [(url, home_html)]
-    for extra_url in _pick_stag_pages(home_html, url):
-        chunk = _navigate(driver, extra_url, settle_s=2)
-        if chunk:
-            pages_html.append((extra_url, chunk))
-
-    seen_tracking: set[str] = set()
-    for page_url, page_html in pages_html:
-        for link in extract_tracking_links(page_html, page_url):
-            seen_tracking.add(link)
+    # Mobile retry only when desktop yielded nothing.
+    if not seen_tracking:
+        log.info(
+            "stag: lead=%s desktop pass returned zero tracking links — retrying via mobile viewport",
+            lead_id,
+        )
+        if _set_mobile_viewport(driver):
+            seen_tracking = _crawl_for_tracking_links(driver, url, lead_id, label="mobile")
+            extracted_via = "mobile"
 
     if not seen_tracking:
-        log.info("stag: lead=%s no tracking links found across %d pages",
-                 lead_id, len(pages_html))
+        log.info("stag: lead=%s no tracking links found in either pass", lead_id)
         return []
-
-    log.info("stag: lead=%s found %d tracking links across %d pages",
-             lead_id, len(seen_tracking), len(pages_html))
 
     # No dedupe by tag value — if the affiliate page exposes 10
     # outbound tracking links, we want 10 s_tag rows, even if some
@@ -264,6 +340,7 @@ def process_stag_in_browser(
             "final_url": final_url,
             "redirect_chain": chain,
             "screenshot_path": screenshot_path,
+            "extracted_via": extracted_via,
         })
 
     return resolved

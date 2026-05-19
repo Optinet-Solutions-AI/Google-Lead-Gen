@@ -23,6 +23,8 @@ export type StagDetail = {
   /** Pre-signed URL for the per-tag landing-page screenshot. */
   screenshot_url?: string | null
   is_rooster_brand: boolean | null
+  /** 'desktop' | 'mobile' — which extraction pass produced this tag. */
+  extracted_via: string | null
 }
 
 export type LeadDetail = {
@@ -120,7 +122,7 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
           's_tag, source_param, brand',
           'tracking_url, final_url',
           'is_existing_on_monday, monday_match_kind, monday_match_item_id',
-          'redirect_chain, screenshot_path, is_rooster_brand',
+          'redirect_chain, screenshot_path, is_rooster_brand, extracted_via',
         ].join(', '),
       )
       .eq('lead_id', leadId)

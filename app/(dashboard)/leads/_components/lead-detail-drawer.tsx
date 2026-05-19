@@ -535,6 +535,14 @@ function DetailBody({ detail }: { detail: Detail }) {
                         new
                       </span>
                     )}
+                    {t.extracted_via === 'mobile' && (
+                      <span
+                        className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-800"
+                        title="Tag was only visible when the page was rendered with an iPhone UA + 375x812 viewport — desktop pass returned zero tracking links."
+                      >
+                        via mobile
+                      </span>
+                    )}
                   </span>
                 </div>
                 {t.brand && (

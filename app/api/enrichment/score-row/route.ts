@@ -38,6 +38,8 @@ export async function POST(req: Request): Promise<Response> {
     final_url?: string | null
     redirect_chain?: unknown
     screenshot_path?: string | null
+    /** 'desktop' | 'mobile' — which pass produced this s-tag. */
+    extracted_via?: string | null
   }
   let body: {
     lead_id?: number
@@ -555,6 +557,13 @@ export async function POST(req: Request): Promise<Response> {
         final_url: t.final_url ?? null,
         redirect_chain: t.redirect_chain ?? null,
         screenshot_path: t.screenshot_path ?? null,
+        // 'desktop' | 'mobile' — set by the VM worker so we can measure
+        // how much lift the mobile-pass retry is providing. Unknown
+        // values are normalised to null; the RPC tolerates either.
+        extracted_via:
+          t.extracted_via === 'desktop' || t.extracted_via === 'mobile'
+            ? t.extracted_via
+            : null,
       }))
 
     const { data, error } = await svc.rpc('replace_and_verify_s_tags_for_lead', {
