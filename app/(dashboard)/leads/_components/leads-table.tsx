@@ -196,6 +196,7 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
                 <>
                   <Th><SortHeader columnKey="domain" label="Clean domain" sortable /></Th>
                   <Th><SortHeader columnKey="result_type" label="Type" sortable /></Th>
+                  <Th><SortHeader columnKey="seen_on" label="View" sortable /></Th>
                   <Th><SortHeader columnKey="overall_position" label="Pos" sortable /></Th>
                 </>
               ) : (
@@ -203,6 +204,7 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
                   <Th><SortHeader columnKey="keyword" label="Keyword" sortable /></Th>
                   <Th><SortHeader columnKey="country_code" label="Country" sortable /></Th>
                   <Th><SortHeader columnKey="result_type" label="Type" sortable /></Th>
+                  <Th><SortHeader columnKey="seen_on" label="View" sortable /></Th>
                   <Th><SortHeader columnKey="overall_position" label="Pos" sortable /></Th>
                   <Th><SortHeader columnKey="domain" label="Domain" sortable /></Th>
                 </>
@@ -249,7 +251,10 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
                       <DomainButton domain={row.domain} onOpen={() => setOpenLeadId(row.id)} />
                     </Td>
                     <Td>
-                      <TypeBadge type={row.result_type} seenOn={row.seen_on} />
+                      <TypeBadge type={row.result_type} />
+                    </Td>
+                    <Td>
+                      <SeenOnBadge seenOn={row.seen_on} />
                     </Td>
                     <Td>{row.overall_position ?? '—'}</Td>
                   </>
@@ -271,7 +276,10 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
                     </Td>
                     <Td>{row.country_code ?? '—'}</Td>
                     <Td>
-                      <TypeBadge type={row.result_type} seenOn={row.seen_on} />
+                      <TypeBadge type={row.result_type} />
+                    </Td>
+                    <Td>
+                      <SeenOnBadge seenOn={row.seen_on} />
                     </Td>
                     <Td>{row.overall_position ?? '—'}</Td>
                     <Td className="p-0">
@@ -389,7 +397,10 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
                   {jobContext ? (row.domain ?? '—') : (row.keyword ?? '—')}
                 </button>
               </div>
-              <TypeBadge type={row.result_type} seenOn={row.seen_on} />
+              <div className="flex items-center gap-1.5">
+                <TypeBadge type={row.result_type} />
+                <SeenOnBadge seenOn={row.seen_on} />
+              </div>
             </div>
             <dl className="space-y-1 text-[12px]">
               {!jobContext && <Field label="Country">{row.country_code ?? '—'}</Field>}
@@ -630,24 +641,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-function TypeBadge({
-  type,
-  seenOn,
-}: {
-  type: string | null
-  seenOn?: string | null
-}) {
+function TypeBadge({ type }: { type: string | null }) {
   if (!type) return <span className="text-[color:var(--color-text-secondary)]">—</span>
   const styles =
     type === 'PPC'
       ? 'bg-amber-100 text-amber-800'
       : 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-primary)]'
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap">
-      <span className={['inline-block rounded-full px-2 py-0.5 text-[10px] font-medium', styles].join(' ')}>
-        {type}
-      </span>
-      <SeenOnBadge seenOn={seenOn} />
+    <span className={['inline-block rounded-full px-2 py-0.5 text-[10px] font-medium', styles].join(' ')}>
+      {type}
     </span>
   )
 }

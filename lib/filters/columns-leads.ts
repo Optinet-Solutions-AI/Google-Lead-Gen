@@ -5,6 +5,12 @@ const RESULT_TYPE_OPTIONS = [
   { value: 'Organic', label: 'Organic' },
 ] as const
 
+const SEEN_ON_OPTIONS = [
+  { value: 'desktop', label: 'Desktop' },
+  { value: 'mobile', label: 'Mobile' },
+  { value: 'both', label: 'Both' },
+] as const
+
 const BOOL_THREE_OPTIONS = [
   { value: 'true', label: 'Yes' },
   { value: 'false', label: 'No' },
@@ -16,6 +22,7 @@ export const LEADS_COLUMNS: ReadonlyArray<ColumnDef> = [
   { key: 'keyword', label: 'Keyword', type: 'text', filterable: true, sortable: true },
   { key: 'country_code', label: 'Country', type: 'select', filterable: true, sortable: true, options: [] },
   { key: 'result_type', label: 'Type', type: 'select', filterable: true, sortable: true, options: [...RESULT_TYPE_OPTIONS] },
+  { key: 'seen_on', label: 'View', type: 'select', filterable: true, sortable: true, options: [...SEEN_ON_OPTIONS] },
   { key: 'domain', label: 'Domain', type: 'text', filterable: true, sortable: true },
   { key: 'url', label: 'URL', type: 'text', filterable: true, sortable: false },
   { key: 'overall_position', label: 'Position', type: 'number', filterable: true, sortable: true },

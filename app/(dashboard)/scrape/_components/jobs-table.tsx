@@ -121,6 +121,34 @@ function EngineBadge({ engine }: { engine: ScrapeJob['search_engine'] }) {
   )
 }
 
+function ViewModeBadge({ mode }: { mode: ScrapeJob['view_mode'] }) {
+  // Outlined (border + transparent bg) so the chip reads as visually
+  // distinct from the filled engine chip when stacked in the same cell.
+  // Hues also picked to stay clear of the engine blue/cyan: orange for
+  // "both", violet for mobile, slate for desktop.
+  const m = mode ?? 'both'
+  const style =
+    m === 'mobile'
+      ? 'border-violet-400 text-violet-700'
+      : m === 'both'
+        ? 'border-orange-400 text-orange-700'
+        : 'border-slate-400 text-slate-600'
+  const title =
+    m === 'mobile'
+      ? 'Mobile pass only — iPhone UA + 375x812 viewport.'
+      : m === 'both'
+        ? 'Desktop pass then mobile pass — catches mobile-only PPC and mobile-ranked organic.'
+        : 'Desktop pass only.'
+  return (
+    <span
+      title={title}
+      className={['inline-block rounded-full border bg-transparent px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide', style].join(' ')}
+    >
+      {m}
+    </span>
+  )
+}
+
 function PipelineBadges({
   status,
   enrichment,
@@ -264,6 +292,7 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
               <Th>Keyword</Th>
               <Th>Country</Th>
               <Th>Engine</Th>
+              <Th>View</Th>
               <Th>Pages</Th>
               <Th>Status</Th>
               <Th>Started</Th>
@@ -318,6 +347,9 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                 <LinkTd href={href}>{job.country_code}</LinkTd>
                 <LinkTd href={href}>
                   <EngineBadge engine={job.search_engine} />
+                </LinkTd>
+                <LinkTd href={href}>
+                  <ViewModeBadge mode={job.view_mode} />
                 </LinkTd>
                 <LinkTd href={href}>{job.pages}</LinkTd>
                 <LinkTd href={href}>
@@ -374,6 +406,7 @@ export function JobsCardList({ jobs }: Props) {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-text-secondary)]">
             <span>{job.country_code}</span>
             <EngineBadge engine={job.search_engine} />
+            <ViewModeBadge mode={job.view_mode} />
             <span>{job.pages} {job.pages === 1 ? 'page' : 'pages'}</span>
             <span title={mobileDurationTooltip(job)} suppressHydrationWarning>
               {formatTotalDuration(job)}

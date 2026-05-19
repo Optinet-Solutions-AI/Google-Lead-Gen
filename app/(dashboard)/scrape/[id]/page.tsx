@@ -37,6 +37,7 @@ type Job = {
   error_message: string | null
   result_summary: Record<string, unknown> | null
   search_engine: 'google' | 'bing' | null
+  view_mode: 'desktop' | 'mobile' | 'both' | null
   language: string | null
   created_at: string
 }
@@ -61,7 +62,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const { data: jobRaw, error: jobError } = await svc
     .from('scrape_queue')
     .select(
-      'id, keyword, country_code, pages, status, attempts, batch_id, claimed_by, started_at, completed_at, error_message, result_summary, search_engine, language, created_at',
+      'id, keyword, country_code, pages, status, attempts, batch_id, claimed_by, started_at, completed_at, error_message, result_summary, search_engine, view_mode, language, created_at',
     )
     .eq('id', id)
     .maybeSingle()
@@ -117,6 +118,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
             <h1 className="flex flex-wrap items-center gap-2 text-[16px] font-semibold text-[color:var(--color-text-primary)]">
               <span className="truncate">{job.keyword}</span>
               <EngineBadge engine={job.search_engine} />
+              <ViewModeBadge mode={job.view_mode} />
             </h1>
             <p className="mt-0.5 text-[12px] text-[color:var(--color-text-secondary)]">
               {job.country_code} · {job.pages} page{job.pages === 1 ? '' : 's'}
@@ -183,6 +185,33 @@ function EngineBadge({ engine }: { engine: 'google' | 'bing' | null }) {
   )
 }
 
+function ViewModeBadge({ mode }: { mode: 'desktop' | 'mobile' | 'both' | null }) {
+  const m = mode ?? 'both'
+  const style =
+    m === 'mobile'
+      ? 'border-violet-400 text-violet-700'
+      : m === 'both'
+        ? 'border-orange-400 text-orange-700'
+        : 'border-slate-400 text-slate-600'
+  const title =
+    m === 'mobile'
+      ? 'Mobile pass only — iPhone UA + 375x812 viewport.'
+      : m === 'both'
+        ? 'Desktop pass then mobile pass — catches mobile-only PPC and mobile-ranked organic.'
+        : 'Desktop pass only.'
+  return (
+    <span
+      title={title}
+      className={[
+        'inline-block rounded-full border bg-transparent px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+        style,
+      ].join(' ')}
+    >
+      {m}
+    </span>
+  )
+}
+
 function JobMeta({ job }: { job: Job }) {
   const fields: Array<{ label: string; value: string | null }> = [
     { label: 'Job ID', value: job.id },
@@ -192,6 +221,9 @@ function JobMeta({ job }: { job: Job }) {
     { label: 'Duration', value: formatDuration(job.started_at, job.completed_at) },
     { label: 'Attempts', value: String(job.attempts) },
   ].filter(f => f.value)
+
+  const mobileSkipped = mobilePassSkippedReason(job.result_summary)
+  const mobileRequested = job.view_mode === 'mobile' || job.view_mode === 'both'
 
   return (
     <dl className="grid gap-x-4 gap-y-1 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 text-[11px] md:grid-cols-[auto_1fr_auto_1fr_auto_1fr]">
@@ -203,6 +235,12 @@ function JobMeta({ job }: { job: Job }) {
           </dd>
         </div>
       ))}
+      {mobileRequested && mobileSkipped && (
+        <div className="col-span-full mt-1 rounded-md bg-amber-50 px-3 py-2 text-amber-800">
+          <span className="font-medium">Mobile pass skipped:</span>{' '}
+          {mobileSkippedExplanation(mobileSkipped)}
+        </div>
+      )}
       {job.error_message && (
         <div className="col-span-full mt-1 rounded-md bg-red-50 px-3 py-2 text-red-700">
           <span className="font-medium">Error:</span> {job.error_message}
@@ -210,6 +248,27 @@ function JobMeta({ job }: { job: Job }) {
       )}
     </dl>
   )
+}
+
+function mobilePassSkippedReason(
+  summary: Record<string, unknown> | null,
+): string | null {
+  if (!summary) return null
+  const v = summary['mobile_pass_skipped']
+  return typeof v === 'string' && v.length > 0 ? v : null
+}
+
+function mobileSkippedExplanation(reason: string): string {
+  if (reason === 'viewport_setup_failed') {
+    return 'mobile viewport setup failed on the worker (CDP override), so the mobile SERP pass never ran. Per-row View tags will show only "desktop" — and mobile-only jobs will return 0 rows. Needs a worker-side fix (vm/scraper.py _set_mobile_viewport).'
+  }
+  if (reason === 'parse_failed') {
+    return 'mobile pass ran without captcha but the parser found 0 rows on every page — most likely the SERP DOM didn’t match our selectors (mobile Google ships a different result container from desktop). Every row is tagged seen_on="desktop" and no mobile-only / cross-device counts are available. Needs a worker-side fix (vm/scraper.py get_google_results_selenium).'
+  }
+  if (reason === 'captcha') {
+    return 'mobile pass aborted on captcha (silent abort to preserve desktop results). Per-row View tags will show only "desktop" for this job.'
+  }
+  return reason
 }
 
 function formatTs(iso: string | null): string | null {

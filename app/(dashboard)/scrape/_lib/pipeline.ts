@@ -66,6 +66,7 @@ export type ScrapeJob = {
   enrichment_status: string | null
   language: string | null
   search_engine: 'google' | 'bing' | null
+  view_mode: 'desktop' | 'mobile' | 'both' | null
   created_by_email: string | null
   created_by_username: string | null
   created_by_display: string | null
