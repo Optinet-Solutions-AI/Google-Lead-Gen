@@ -444,6 +444,13 @@ def process_job(job: dict[str, Any]) -> None:
         # is_logged_in: True / False / None — flows into complete_scrape_job,
         # which bumps gologin_profiles.is_google_logged_in for the country.
         "is_logged_in": payload.get("is_logged_in"),
+        # Mobile-pass diagnostics so /scrape can surface them and we can
+        # tell at-a-glance whether the mobile pass ran, found anything,
+        # or aborted on captcha.
+        "view_mode": view_mode,
+        "mobile_only_results": payload.get("mobile_only_results"),
+        "cross_device_results": payload.get("cross_device_results"),
+        "mobile_pass_skipped": payload.get("mobile_pass_skipped"),
     }
 
     # Upload any per-PPC SERP screenshots the scraper saved to /tmp.
