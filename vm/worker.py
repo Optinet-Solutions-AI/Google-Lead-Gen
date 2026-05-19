@@ -49,6 +49,11 @@ SCRAPE_TIMEOUT_S     = int(os.environ.get("SCRAPE_TIMEOUT_SECONDS", "1200"))  # 
 # regular 20 min scrape budget. Set INTERACTIVE_MODE=off to disable.
 INTERACTIVE_MODE          = os.environ.get("INTERACTIVE_MODE", "on").strip().lower() != "off"
 INTERACTIVE_TIMEOUT_S     = int(os.environ.get("INTERACTIVE_SCRAPE_TIMEOUT_SECONDS", "2400"))  # 40 min
+# MOBILE_PASS_ENABLED — controls whether scraper.py runs its mobile PPC
+# pass after the desktop SERP loop. Default on; set to 'off' on a
+# country/worker where captcha pain is high enough that the extra SERP
+# request outweighs the extra mobile-only ad coverage.
+MOBILE_PASS_ENABLED       = os.environ.get("MOBILE_PASS_ENABLED", "on").strip().lower() != "off"
 SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_KEY         = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 SCRAPER_PATH         = os.environ.get(
@@ -243,6 +248,9 @@ def run_scrape(
         cmd += ["--country-code", country_code]
     if requires_google_login:
         cmd += ["--requires-google-login"]
+    if not MOBILE_PASS_ENABLED:
+        # scraper.py defaults --mobile-pass=on; only forward the opt-out.
+        cmd += ["--no-mobile-pass"]
     if INTERACTIVE_MODE and job_id:
         # When interactive mode is on, hand the scraper enough context
         # to write interactive_checkpoints rows. Subprocess timeout

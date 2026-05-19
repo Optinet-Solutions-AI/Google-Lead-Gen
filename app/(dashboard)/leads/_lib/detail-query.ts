@@ -69,6 +69,12 @@ export type LeadDetail = {
     not_relevant_marked_at: string | null
     not_relevant_marked_by: string | null
     serp_screenshot_path: string | null
+    /** Which device view this lead was seen on:
+     *   'desktop' — only in the desktop SERP scrape
+     *   'mobile'  — only in the iPhone-emulated mobile pass (mobile-only PPC)
+     *   'both'    — appeared in both views (cross-device PPC)
+     *  Null on legacy rows from before the mobile pass landed. */
+    seen_on: string | null
   } | null
   contact: ContactDetail | null
   stags: StagDetail[]
@@ -91,7 +97,7 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
       .from('google_lead_gen_table')
       .select(
         [
-          'id, url, domain, keyword, country, country_code, result_type, batch_id, created_at',
+          'id, url, domain, keyword, country, country_code, result_type, batch_id, created_at, seen_on',
           'scrape_job_id',
           'is_on_monday, monday_board, monday_item_id, monday_match_kind',
           'is_affiliate, affiliate_score, affiliate_casino_score, affiliate_confidence',

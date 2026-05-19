@@ -348,7 +348,30 @@ function DetailBody({ detail }: { detail: Detail }) {
       <Section title="Context">
         <KV label="Keyword" value={lead.keyword ?? '—'} />
         <KV label="Country" value={[lead.country, lead.country_code].filter(Boolean).join(' · ') || '—'} />
-        <KV label="Type" value={lead.result_type ?? '—'} />
+        <KV
+          label="Type"
+          value={
+            <span className="inline-flex flex-wrap items-center gap-1.5">
+              <span>{lead.result_type ?? '—'}</span>
+              {lead.result_type === 'PPC' && lead.seen_on === 'mobile' && (
+                <span
+                  className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-800"
+                  title="This ad only rendered when Google's SERP was loaded with a mobile UA + 375x812 viewport — invisible on desktop."
+                >
+                  mobile only
+                </span>
+              )}
+              {lead.result_type === 'PPC' && lead.seen_on === 'both' && (
+                <span
+                  className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-800"
+                  title="Same PPC ad URL was seen on both the desktop SERP and the mobile-emulated SERP — cross-device campaign."
+                >
+                  desktop + mobile
+                </span>
+              )}
+            </span>
+          }
+        />
         <KV label="Batch" value={lead.batch_id != null ? String(lead.batch_id) : '—'} />
         <KV label="Scraped" value={new Date(lead.created_at).toLocaleString()} />
         {(lead.queued_by_display || lead.queued_by_username) && (

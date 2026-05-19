@@ -249,7 +249,7 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
                       <DomainButton domain={row.domain} onOpen={() => setOpenLeadId(row.id)} />
                     </Td>
                     <Td>
-                      <TypeBadge type={row.result_type} />
+                      <TypeBadge type={row.result_type} seenOn={row.seen_on} />
                     </Td>
                     <Td>{row.overall_position ?? '—'}</Td>
                   </>
@@ -271,7 +271,7 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
                     </Td>
                     <Td>{row.country_code ?? '—'}</Td>
                     <Td>
-                      <TypeBadge type={row.result_type} />
+                      <TypeBadge type={row.result_type} seenOn={row.seen_on} />
                     </Td>
                     <Td>{row.overall_position ?? '—'}</Td>
                     <Td className="p-0">
@@ -389,7 +389,7 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
                   {jobContext ? (row.domain ?? '—') : (row.keyword ?? '—')}
                 </button>
               </div>
-              <TypeBadge type={row.result_type} />
+              <TypeBadge type={row.result_type} seenOn={row.seen_on} />
             </div>
             <dl className="space-y-1 text-[12px]">
               {!jobContext && <Field label="Country">{row.country_code ?? '—'}</Field>}
@@ -630,15 +630,31 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-function TypeBadge({ type }: { type: string | null }) {
+function TypeBadge({
+  type,
+  seenOn,
+}: {
+  type: string | null
+  seenOn?: string | null
+}) {
   if (!type) return <span className="text-[color:var(--color-text-secondary)]">—</span>
   const styles =
     type === 'PPC'
       ? 'bg-amber-100 text-amber-800'
       : 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-primary)]'
   return (
-    <span className={['inline-block rounded-full px-2 py-0.5 text-[10px] font-medium', styles].join(' ')}>
-      {type}
+    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+      <span className={['inline-block rounded-full px-2 py-0.5 text-[10px] font-medium', styles].join(' ')}>
+        {type}
+      </span>
+      {type === 'PPC' && seenOn === 'mobile' && (
+        <span
+          className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-medium text-violet-800"
+          title="Mobile-only PPC: this ad only rendered when Google's SERP was loaded with a mobile UA + viewport. Invisible on desktop."
+        >
+          mobile
+        </span>
+      )}
     </span>
   )
 }

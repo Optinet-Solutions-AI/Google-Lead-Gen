@@ -24,6 +24,8 @@ export type LeadRow = {
   position_on_page: number | null
   overall_position: number | null
   result_type: string | null
+  /** Which device view captured this lead: 'desktop' | 'mobile' | 'both' | null. */
+  seen_on: string | null
   batch_id: number | null
   scrape_job_id: string | null
   // Monday duplicate check (7.1)
@@ -97,7 +99,7 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
       [
         'id, keyword, country, country_code, url, domain',
         'page_number, position_on_page, overall_position',
-        'result_type, batch_id, scrape_job_id',
+        'result_type, seen_on, batch_id, scrape_job_id',
         'is_on_monday, monday_board, monday_item_id, monday_overridden_at',
         'is_affiliate, affiliate_confidence, is_affiliate_overridden_at',
         'is_rooster_partner, brand, is_rooster_overridden_at',

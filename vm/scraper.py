@@ -949,6 +949,77 @@ def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, 
     raise CaptchaDetectedException("CAPTCHA detected")
 
 # ---------------------------
+# Mobile-pass helpers
+# ---------------------------
+# A lot of casino-vertical PPC campaigns are configured "mobile only"
+# in Google Ads — the ad creative never renders on a desktop SERP. To
+# surface those, scrape_google_search runs a second pass after the
+# desktop loop: switches the tab to iPhone UA + 375x812 via CDP,
+# re-fetches page 0, and harvests any sponsored URLs that weren't in
+# the desktop result set. Each result then carries seen_on so the team
+# can filter for the mobile-only cohort.
+
+# Recent iPhone Safari UA. Bump when newer iOS versions get UA-sniffed.
+_MOBILE_IPHONE_UA = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+    "Version/17.4 Mobile/15E148 Safari/604.1"
+)
+
+
+def _set_mobile_viewport(driver) -> bool:
+    """Switch the running tab to iPhone UA + 375x812 viewport via CDP.
+    Sticks for the rest of the driver session — fine here because each
+    job runs in a freshly-started GoLogin profile that gets torn down
+    after the scrape completes."""
+    try:
+        driver.execute_cdp_cmd("Network.setUserAgentOverride", {
+            "userAgent": _MOBILE_IPHONE_UA,
+            "platform": "iPhone",
+            "userAgentMetadata": {
+                "platform": "iOS",
+                "platformVersion": "17.4",
+                "architecture": "",
+                "model": "iPhone",
+                "mobile": True,
+            },
+        })
+        driver.execute_cdp_cmd("Emulation.setDeviceMetricsOverride", {
+            "width": 375,
+            "height": 812,
+            "deviceScaleFactor": 3,
+            "mobile": True,
+        })
+        driver.execute_cdp_cmd("Emulation.setTouchEmulationEnabled", {
+            "enabled": True,
+            "maxTouchPoints": 5,
+        })
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] mobile viewport CDP override failed: {exc}", file=sys.stderr)
+        return False
+
+
+def _is_captcha_silent(driver) -> bool:
+    """Cheap captcha check that does NOT escalate to HITL. Used by the
+    mobile pass — if Google blocks the second request, we prefer to
+    abort the mobile pass silently and preserve the already-saved
+    desktop results, rather than freezing the whole scrape in HITL
+    over an enhancement pass."""
+    try:
+        cur = (driver.current_url or "").lower()
+    except Exception:  # noqa: BLE001
+        cur = ""
+    if "/sorry/" in cur or "captcha" in cur:
+        return True
+    try:
+        page = (driver.page_source or "").lower()
+    except Exception:  # noqa: BLE001
+        page = ""
+    return "unusual traffic" in page or "recaptcha" in page or "captcha" in page
+
+
+# ---------------------------
 # Google scraping
 # ---------------------------
 def get_google_results_selenium(driver, keyword, country, page=0, language="en", wait_for_sponsored=True):
@@ -1090,12 +1161,16 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
 # ---------------------------
 # Scrape multiple pages
 # ---------------------------
-def scrape_google_search(driver, keyword, country, max_pages=5, delay_min=2, delay_max=5, language="en"):
+def scrape_google_search(driver, keyword, country, max_pages=5, delay_min=2, delay_max=5, language="en", mobile_pass=True):
     all_results = []
     login_state = None
 
     for page in range(max_pages):
         page_results = get_google_results_selenium(driver, keyword, country, page, language=language)
+        # Stamp every desktop-pass row up front. The mobile pass below
+        # flips overlapping rows to 'both' and tags new ones as 'mobile'.
+        for r in page_results:
+            r["seen_on"] = "desktop"
         all_results.extend(page_results)
 
         # Capture the login state from the first successfully loaded page.
@@ -1109,6 +1184,51 @@ def scrape_google_search(driver, keyword, country, max_pages=5, delay_min=2, del
         if page < max_pages - 1:
             time.sleep(random.uniform(delay_min, delay_max))
 
+    # ----- Mobile-only PPC pass -----
+    # Switches the tab to iPhone UA + 375x812 via CDP, re-fetches page 0,
+    # extracts sponsored URLs, and merges any not already in the desktop
+    # set. Mobile pass aborts gracefully on captcha (does NOT escalate to
+    # HITL) so an enhancement failure can never wipe the desktop results.
+    mobile_summary = {"new": 0, "both": 0, "skipped_reason": None}
+    if mobile_pass:
+        try:
+            mobile_ppc = scrape_google_mobile_ppc(driver, keyword, country, language=language)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] Mobile pass failed: {exc} — desktop results preserved", file=sys.stderr)
+            mobile_ppc = None
+            mobile_summary["skipped_reason"] = "exception"
+
+        if mobile_ppc is None:
+            mobile_summary["skipped_reason"] = mobile_summary["skipped_reason"] or "captcha_or_skip"
+        elif mobile_ppc:
+            existing_urls = {r["url"] for r in all_results}
+            existing_full = {r.get("full_url") for r in all_results if r.get("full_url")}
+            for mr in mobile_ppc:
+                # If we already have this URL from the desktop pass, just
+                # promote the existing row to seen_on='both' — don't emit
+                # a duplicate.
+                overlap = next(
+                    (r for r in all_results
+                     if r["url"] == mr["url"]
+                     or (r.get("full_url") and r["full_url"] == mr.get("full_url"))),
+                    None,
+                )
+                if overlap is not None:
+                    overlap["seen_on"] = "both"
+                    mobile_summary["both"] += 1
+                    continue
+                mr["seen_on"] = "mobile"
+                all_results.append(mr)
+                existing_urls.add(mr["url"])
+                if mr.get("full_url"):
+                    existing_full.add(mr["full_url"])
+                mobile_summary["new"] += 1
+        print(
+            f"[INFO] Mobile pass merged: {mobile_summary['new']} new "
+            f"mobile-only PPC, {mobile_summary['both']} cross-device "
+            f"(also seen on desktop)"
+        )
+
     # Deduplicate by domain before returning
     all_results = deduplicate_results(all_results)
 
@@ -1120,11 +1240,117 @@ def scrape_google_search(driver, keyword, country, max_pages=5, delay_min=2, del
         "total_results": len(all_results),
         "organic_results": sum(r["resultType"] == "Organic" for r in all_results),
         "ppc_results": sum(r["resultType"] == "PPC" for r in all_results),
+        "mobile_only_ppc": mobile_summary["new"],
+        "cross_device_ppc": mobile_summary["both"],
+        "mobile_pass_skipped": mobile_summary["skipped_reason"],
         "pages_scraped": max_pages,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "is_logged_in": login_state,
         "results": all_results
     }
+
+
+def scrape_google_mobile_ppc(driver, keyword, country, language="en"):
+    """Mobile-only PPC pass. Run AFTER scrape_google_search has finished
+    its desktop loop — switches the driver to iPhone UA + 375x812 viewport
+    via CDP, re-fetches page 0 of the Google SERP, and returns ONLY the
+    PPC result rows (organic results are intentionally not re-parsed —
+    they don't differ meaningfully between devices and a second parse
+    just buys captcha exposure for no benefit).
+
+    Returns:
+      list[dict] of PPC result rows — same shape as scrape_google_search
+        emits, but without seen_on set (caller stamps that based on the
+        desktop-pass overlap)
+      None — pass aborted (captcha, profile error, etc.). Caller should
+        keep the desktop results and move on.
+    """
+    if not _set_mobile_viewport(driver):
+        return None
+
+    # Small gap before re-firing the same SERP URL so the second request
+    # doesn't slam Google's bot detection from the same profile in <1s.
+    time.sleep(random.uniform(2.5, 4.5))
+
+    encoded_keyword = quote_plus(keyword)
+    url = f"https://www.google.com/search?q={encoded_keyword}&hl={language}&start=0"
+    print(f"[INFO] Mobile pass: navigating to {url}")
+
+    try:
+        driver.get(url)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] Mobile pass: navigation failed: {exc}", file=sys.stderr)
+        return None
+
+    if _is_captcha_silent(driver):
+        print("[WARN] Mobile pass: captcha detected on mobile request — aborting silently")
+        return None
+
+    accept_google_consent(driver)
+
+    try:
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.ID, "search"))
+        )
+    except Exception:  # noqa: BLE001
+        print("[WARN] Mobile pass: search container not found — aborting")
+        return None
+
+    wait_for_sponsored_results(driver, timeout=10)
+
+    sponsored_map = extract_sponsored_urls_selenium(driver)
+    sponsored_urls = list(sponsored_map.keys())
+    if not sponsored_urls:
+        print("[INFO] Mobile pass: no sponsored URLs found")
+        return []
+
+    print(f"[INFO] Mobile pass: found {len(sponsored_urls)} sponsored URL(s) — resolving")
+
+    # Click through each PPC to capture the full URL (gclid/gad_*) and
+    # full-page landing screenshot, same as the desktop pass does. We
+    # skip click-throughs for ads we already saw on desktop because the
+    # caller will dedupe by URL anyway and we'd waste navigations.
+    serp_screenshots: dict = {}
+    resolved_ppc_urls: dict = {}
+    for idx, (ppc_url, anchor) in enumerate(sponsored_map.items()):
+        out_path = f"/tmp/serp_ad_mobile_{int(time.time() * 1000)}_{idx}.png"
+        try:
+            full, shot = click_through_ppc(driver, anchor, out_path)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] Mobile pass: click-through failed for ad {idx}: {exc}",
+                  file=sys.stderr)
+            continue
+        if full:
+            resolved_ppc_urls[ppc_url] = full
+        if shot:
+            serp_screenshots[ppc_url] = out_path
+
+    soup = BeautifulSoup(driver.page_source, "html.parser")
+    results = []
+    for ppc_url in sponsored_urls:
+        resolved = resolved_ppc_urls.get(ppc_url, ppc_url)
+        a_tag = soup.find("a", href=ppc_url) or soup.find("a", {"data-pcu": ppc_url})
+        title = a_tag.get_text(strip=True) if a_tag else ""
+
+        parsed = urlparse(ppc_url)
+        full_url = f"{parsed.scheme}://{parsed.netloc}"
+
+        result_row = {
+            "url": resolved,
+            "full_url": full_url,
+            "title": title,
+            "resultType": "PPC",
+            "page": 1,  # mobile pass only re-fetches page 0
+            "position": None,
+            "overall_position": None,
+            "keyword": keyword,
+            "country": country,
+        }
+        if ppc_url in serp_screenshots:
+            result_row["local_serp_screenshot"] = serp_screenshots[ppc_url]
+        results.append(result_row)
+
+    return results
 
 # ---------------------------
 # Bing scraping
@@ -1506,6 +1732,19 @@ def main():
     parser.add_argument("--webhook", default=None, help="Optional webhook URL to POST results to (not used by the Supabase worker)")
     parser.add_argument("--language", default="en", help="Search language code (en, ar, de, …)")
     parser.add_argument("--engine", default="google", choices=["google", "bing"], help="Which search engine to scrape")
+    parser.add_argument(
+        "--mobile-pass",
+        dest="mobile_pass",
+        action="store_true",
+        default=True,
+        help="After the desktop SERP scrape completes, re-fetch page 0 of Google with iPhone UA + 375x812 viewport via CDP and merge any mobile-only PPC ads (default: on). Aborts silently on captcha — desktop results are preserved.",
+    )
+    parser.add_argument(
+        "--no-mobile-pass",
+        dest="mobile_pass",
+        action="store_false",
+        help="Disable the mobile PPC pass for this scrape (e.g. on a captcha-prone country).",
+    )
     parser.add_argument("--job-id", default=None, help="scrape_queue.id (UUID). Required for human-in-the-loop checkpoints.")
     parser.add_argument("--worker-id", default=None, help="Worker identifier (e.g. vm1-9222). Logged on interactive checkpoints.")
     parser.add_argument(
@@ -1609,6 +1848,7 @@ def main():
                     args.country,
                     max_pages=args.pages,
                     language=args.language,
+                    mobile_pass=args.mobile_pass,
                 )
 
             save_to_file(data, args.output)
