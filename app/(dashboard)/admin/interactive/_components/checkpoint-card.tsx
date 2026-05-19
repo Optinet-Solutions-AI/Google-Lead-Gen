@@ -11,12 +11,14 @@ import {
   KeyRound,
   Loader2,
   Monitor,
+  RotateCcw,
   ShieldCheck,
   Timer,
   XCircle,
 } from 'lucide-react'
 import {
   cancelCheckpointAction,
+  requeueCheckpointAction,
   resolveCheckpointAction,
   type CheckpointMutationState,
 } from '../actions'
@@ -97,6 +99,10 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl }: Props) {
     cancelCheckpointAction,
     initial,
   )
+  const [requeueState, requeueAction, requeuePending] = useActionState(
+    requeueCheckpointAction,
+    initial,
+  )
   const [note, setNote] = useState('')
   const reason: ReasonMeta = REASON_META[row.reason] ?? UNKNOWN_REASON
   const ReasonIcon = reason.icon
@@ -106,7 +112,9 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl }: Props) {
       ? resolveState.error
       : cancelState?.status === 'error'
         ? cancelState.error
-        : null
+        : requeueState?.status === 'error'
+          ? requeueState.error
+          : null
 
   // Start as null so SSR and the first client render produce the same
   // markup (a `—` placeholder). The Date.now()-driven value populates
@@ -274,18 +282,52 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl }: Props) {
         )}
 
         {row.status !== 'waiting' && (
-          <p className="text-[11px] text-[color:var(--color-text-secondary)]">
-            {row.status === 'resolved' && row.resolved_at && (
-              <>Resumed {new Date(row.resolved_at).toLocaleString()}{row.resolved_by ? ` by ${row.resolved_by}` : ''}</>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[11px] text-[color:var(--color-text-secondary)]">
+              {row.status === 'resolved' && row.resolved_at && (
+                <>Resumed {new Date(row.resolved_at).toLocaleString()}{row.resolved_by ? ` by ${row.resolved_by}` : ''}</>
+              )}
+              {row.status === 'cancelled' && row.resolved_at && (
+                <>Cancelled {new Date(row.resolved_at).toLocaleString()}{row.resolved_by ? ` by ${row.resolved_by}` : ''}</>
+              )}
+              {row.status === 'timed_out' && (
+                <>Timed out at {new Date(row.expires_at).toLocaleString()}</>
+              )}
+              {row.resolution_note && <> · &ldquo;{row.resolution_note}&rdquo;</>}
+            </p>
+
+            {(row.status === 'timed_out' || row.status === 'cancelled') && (
+              <form
+                action={requeueAction}
+                onSubmit={e => {
+                  if (
+                    !confirm(
+                      'Re-queue this scrape with a fresh HITL window? The worker will re-claim the job, navigate to the same SERP again, and you\'ll get another ' +
+                        '~2-min window to resolve the captcha. Resets attempts + captcha_attempts counters.',
+                    )
+                  ) {
+                    e.preventDefault()
+                  }
+                }}
+                className="ml-auto"
+              >
+                <input type="hidden" name="job_id" value={row.job_id} />
+                <button
+                  type="submit"
+                  disabled={requeuePending || requeueState?.status === 'ok'}
+                  title="Re-queue this scrape with a fresh HITL window"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/15 px-2.5 py-1 text-[11px] font-semibold text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent)]/30 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {requeuePending ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <RotateCcw className="h-3 w-3" />
+                  )}
+                  {requeueState?.status === 'ok' ? 'Re-queued' : 'Re-queue with HITL'}
+                </button>
+              </form>
             )}
-            {row.status === 'cancelled' && row.resolved_at && (
-              <>Cancelled {new Date(row.resolved_at).toLocaleString()}{row.resolved_by ? ` by ${row.resolved_by}` : ''}</>
-            )}
-            {row.status === 'timed_out' && (
-              <>Auto-cancelled at {new Date(row.expires_at).toLocaleString()}</>
-            )}
-            {row.resolution_note && <> · &ldquo;{row.resolution_note}&rdquo;</>}
-          </p>
+          </div>
         )}
 
         {errorMsg && (

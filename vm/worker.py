@@ -165,6 +165,18 @@ def captcha_job(job_id: str) -> None:
     supabase.rpc("captcha_scrape_job", {"p_job_id": job_id}).execute()
 
 
+def captcha_terminal(job_id: str, error: str | None = None) -> None:
+    """HITL-timeout path: mark the job as terminal 'captcha' without
+    bumping captcha_attempts so the operator can manually re-queue from
+    /admin/interactive. Distinct from captcha_job (which auto-retries
+    up to 10 times) — running auto-retry on HITL captchas would just
+    burn proxy quota cycling the same captcha 10x in 20 minutes."""
+    supabase.rpc(
+        "mark_scrape_job_captcha_terminal",
+        {"p_job_id": job_id, "p_error": (error or "HITL timed out without operator action")[:2000]},
+    ).execute()
+
+
 def fail_job(job_id: str, error: str) -> None:
     supabase.rpc("fail_scrape_job", {"p_job_id": job_id, "p_error": error[:2000]}).execute()
 
@@ -376,6 +388,17 @@ def process_job(job: dict[str, Any]) -> None:
         return
 
     # Classify the outcome by the [RESULT] marker the scraper prints.
+    # CAPTCHA_HITL_TIMEOUT comes from request_interactive_checkpoint when
+    # the operator didn't click Resume within hitl_ttl_minutes. We route
+    # it to the terminal path (no auto-retry) so the operator can
+    # manually re-queue from /admin/interactive — see
+    # mark_scrape_job_captcha_terminal vs captcha_scrape_job.
+    if "[RESULT] CAPTCHA_HITL_TIMEOUT" in combined_log:
+        log.warning("job %s HITL timed out (log=%s) — marking terminal captcha", job_id, log_path)
+        _kill_port()
+        captcha_terminal(job_id)
+        return
+
     if "[RESULT] CAPTCHA" in combined_log:
         log.warning("job %s hit CAPTCHA (log=%s)", job_id, log_path)
         _kill_port()

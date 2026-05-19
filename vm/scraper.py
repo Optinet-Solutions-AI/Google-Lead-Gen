@@ -437,7 +437,48 @@ class CaptchaDetectedException(Exception):
 # in the noVNC viewer affect the same session.
 
 CHECKPOINT_POLL_SECONDS = 5
-CHECKPOINT_DEFAULT_TTL_MINUTES = 15
+# Hard fallback when system_settings is unreachable. Default-on value
+# matches the migration seed; the worker reads the live value out of
+# system_settings.hitl_ttl_minutes for each checkpoint so an admin can
+# tune it via /admin/system without restarting workers.
+CHECKPOINT_DEFAULT_TTL_MINUTES = 2
+
+# Result markers the worker greps for after the scraper subprocess exits.
+# Distinct from the generic CAPTCHA marker (which triggers auto-retry via
+# captcha_scrape_job) so HITL timeouts can be routed to a terminal-only
+# path — operators manually re-queue from /admin/interactive when ready,
+# instead of the worker cycling the same captcha 10 times in 20 minutes.
+RESULT_MARKER_HITL_TIMEOUT = "[RESULT] CAPTCHA_HITL_TIMEOUT"
+
+
+def _fetch_hitl_ttl_minutes() -> int:
+    """Pull the live TTL from system_settings via the service-role RPC
+    we already use elsewhere. Falls back to CHECKPOINT_DEFAULT_TTL_MINUTES
+    if the row is missing or the value isn't a positive int."""
+    try:
+        resp = _supabase_request(
+            "POST",
+            "/rest/v1/rpc/get_system_setting",
+            json_body={"p_key": "hitl_ttl_minutes"},
+        )
+        if resp.status_code != 200:
+            return CHECKPOINT_DEFAULT_TTL_MINUTES
+        val = resp.json()
+        # The RPC returns the jsonb value directly. We accept either a
+        # raw number (`2`) or a stringified number (`"2"`).
+        if isinstance(val, bool):  # bool is a subclass of int — explicit reject
+            return CHECKPOINT_DEFAULT_TTL_MINUTES
+        if isinstance(val, (int, float)):
+            n = int(val)
+        elif isinstance(val, str):
+            n = int(val.strip())
+        else:
+            return CHECKPOINT_DEFAULT_TTL_MINUTES
+        return n if n > 0 else CHECKPOINT_DEFAULT_TTL_MINUTES
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] hitl_ttl_minutes lookup failed: {exc} — using default {CHECKPOINT_DEFAULT_TTL_MINUTES}m",
+              file=sys.stderr)
+        return CHECKPOINT_DEFAULT_TTL_MINUTES
 
 # Set by main() at startup. check_for_captcha falls back to these
 # when callers don't pass kwargs explicitly. Keeps existing
@@ -528,7 +569,7 @@ def request_interactive_checkpoint(
     worker_id: str | None,
     worker_port: int,
     reason: str,
-    ttl_minutes: int = CHECKPOINT_DEFAULT_TTL_MINUTES,
+    ttl_minutes: int | None = None,
 ) -> bool:
     """Pause the scrape and wait for an admin to resolve via noVNC.
 
@@ -540,12 +581,28 @@ def request_interactive_checkpoint(
     Requires --interactive + --job-id + --worker-id to actually fire;
     when called without them, returns False immediately so legacy
     callers fall through to their existing fail path.
+
+    TTL: passing None (default) reads system_settings.hitl_ttl_minutes
+    so an admin can tune via /admin/system without restarting workers.
+    Pass an explicit int to override per-call (tests etc.).
     """
     if not job_id:
         print("[INFO] checkpoint: no --job-id, skipping (interactive flag ignored)")
         return False
 
-    print(f"[INFO] checkpoint: pausing for human (reason={reason})")
+    if ttl_minutes is None:
+        ttl_minutes = _fetch_hitl_ttl_minutes()
+
+    print(f"[INFO] checkpoint: pausing for human (reason={reason}, ttl={ttl_minutes}m)")
+
+    # Maximize the Chromium window so the noVNC viewer shows the captcha
+    # full-screen instead of buried in a small window the operator has
+    # to hunt for. Per-worker Xvfb isolation already shows only this
+    # worker's browser; maximize takes that the last 10 ft.
+    try:
+        driver.maximize_window()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] checkpoint: maximize_window failed: {exc}", file=sys.stderr)
 
     try:
         current_url = driver.current_url or None
@@ -559,6 +616,7 @@ def request_interactive_checkpoint(
     screenshot_path = _upload_checkpoint_screenshot(driver, job_id)
 
     # Insert the checkpoint row + flip scrape_queue status to needs_human
+    checkpoint_id: int | None = None
     try:
         resp = _supabase_request(
             "POST",
@@ -615,7 +673,27 @@ def request_interactive_checkpoint(
         except Exception as exc:  # noqa: BLE001
             print(f"[WARN] checkpoint poll error: {exc}", file=sys.stderr)
 
-    print("[WARN] checkpoint timed out without operator action")
+    print(f"[WARN] checkpoint timed out without operator action ({ttl_minutes}m elapsed)")
+
+    # Flip the checkpoint row to 'timed_out' so /admin/interactive can
+    # render a "Re-queue with HITL" button on it. Idempotent — the RPC
+    # only updates rows still in 'waiting' state.
+    if checkpoint_id is not None:
+        try:
+            _supabase_request(
+                "POST",
+                "/rest/v1/rpc/timeout_interactive_checkpoint",
+                json_body={"p_id": checkpoint_id},
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] timeout_interactive_checkpoint RPC failed: {exc}",
+                  file=sys.stderr)
+
+    # Emit a distinct marker so worker.py routes us to the terminal
+    # path (mark_scrape_job_captcha_terminal) instead of the generic
+    # captcha auto-retry loop. Manual operator re-queue is the only way
+    # forward from here.
+    print(RESULT_MARKER_HITL_TIMEOUT)
     return False
 
 

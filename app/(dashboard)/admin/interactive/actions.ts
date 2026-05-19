@@ -67,6 +67,34 @@ export async function resolveCheckpointAction(
   return { status: 'ok' }
 }
 
+export async function requeueCheckpointAction(
+  _prev: CheckpointMutationState,
+  fd: FormData,
+): Promise<CheckpointMutationState> {
+  const auth = await requireAdmin()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+
+  const jobId = String(fd.get('job_id') ?? '').trim()
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+
+  const svc = createServiceClient()
+  const { data, error } = await svc.rpc('requeue_scrape_after_hitl', {
+    p_job_id: jobId,
+  })
+  if (error) return { status: 'error', error: error.message }
+
+  await logActivity({
+    action: 'interactive.requeue',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { prior_status: data ?? null },
+  })
+
+  revalidatePath('/admin/interactive')
+  revalidatePath('/scrape', 'layout')
+  return { status: 'ok' }
+}
+
 export async function cancelCheckpointAction(
   _prev: CheckpointMutationState,
   fd: FormData,
