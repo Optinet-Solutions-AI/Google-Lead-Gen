@@ -1126,12 +1126,29 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
 
     accept_google_consent(driver)
 
+    # Wait for the results container. `#rso` is the inner results-only
+    # div that Google renders on BOTH desktop and mobile SERPs (same ID,
+    # same purpose). The old `#search` wait targeted the outer wrapper
+    # that mobile layouts don't render — so the wait timed out on every
+    # mobile-pass scrape and returned [] silently.
     try:
         WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.ID, "search"))
+            EC.presence_of_element_located((By.ID, "rso"))
         )
     except:
-        print("[WARN] Search container not found")
+        # Dump the unparsed page_source to /tmp so we can inspect the
+        # DOM shape Google is actually serving. Without this, a parser
+        # failure is invisible — the function returns [] and the only
+        # signal is a single WARN line in the worker log. With it, the
+        # next failed mobile pass leaves a copy of the HTML we can
+        # scp back to a workstation and grep for the real container ID.
+        try:
+            dump_path = f"/tmp/scrape_rso_miss_{int(time.time() * 1000)}_p{page}.html"
+            with open(dump_path, "w", encoding="utf-8") as f:
+                f.write(driver.page_source or "")
+            print(f"[WARN] Results container (#rso) not found — dumped page_source to {dump_path}")
+        except Exception as dump_exc:  # noqa: BLE001
+            print(f"[WARN] Results container (#rso) not found (dump failed: {dump_exc})")
         return []
 
     if wait_for_sponsored:
@@ -1164,7 +1181,11 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
     overall_position = 1
 
     # --- Organic results ---
-    for h3 in soup.select("#search a h3"):
+    # Desktop SERPs wrap each result title in <h3>; mobile SERPs wrap it
+    # in <div role="heading"> instead. Both live under #rso and both are
+    # nested inside the result anchor. Iterate the union so the parser
+    # works regardless of which layout Google serves the session.
+    for h3 in soup.select("#rso a h3") + soup.select("#rso a div[role='heading']"):
         a = h3.find_parent("a")
         if not a:
             continue
@@ -1353,6 +1374,15 @@ def scrape_google_search(
             # ---- Merge mobile results ----
             if mobile_results is None:
                 pass  # captcha aborted; skipped_reason already set
+            elif len(mobile_results) == 0:
+                # Pass ran cleanly but returned zero rows on every page.
+                # Either the SERP DOM didn't match our selectors (most
+                # likely — desktop and mobile Google ship different result
+                # containers) or the query genuinely had no mobile hits.
+                # Flag it so /scrape can surface a "mobile pass parsed 0
+                # results" banner instead of silently leaving every row
+                # tagged seen_on='desktop' with no explanation.
+                mobile_summary["skipped_reason"] = "parse_failed"
             elif mobile_is_primary:
                 for r in mobile_results:
                     r["seen_on"] = "mobile"
