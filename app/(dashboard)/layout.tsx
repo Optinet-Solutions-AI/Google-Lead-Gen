@@ -1,10 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { DashboardShell } from './_components/dashboard-shell'
-// InteractiveBanner hidden alongside the sidebar /admin/interactive
-// entry until noVNC config is finished. Import + render re-enable
-// together — see dashboard-shell.tsx for the matching comment.
-// import { InteractiveBanner } from './_components/interactive-banner'
+import { InteractiveBanner } from './_components/interactive-banner'
 
 export default async function DashboardLayout({
   children,
@@ -33,7 +30,7 @@ export default async function DashboardLayout({
 
   return (
     <DashboardShell username={username} isAdmin={isAdmin}>
-      {/* <InteractiveBanner /> hidden until noVNC config is finished. */}
+      <InteractiveBanner />
       {children}
     </DashboardShell>
   )
