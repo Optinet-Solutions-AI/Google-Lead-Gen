@@ -64,11 +64,22 @@ export type ContactResult = {
  * is gated by an email-shaped surrounding context to avoid corrupting
  * normal sentences like "Meet us at the office".
  */
+// `String.fromCodePoint` raises RangeError on lone surrogates (U+D800..U+DFFF)
+// and values > U+10FFFF. A single bad numeric entity in untrusted HTML would
+// abort the whole `.replace` chain and crash enrichment. Clamp to printable
+// non-surrogate range.
+function safeFromCodePoint(cp: number): string {
+  if (!Number.isFinite(cp)) return ' '
+  if (cp < 0x20 || cp > 0x10ffff) return ' '
+  if (cp >= 0xd800 && cp <= 0xdfff) return ' '
+  return String.fromCodePoint(cp)
+}
+
 function deobfuscate(html: string): string {
   let s = html
     // HTML numeric entities (decimal + hex)
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(parseInt(n, 10)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&#(\d+);/g, (_, n) => safeFromCodePoint(parseInt(n, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => safeFromCodePoint(parseInt(n, 16)))
     // Common named entities relevant to contacts
     .replace(/&amp;/gi, '&')
     .replace(/&commat;/gi, '@')

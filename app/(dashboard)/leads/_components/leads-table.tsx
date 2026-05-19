@@ -483,7 +483,7 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
                 </Field>
               )}
             </dl>
-            <p className="mt-1.5 text-[11px] text-[color:var(--color-text-secondary)]">
+            <p className="mt-1.5 text-[11px] text-[color:var(--color-text-secondary)]" suppressHydrationWarning>
               {formatTimestamp(row.created_at)}
             </p>
           </div>

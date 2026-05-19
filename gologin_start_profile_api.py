@@ -11,8 +11,13 @@ if len(sys.argv) < 2:
 
 profile_id = sys.argv[1]
 
+gologin_token = os.environ.get("GOLOGIN_API_TOKEN")
+if not gologin_token:
+    print("Error: GOLOGIN_API_TOKEN is not set in the environment")
+    sys.exit(1)
+
 gl = GoLogin({
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2OTgzMTFiZDRlN2JmZWNkZDE3ZTc2YjQiLCJ0eXBlIjoiZGV2Iiwiand0aWQiOiI2OTgzMTMyY2VkOGI3NTY4YTk1NmU4YjIifQ.ATh8yvDYVeMn16tw71ILcfH6P3sa3G1rIerzD5YVNrk",
+    "token": gologin_token,
     "profile_id": profile_id,
     "port": 9222,
 })

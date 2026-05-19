@@ -471,7 +471,7 @@ def extract_tracking_links(html: str, base_url: str) -> list[str]:
         return []
 
     try:
-        base_host = urlparse(base_url).netloc.lower().lstrip("www.")
+        base_host = re.sub(r"^www\.", "", urlparse(base_url).netloc.lower())
     except Exception:  # noqa: BLE001
         base_host = ""
 
@@ -482,7 +482,7 @@ def extract_tracking_links(html: str, base_url: str) -> list[str]:
             return
         try:
             absolute = urljoin(base_url, raw)
-            host = urlparse(absolute).netloc.lower().replace("www.", "")
+            host = re.sub(r"^www\.", "", urlparse(absolute).netloc.lower())
         except Exception:  # noqa: BLE001
             return
         if not host or host == base_host or host in EXCLUDED_HOSTS:
@@ -537,7 +537,7 @@ def parse_stag_from_url(url: str) -> tuple[str, str] | None:
 
 def guess_brand_from_url(url: str) -> str | None:
     try:
-        host = urlparse(url).netloc.lower().replace("www.", "")
+        host = re.sub(r"^www\.", "", urlparse(url).netloc.lower())
         parts = host.split(".")
         if len(parts) < 2:
             return None

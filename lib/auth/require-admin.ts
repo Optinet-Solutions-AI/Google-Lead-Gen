@@ -24,7 +24,10 @@ export async function requireAdmin(): Promise<AdminCheck> {
 
   const svc = createServiceClient()
   const { data, error } = await svc.rpc('is_admin', { p_user_id: user.id })
-  if (error) return { ok: false, error: error.message }
+  if (error) {
+    console.error('[requireAdmin]', error)
+    return { ok: false, error: 'Failed to verify admin access.' }
+  }
   if (!data) return { ok: false, error: 'Admin access required.' }
   return { ok: true, user_id: user.id, email: user.email ?? null }
 }

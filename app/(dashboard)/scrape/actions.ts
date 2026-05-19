@@ -7,6 +7,15 @@ import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { logActivity } from '@/lib/activity-log'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
 
+// Log the raw Supabase error server-side, hand the user a generic message.
+// Direct copy of the helper in leads/actions.ts (BUGS.md R2-16). Keeps
+// schema names, constraint names, and column names out of the Next.js
+// error boundary and client-bound action state.
+function safeError(err: unknown, fallback: string): string {
+  console.error('[scrape/actions]', err)
+  return fallback
+}
+
 export type EnqueueState =
   | { status: 'ok'; message: string }
   | { status: 'error'; error: string }
@@ -31,7 +40,7 @@ export async function checkMondayDuplicates(
   const { data, error } = await svc.rpc('mark_monday_duplicates_for_job', {
     p_job_id: jobId,
   })
-  if (error) return { status: 'error', error: error.message }
+  if (error) return { status: 'error', error: safeError(error, 'Failed to check Monday duplicates.') }
 
   const row = (Array.isArray(data) ? data[0] : data) as
     | { checked: number; matched: number }
@@ -142,7 +151,7 @@ export async function enqueueScrape(
     .select('country_code, is_active, gologin_profile_id, languages')
     .eq('country_code', country_code)
     .maybeSingle()
-  if (profileError) return { status: 'error', error: profileError.message }
+  if (profileError) return { status: 'error', error: safeError(profileError, 'Failed to load country profile.') }
   if (!profile) return { status: 'error', error: `Unknown country ${country_code}.` }
   if (!profile.is_active) return { status: 'error', error: `Country ${country_code} is disabled.` }
   if (!profile.gologin_profile_id) {
@@ -195,7 +204,7 @@ export async function enqueueScrape(
     })),
   )
   const { error: insertError } = await svc.from('scrape_queue').insert(rows)
-  if (insertError) return { status: 'error', error: insertError.message }
+  if (insertError) return { status: 'error', error: safeError(insertError, 'Failed to queue the scrape.') }
 
   const flag = withEnrichment ? ' with full enrichment pipeline' : ''
   const when = scheduledAtIso
@@ -274,7 +283,7 @@ async function requireJobAccess(
     .select('created_by_email')
     .eq('id', jobId)
     .maybeSingle()
-  if (jobErr) return { ok: false, error: jobErr.message }
+  if (jobErr) return { ok: false, error: safeError(jobErr, 'Failed to look up job ownership.') }
   if (!job) return { ok: false, error: 'Job not found.' }
 
   const ownerEmail = (job as { created_by_email: string | null }).created_by_email
@@ -282,7 +291,7 @@ async function requireJobAccess(
     return { ok: true }
   }
   const { data: isAdmin, error: adminErr } = await svc.rpc('is_admin', { p_user_id: user.id })
-  if (adminErr) return { ok: false, error: adminErr.message }
+  if (adminErr) return { ok: false, error: safeError(adminErr, 'Failed to verify admin access.') }
   if (isAdmin) return { ok: true }
   return { ok: false, error: 'You do not have access to this job.' }
 }
@@ -307,7 +316,7 @@ export async function runAffiliateDetection(
     .select('id, url, domain, country_code, result_type')
     .eq('scrape_job_id', jobId)
     .is('is_affiliate_overridden_at', null)
-  if (leadsErr) return { status: 'error', error: leadsErr.message }
+  if (leadsErr) return { status: 'error', error: safeError(leadsErr, 'Failed to load leads for this job.') }
 
   // Pre-flag SKIPPED rows synchronously (cheap, no fetch needed) so the
   // enqueue stays focused on rows that genuinely need a browser fetch.
@@ -369,7 +378,7 @@ export async function runAffiliateDetection(
   }
 
   const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
-  if (qErr) return { status: 'error', error: qErr.message }
+  if (qErr) return { status: 'error', error: safeError(qErr, 'Failed to enqueue enrichment work.') }
 
   await logActivity({
     action: 'enrichment.affiliate',
@@ -409,7 +418,7 @@ export async function runRoosterCheck(
     .select('id, url, domain, country_code, result_type')
     .eq('scrape_job_id', jobId)
     .is('is_rooster_overridden_at', null)
-  if (leadsErr) return { status: 'error', error: leadsErr.message }
+  if (leadsErr) return { status: 'error', error: safeError(leadsErr, 'Failed to load leads for this job.') }
 
   let skippedCount = 0
   const enqueueable: Array<{
@@ -455,7 +464,7 @@ export async function runRoosterCheck(
   }
 
   const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
-  if (qErr) return { status: 'error', error: qErr.message }
+  if (qErr) return { status: 'error', error: safeError(qErr, 'Failed to enqueue enrichment work.') }
 
   await logActivity({
     action: 'enrichment.rooster',
@@ -495,7 +504,7 @@ export async function runContactExtraction(
     .select('id, url, domain, country_code')
     .eq('scrape_job_id', jobId)
     .is('is_contact_overridden_at', null)
-  if (leadsErr) return { status: 'error', error: leadsErr.message }
+  if (leadsErr) return { status: 'error', error: safeError(leadsErr, 'Failed to load leads for this job.') }
 
   let skippedCount = 0
   const enqueueable: Array<{
@@ -540,7 +549,7 @@ export async function runContactExtraction(
   }
 
   const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
-  if (qErr) return { status: 'error', error: qErr.message }
+  if (qErr) return { status: 'error', error: safeError(qErr, 'Failed to enqueue enrichment work.') }
 
   await logActivity({
     action: 'enrichment.contact',
@@ -584,7 +593,7 @@ export async function runStagExtraction(
     .eq('scrape_job_id', jobId)
     .eq('is_affiliate', true)
     .is('is_stag_overridden_at', null)
-  if (leadsErr) return { status: 'error', error: leadsErr.message }
+  if (leadsErr) return { status: 'error', error: safeError(leadsErr, 'Failed to load leads for this job.') }
 
   let skippedCount = 0
   const enqueueable: Array<{
@@ -630,7 +639,7 @@ export async function runStagExtraction(
   }
 
   const { error: qErr } = await svc.from('enrichment_fetch_queue').insert(enqueueable)
-  if (qErr) return { status: 'error', error: qErr.message }
+  if (qErr) return { status: 'error', error: safeError(qErr, 'Failed to enqueue enrichment work.') }
 
   await logActivity({
     action: 'enrichment.stag',
@@ -677,7 +686,7 @@ export async function cancelEnrichmentStage(
     p_job_id: jobId,
     p_stage: stage,
   })
-  if (error) return { status: 'error', error: error.message }
+  if (error) return { status: 'error', error: safeError(error, 'Failed to cancel the enrichment stage.') }
 
   const row = (data ?? {}) as { cancelled_pending?: number; flagged_running?: number }
   const cancelledPending = row.cancelled_pending ?? 0
@@ -736,7 +745,7 @@ async function flipScrapeStatus(
     .in('status', from)
     .select('id, keyword')
     .maybeSingle()
-  if (error) return { ok: false, error: error.message }
+  if (error) return { ok: false, error: safeError(error, 'Failed to update job status.') }
   if (!data) return { ok: false, error: `Job is not in a ${from.join('/')} state.` }
   return { ok: true, row: data as { id: string; keyword: string } }
 }
@@ -752,7 +761,7 @@ export async function resetCaptchaRetries(
 
   const svc = createServiceClient()
   const { data, error } = await svc.rpc('reset_captcha_retries', { p_job_id: jobId })
-  if (error) return { status: 'error', error: error.message }
+  if (error) return { status: 'error', error: safeError(error, 'Failed to reset captcha retries.') }
 
   await logActivity({
     action: 'scrape.reset_captcha',
@@ -836,7 +845,7 @@ export async function pauseEnrichmentForJob(
     .update({ status: 'paused', updated_at: new Date().toISOString() }, { count: 'exact' })
     .eq('status', 'pending')
     .in('lead_id', leadIds)
-  if (error) return { status: 'error', error: error.message }
+  if (error) return { status: 'error', error: safeError(error, 'Failed to pause enrichment for this job.') }
 
   await logActivity({
     action: 'enrichment.pause',
@@ -865,7 +874,7 @@ export async function forceCompleteEnrichment(
 
   const svc = createServiceClient()
   const { data, error } = await svc.rpc('force_complete_enrichment', { p_job_id: jobId })
-  if (error) return { status: 'error', error: error.message }
+  if (error) return { status: 'error', error: safeError(error, 'Failed to force-complete enrichment.') }
 
   await logActivity({
     action: 'enrichment.force_complete',
@@ -906,7 +915,7 @@ export async function resumeEnrichmentForJob(
     .update({ status: 'pending', updated_at: new Date().toISOString() }, { count: 'exact' })
     .eq('status', 'paused')
     .in('lead_id', leadIds)
-  if (error) return { status: 'error', error: error.message }
+  if (error) return { status: 'error', error: safeError(error, 'Failed to resume enrichment for this job.') }
 
   await logActivity({
     action: 'enrichment.resume',
@@ -959,10 +968,10 @@ export async function rerunScrapeFiltered(
   // their own re-run (BUGS.md R2-14).
   const { data: job, error: readErr } = await svc
     .from('scrape_queue')
-    .select('keyword, country_code, pages, priority, with_enrichment, language, search_engine, created_by_email, created_by_username, created_by_display')
+    .select('keyword, country_code, pages, priority, with_enrichment, language, search_engine, view_mode, created_by_email, created_by_username, created_by_display')
     .eq('id', jobId)
     .maybeSingle()
-  if (readErr) return { status: 'error', error: readErr.message }
+  if (readErr) return { status: 'error', error: safeError(readErr, 'Failed to load the source job.') }
   if (!job) return { status: 'error', error: 'Original job not found.' }
   const j = job as {
     keyword: string
@@ -972,6 +981,7 @@ export async function rerunScrapeFiltered(
     with_enrichment: boolean
     language: string | null
     search_engine: 'google' | 'bing' | null
+    view_mode: 'desktop' | 'mobile' | 'both' | null
     created_by_email: string | null
     created_by_username: string | null
     created_by_display: string | null
@@ -985,12 +995,13 @@ export async function rerunScrapeFiltered(
     with_enrichment: j.with_enrichment,
     language: j.language ?? 'en',
     search_engine: j.search_engine ?? 'google',
+    view_mode: j.view_mode ?? 'both',
     result_type_filter: filterValue,
     created_by_email: j.created_by_email,
     created_by_username: j.created_by_username,
     created_by_display: j.created_by_display,
   })
-  if (insertError) return { status: 'error', error: insertError.message }
+  if (insertError) return { status: 'error', error: safeError(insertError, 'Failed to queue the scrape.') }
 
   await logActivity({
     action: 'scrape.rerun_filtered',
@@ -1017,7 +1028,7 @@ async function checkConfirmation(
     .select('keyword')
     .eq('id', jobId)
     .maybeSingle()
-  if (error) return { ok: false, error: error.message }
+  if (error) return { ok: false, error: safeError(error, 'Failed to look up the job.') }
   if (!data) return { ok: false, error: 'Job not found.' }
   const keyword = (data as { keyword: string }).keyword
   // Trim both sides — keywords are stored trimmed on insert, but a
@@ -1044,7 +1055,7 @@ export async function cancelScrapeJob(_prev: JobActionState, fd: FormData): Prom
 
   const svc = createServiceClient()
   const { data, error } = await svc.rpc('cancel_scrape_job', { p_job_id: jobId })
-  if (error) return { status: 'error', error: error.message }
+  if (error) return { status: 'error', error: safeError(error, 'Failed to cancel the scrape job.') }
 
   await logActivity({
     action: 'scrape.cancel',
@@ -1118,7 +1129,7 @@ export async function deleteScrapeJob(_prev: JobActionState, fd: FormData): Prom
   }
 
   const { data, error } = await svc.rpc('delete_scrape_job_cascade', { p_job_id: jobId })
-  if (error) return { status: 'error', error: error.message }
+  if (error) return { status: 'error', error: safeError(error, 'Failed to delete the scrape job.') }
   const leadCount = typeof data === 'number' ? data : 0
 
   await logActivity({
@@ -1154,7 +1165,7 @@ export async function runStagDuplicateCheck(
   const { data, error } = await svc.rpc('mark_s_tag_duplicates_for_job', {
     p_job_id: jobId,
   })
-  if (error) return { status: 'error', error: error.message }
+  if (error) return { status: 'error', error: safeError(error, 'Failed to check s-tag duplicates.') }
   const row = (Array.isArray(data) ? data[0] : data) as
     | { checked: number; matched: number }
     | null
@@ -1222,7 +1233,7 @@ async function requireBulkAdmin(): Promise<
 
   const svc = createServiceClient()
   const { data, error } = await svc.rpc('is_admin', { p_user_id: user.id })
-  if (error) return { ok: false, error: error.message }
+  if (error) return { ok: false, error: safeError(error, 'Failed to verify admin access.') }
   if (!data) return { ok: false, error: 'Admin access required for bulk actions.' }
   return { ok: true, user_id: user.id, user_email: user.email ?? null }
 }
@@ -1245,9 +1256,9 @@ export async function bulkRerunScrapeJobs(
   // audit log shows continuous attribution.
   const { data: jobs, error: readErr } = await svc
     .from('scrape_queue')
-    .select('id, keyword, country_code, pages, priority, with_enrichment, language, search_engine, result_type_filter, created_by_email, created_by_username, created_by_display')
+    .select('id, keyword, country_code, pages, priority, with_enrichment, language, search_engine, view_mode, result_type_filter, created_by_email, created_by_username, created_by_display')
     .in('id', jobIds)
-  if (readErr) return { status: 'error', error: readErr.message }
+  if (readErr) return { status: 'error', error: safeError(readErr, 'Failed to load the source job.') }
 
   type Row = {
     id: string
@@ -1258,6 +1269,7 @@ export async function bulkRerunScrapeJobs(
     with_enrichment: boolean
     language: string | null
     search_engine: 'google' | 'bing' | null
+    view_mode: 'desktop' | 'mobile' | 'both' | null
     result_type_filter: 'PPC' | 'Organic' | null
     created_by_email: string | null
     created_by_username: string | null
@@ -1277,13 +1289,14 @@ export async function bulkRerunScrapeJobs(
     with_enrichment: r.with_enrichment,
     language: r.language ?? 'en',
     search_engine: r.search_engine ?? 'google',
+    view_mode: r.view_mode ?? 'both',
     result_type_filter: r.result_type_filter,
     created_by_email: r.created_by_email,
     created_by_username: r.created_by_username,
     created_by_display: r.created_by_display,
   }))
   const { error: insertErr } = await svc.from('scrape_queue').insert(inserts)
-  if (insertErr) return { status: 'error', error: insertErr.message }
+  if (insertErr) return { status: 'error', error: safeError(insertErr, 'Failed to queue the bulk re-run.') }
 
   await logActivity({
     action: 'scrape.bulk_rerun',

@@ -358,19 +358,25 @@ def get_domain(url):
     return domain
 
 # ---------------------------
-# Deduplicate results by domain
+# Deduplicate results by (domain, resultType)
 # ---------------------------
+# Dedupe keys on resultType so a domain that appears as both a PPC ad and an
+# Organic hit keeps both rows. Per-URL overlap across desktop/mobile is already
+# collapsed by the seen_on merge in scrape_google_search before this runs, so
+# the remaining same-domain entries are either multi-page repeats (collapse OK)
+# or distinct PPC/Organic surfaces (keep both).
 def deduplicate_results(results):
-    seen_domains = set()
+    seen = set()
     cleaned_results = []
 
     for r in results:
         domain = get_domain(r["url"])
-        if domain not in seen_domains:
-            seen_domains.add(domain)
+        key = (domain, r.get("resultType"))
+        if key not in seen:
+            seen.add(key)
             cleaned_results.append(r)
         else:
-            print(f"[DEBUG] Skipping duplicate domain: {domain}")
+            print(f"[DEBUG] Skipping duplicate {key[1]} on domain: {domain}")
 
     return cleaned_results
 

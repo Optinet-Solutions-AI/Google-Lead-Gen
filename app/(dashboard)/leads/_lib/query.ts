@@ -165,9 +165,8 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
 
   const { data, count, error } = await query
   if (error) {
-    throw new Error(
-      `queryLeads failed: ${error.message} (details: ${JSON.stringify(error.details ?? {})})`,
-    )
+    console.error('[queryLeads]', error)
+    throw new Error('Failed to load leads.')
   }
   // PostgREST returns the joined scrape_queue row as a nested object —
   // flatten it into the LeadRow shape callers expect.

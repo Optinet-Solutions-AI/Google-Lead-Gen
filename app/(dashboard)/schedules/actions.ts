@@ -50,6 +50,15 @@ function clampInt(raw: unknown, min: number, max: number, fallback: number): num
   return Math.min(Math.max(Math.floor(n), min), max)
 }
 
+// Log the raw Supabase error server-side, hand the user a generic message.
+// Mirrors the helper in leads/actions.ts + scrape/actions.ts (BUGS.md R2-16).
+// Keeps schema names, constraint names, and column names out of the
+// client-bound action state and Next.js error boundary.
+function safeError(err: unknown, fallback: string): string {
+  console.error('[schedules/actions]', err)
+  return fallback
+}
+
 // ---------------------------------------------------------------------------
 // Scheduled set CRUD
 // ---------------------------------------------------------------------------
@@ -93,7 +102,10 @@ export async function createScheduledSet(
   if (error) {
     return {
       status: 'error',
-      error: error.code === '23505' ? `A set named "${name}" already exists.` : error.message,
+      error:
+        error.code === '23505'
+          ? `A set named "${name}" already exists.`
+          : safeError(error, 'Failed to create the schedule.'),
     }
   }
 
@@ -147,7 +159,7 @@ export async function updateScheduledSet(
     })
     .eq('id', id)
 
-  if (error) return { status: 'error', error: error.message }
+  if (error) return { status: 'error', error: safeError(error, 'Failed to save the schedule.') }
 
   await logActivity({
     action: 'schedule.update',
@@ -167,7 +179,7 @@ export async function deleteScheduledSet(formData: FormData): Promise<void> {
   if (!id) return
   const svc = createServiceClient()
   const { error } = await svc.from('scheduled_keyword_sets').delete().eq('id', id)
-  if (error) throw new Error(error.message)
+  if (error) throw new Error(safeError(error, 'Failed to delete the schedule.'))
   await logActivity({
     action: 'schedule.delete',
     entity_type: 'scheduled_set',
@@ -187,7 +199,7 @@ export async function runScheduledSetNow(formData: FormData): Promise<void> {
     .from('scheduled_keyword_sets')
     .update({ next_run_at: new Date(Date.now() - 60_000).toISOString() })
     .eq('id', id)
-  if (error) throw new Error(error.message)
+  if (error) throw new Error(safeError(error, 'Failed to run the schedule now.'))
   await logActivity({
     action: 'schedule.run_now',
     entity_type: 'scheduled_set',
@@ -238,7 +250,7 @@ export async function addScheduledItem(
       error:
         error.code === '23505'
           ? `"${keyword}" (${countryCode}) is already in this set.`
-          : error.message,
+          : safeError(error, 'Failed to add the keyword.'),
     }
   }
 
@@ -257,7 +269,7 @@ export async function toggleScheduledItem(formData: FormData): Promise<void> {
   // the same `is_active` and produce a lost update. See migration
   // 20260515000000_toggle_scheduled_item_atomic.sql.
   const { error } = await svc.rpc('toggle_scheduled_item', { p_item_id: itemId })
-  if (error) throw new Error(error.message)
+  if (error) throw new Error(safeError(error, 'Failed to toggle the scheduled item.'))
   if (setId) revalidatePath(`/schedules/${setId}`)
 }
 
@@ -268,6 +280,6 @@ export async function deleteScheduledItem(formData: FormData): Promise<void> {
   if (!itemId) return
   const svc = createServiceClient()
   const { error } = await svc.from('scheduled_keyword_items').delete().eq('id', itemId)
-  if (error) throw new Error(error.message)
+  if (error) throw new Error(safeError(error, 'Failed to delete the scheduled item.'))
   if (setId) revalidatePath(`/schedules/${setId}`)
 }

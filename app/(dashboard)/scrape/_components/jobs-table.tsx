@@ -355,7 +355,9 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                 <LinkTd href={href}>
                   <StatusBadge job={job} />
                 </LinkTd>
-                <LinkTd href={href}>{formatDateTime(job.started_at)}</LinkTd>
+                <LinkTd href={href}>
+                  <span suppressHydrationWarning>{formatDateTime(job.started_at)}</span>
+                </LinkTd>
                 <td className="p-0 align-middle">
                   <DurationCell job={job} href={href} />
                 </td>

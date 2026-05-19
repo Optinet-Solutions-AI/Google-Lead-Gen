@@ -66,7 +66,10 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
     )
     .eq('id', id)
     .maybeSingle()
-  if (jobError) throw jobError
+  if (jobError) {
+    console.error('[scrape/[id]]', jobError)
+    throw new Error('Failed to load job.')
+  }
   if (!jobRaw) notFound()
   const job = jobRaw as Job
 

@@ -19,6 +19,16 @@ const MODEL = 'gpt-4o-mini'
 const TIMEOUT_MS = 30_000
 const MAX_TEXT_CHARS = 6000
 
+// Lone surrogates (U+D800..U+DFFF) and NUL throw or poison the LLM prompt.
+// `String.fromCodePoint` raises RangeError on > U+10FFFF and on surrogate halves;
+// NUL bytes inside a chat-completion payload have flagged content filters in the past.
+function safeFromCodePoint(cp: number): string {
+  if (!Number.isFinite(cp)) return ' '
+  if (cp < 0x20 || cp > 0x10ffff) return ' '
+  if (cp >= 0xd800 && cp <= 0xdfff) return ' '
+  return String.fromCodePoint(cp)
+}
+
 // ---------------------------------------------------------------------------
 // HTML → plain text helper. Crude but cheap; we don't need DOM accuracy.
 // ---------------------------------------------------------------------------
@@ -46,14 +56,8 @@ export function htmlToText(html: string): string {
     // encode punctuation as `&#8217;` (curly apostrophe), `&#169;`
     // (©), `&#8364;` (€) etc. reach the GPT-4o-mini prompt as literal
     // `&#8217;` tokens, wasting context and obscuring keywords.
-    .replace(/&#(\d+);/g, (_, n) => {
-      const cp = parseInt(n, 10)
-      return Number.isFinite(cp) ? String.fromCodePoint(cp) : ' '
-    })
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => {
-      const cp = parseInt(n, 16)
-      return Number.isFinite(cp) ? String.fromCodePoint(cp) : ' '
-    })
+    .replace(/&#(\d+);/g, (_, n) => safeFromCodePoint(parseInt(n, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => safeFromCodePoint(parseInt(n, 16)))
     // Strip again after entity decoding — an attacker can hide tags
     // as `&lt;script&gt;…&lt;/script&gt;` or `&#60;script&#62;` in
     // the source HTML, which survives the first pass and would

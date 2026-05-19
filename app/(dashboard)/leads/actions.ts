@@ -6,6 +6,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { logActivity } from '@/lib/activity-log'
 import { pushLeadToMonday } from '@/lib/monday/push-lead'
+import { requireLeadAccess, requireLeadsAccess } from '@/lib/auth/require-lead-access'
 
 /** Log the raw Supabase/Postgrest error server-side for debugging but
  *  return a generic message to the caller. Supabase error messages
@@ -28,9 +29,10 @@ function safeError(err: unknown, fallback: string): string {
  * the "Delete screenshot" button in the row-detail drawer.
  */
 export async function deleteLeadScreenshot(formData: FormData): Promise<void> {
-  await assertSignedIn()
   const leadId = Number(formData.get('lead_id'))
   if (!Number.isInteger(leadId) || leadId <= 0) throw new Error('Missing lead id.')
+  const access = await requireLeadAccess(leadId)
+  if (!access.ok) throw new Error(access.error)
 
   const svc = createServiceClient()
   const { data: lead, error: readErr } = await svc
@@ -101,17 +103,14 @@ const VALID: ReadonlySet<string> = new Set([
  * - 'leads' / 'affiliate' / 'updates' — manual override; auto re-runs leave it alone
  */
 export async function setMondayLabel(formData: FormData): Promise<void> {
-  const supabase = await createServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not signed in.')
-
   const leadId = Number(formData.get('lead_id'))
   const rawValue = String(formData.get('value') ?? '')
   if (!Number.isInteger(leadId) || leadId <= 0) throw new Error('Missing lead id.')
   if (!VALID.has(rawValue)) throw new Error(`Invalid value: ${rawValue}`)
   const value = rawValue as MondayLabelValue
+
+  const access = await requireLeadAccess(leadId)
+  if (!access.ok) throw new Error(access.error)
 
   const svc = createServiceClient()
 
@@ -174,6 +173,9 @@ async function setBooleanFlag(params: {
   if (!Number.isInteger(leadId) || leadId <= 0) throw new Error('Missing lead id.')
   if (!BOOL_VALUES.has(value)) throw new Error(`Invalid value: ${value}`)
 
+  const access = await requireLeadAccess(leadId)
+  if (!access.ok) throw new Error(access.error)
+
   const svc = createServiceClient()
   let patch: Record<string, unknown>
   switch (value) {
@@ -201,16 +203,7 @@ async function setBooleanFlag(params: {
   revalidatePath('/scrape', 'layout')
 }
 
-async function assertSignedIn(): Promise<void> {
-  const supabase = await createServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not signed in.')
-}
-
 export async function setAffiliateLabel(formData: FormData): Promise<void> {
-  await assertSignedIn()
   await setBooleanFlag({
     leadId: Number(formData.get('lead_id')),
     value: String(formData.get('value') ?? ''),
@@ -221,7 +214,6 @@ export async function setAffiliateLabel(formData: FormData): Promise<void> {
 }
 
 export async function setRoosterLabel(formData: FormData): Promise<void> {
-  await assertSignedIn()
   await setBooleanFlag({
     leadId: Number(formData.get('lead_id')),
     value: String(formData.get('value') ?? ''),
@@ -232,7 +224,6 @@ export async function setRoosterLabel(formData: FormData): Promise<void> {
 }
 
 export async function setContactLabel(formData: FormData): Promise<void> {
-  await assertSignedIn()
   await setBooleanFlag({
     leadId: Number(formData.get('lead_id')),
     value: String(formData.get('value') ?? ''),
@@ -243,7 +234,6 @@ export async function setContactLabel(formData: FormData): Promise<void> {
 }
 
 export async function setStagLabel(formData: FormData): Promise<void> {
-  await assertSignedIn()
   await setBooleanFlag({
     leadId: Number(formData.get('lead_id')),
     value: String(formData.get('value') ?? ''),
@@ -272,14 +262,17 @@ export async function pushLeadToMondayAction(
   _prev: PushToMondayState,
   formData: FormData,
 ): Promise<PushToMondayState> {
+  const leadId = Number(formData.get('lead_id'))
+  if (!Number.isInteger(leadId) || leadId <= 0) return { status: 'error', error: 'Missing lead id.' }
+
+  const access = await requireLeadAccess(leadId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
   const supabase = await createServerClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return { status: 'error', error: 'Not signed in.' }
-
-  const leadId = Number(formData.get('lead_id'))
-  if (!Number.isInteger(leadId) || leadId <= 0) return { status: 'error', error: 'Missing lead id.' }
 
   // Resolve the pushing user's display name + Monday user id so the
   // new item lands under their name on the Leads board. Block the push
@@ -361,14 +354,17 @@ export async function setNotRelevantAction(
   _prev: MarkNotRelevantState,
   formData: FormData,
 ): Promise<MarkNotRelevantState> {
+  const leadId = Number(formData.get('lead_id'))
+  if (!Number.isInteger(leadId) || leadId <= 0) return { status: 'error', error: 'Missing lead id.' }
+
+  const access = await requireLeadAccess(leadId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
   const supabase = await createServerClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return { status: 'error', error: 'Not signed in.' }
-
-  const leadId = Number(formData.get('lead_id'))
-  if (!Number.isInteger(leadId) || leadId <= 0) return { status: 'error', error: 'Missing lead id.' }
 
   // 'on' from a checkbox-style hidden input maps to true; empty string = false (unmark).
   const wantsTrue = String(formData.get('value') ?? '').toLowerCase() === 'true'
@@ -466,8 +462,6 @@ export async function retryEnrichmentForLeads(
   _prev: BulkActionState,
   fd: FormData,
 ): Promise<BulkActionState> {
-  await assertSignedIn()
-
   const stage = String(fd.get('stage') ?? '')
   if (!VALID_STAGES.has(stage)) {
     return { status: 'error', error: `Invalid stage "${stage}".` }
@@ -476,6 +470,9 @@ export async function retryEnrichmentForLeads(
   if (leadIds.length === 0) {
     return { status: 'error', error: 'No leads selected.' }
   }
+
+  const access = await requireLeadsAccess(leadIds)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
   const { data: leads, error: leadsErr } = await svc
@@ -568,8 +565,6 @@ export async function deleteLeads(
   _prev: BulkActionState,
   fd: FormData,
 ): Promise<BulkActionState> {
-  await assertSignedIn()
-
   const leadIds = parseLeadIds(fd)
   if (leadIds.length === 0) {
     return { status: 'error', error: 'No leads selected.' }
@@ -584,6 +579,9 @@ export async function deleteLeads(
       error: `Confirmation must be "${expected}" (got "${confirmation}").`,
     }
   }
+
+  const access = await requireLeadsAccess(leadIds)
+  if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
 
@@ -636,11 +634,13 @@ export async function deleteLeads(
  * (marking it manually verified), `no`/`clear` nulls it.
  */
 export async function setStagVerifiedLabel(formData: FormData): Promise<void> {
-  await assertSignedIn()
   const leadId = Number(formData.get('lead_id'))
   const value = String(formData.get('value') ?? '')
   if (!Number.isInteger(leadId) || leadId <= 0) throw new Error('Missing lead id.')
   if (!BOOL_VALUES.has(value)) throw new Error(`Invalid value: ${value}`)
+
+  const access = await requireLeadAccess(leadId)
+  if (!access.ok) throw new Error(access.error)
 
   const svc = createServiceClient()
   const now = new Date().toISOString()
