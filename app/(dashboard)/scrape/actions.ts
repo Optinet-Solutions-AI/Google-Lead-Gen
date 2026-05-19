@@ -87,6 +87,14 @@ export async function enqueueScrape(
       : engineRaw === 'bing'
         ? ['bing']
         : ['google']
+  // view_mode controls whether the scraper runs desktop, mobile (iPhone
+  // UA + 375x812 viewport via CDP), or both passes. 'both' is the
+  // default — catches mobile-only PPC ads + mobile-ranked organic that
+  // desktop misses. Validated against the DB check constraint so a
+  // hand-crafted POST can't slip in an unknown value.
+  const viewModeRaw = String(formData.get('view_mode') ?? 'both').trim().toLowerCase()
+  const viewMode: 'desktop' | 'mobile' | 'both' =
+    viewModeRaw === 'desktop' || viewModeRaw === 'mobile' ? viewModeRaw : 'both'
   const scheduledAtRaw = String(formData.get('scheduled_at') ?? '').trim()
   let scheduledAtIso: string | null = null
   if (scheduledAtRaw) {
@@ -180,6 +188,7 @@ export async function enqueueScrape(
       scheduled_at: scheduledAtIso,
       language: finalLang,
       search_engine: engine,
+      view_mode: viewMode,
       created_by_email: createdByEmail,
       created_by_username: createdByUsername,
       created_by_display: createdByDisplay,

@@ -260,6 +260,7 @@ def run_scrape(
     job_id: str | None = None,
     country_code: str | None = None,
     requires_google_login: bool = False,
+    view_mode: str = "both",
 ) -> tuple[int, str, Path, Path]:
     """
     Invoke the scraper as a subprocess.
@@ -293,9 +294,12 @@ def run_scrape(
         cmd += ["--country-code", country_code]
     if requires_google_login:
         cmd += ["--requires-google-login"]
-    if not MOBILE_PASS_ENABLED:
-        # scraper.py defaults --mobile-pass=on; only forward the opt-out.
-        cmd += ["--no-mobile-pass"]
+    # view_mode is per-job (form dropdown) but the worker-level env var
+    # MOBILE_PASS_ENABLED=off acts as a hard downgrade to desktop-only.
+    # Useful when one country is captcha-prone enough that the extra
+    # mobile-pass SERP load costs more than it gains.
+    effective_view = view_mode if MOBILE_PASS_ENABLED else "desktop"
+    cmd += ["--view-mode", effective_view]
     # HITL is gated on two flags: INTERACTIVE_MODE env var (per-VM kill
     # switch) AND system_settings.hitl_enabled (admin toggle via
     # /admin/system). Both must be true. The DB lookup happens once per
@@ -351,9 +355,15 @@ def process_job(job: dict[str, Any]) -> None:
     engine = (job.get("search_engine") or "google").strip().lower() or "google"
     if engine not in ("google", "bing"):
         engine = "google"
+    # view_mode controls whether scraper.py runs the desktop pass, the
+    # mobile (iPhone UA + 375x812 viewport) pass, or both. Default
+    # 'both' for jobs from before the migration landed.
+    view_mode = (job.get("view_mode") or "both").strip().lower() or "both"
+    if view_mode not in ("desktop", "mobile", "both"):
+        view_mode = "both"
 
-    log.info("claimed job %s | country=%s keyword=%r pages=%d lang=%s engine=%s",
-             job_id, country_code, keyword, pages, language, engine)
+    log.info("claimed job %s | country=%s keyword=%r pages=%d lang=%s engine=%s view=%s",
+             job_id, country_code, keyword, pages, language, engine, view_mode)
 
     # Look up the GoLogin profile ID for this country
     profile = fetch_profile(country_code)
@@ -376,6 +386,7 @@ def process_job(job: dict[str, Any]) -> None:
             language=language, engine=engine, job_id=job_id,
             country_code=country_code,
             requires_google_login=requires_google_login,
+            view_mode=view_mode,
         )
     except subprocess.TimeoutExpired:
         _kill_port()

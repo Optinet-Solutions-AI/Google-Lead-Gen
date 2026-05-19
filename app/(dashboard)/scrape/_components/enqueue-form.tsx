@@ -268,6 +268,23 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
 
         <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
           <span>
+            View
+            <span className="ml-1 text-[10px]">(catches mobile-only PPC + mobile-ranked organic)</span>
+          </span>
+          <select
+            name="view_mode"
+            defaultValue="both"
+            title="Both: scrape the SERP as desktop AND as iPhone, merge results, mark each with seen_on. Desktop only: legacy behaviour. Mobile only: iPhone UA/viewport only — useful when desktop is heavily captcha'd."
+            className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-1.5 text-[12px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
+          >
+            <option value="both">Both (desktop + mobile)</option>
+            <option value="desktop">Desktop only</option>
+            <option value="mobile">Mobile only</option>
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
+          <span>
             Schedule for{' '}
             <span className="text-[10px]">(optional — leave empty to run now)</span>
           </span>
