@@ -49,6 +49,39 @@ SCRAPE_TIMEOUT_S     = int(os.environ.get("SCRAPE_TIMEOUT_SECONDS", "1200"))  # 
 # regular 20 min scrape budget. Set INTERACTIVE_MODE=off to disable.
 INTERACTIVE_MODE          = os.environ.get("INTERACTIVE_MODE", "on").strip().lower() != "off"
 INTERACTIVE_TIMEOUT_S     = int(os.environ.get("INTERACTIVE_SCRAPE_TIMEOUT_SECONDS", "2400"))  # 40 min
+
+
+def _hitl_enabled_per_db() -> bool:
+    """Read the runtime hitl_enabled flag from public.system_settings via
+    the get_system_setting RPC. Cached short-term per process; refreshed
+    on each process_job() invocation by the wrapper below."""
+    try:
+        result = supabase.rpc("get_system_setting", {"p_key": "hitl_enabled"}).execute()
+        val = result.data
+        # RPC returns jsonb. Supabase-py decodes to Python bool/dict/etc.
+        # Anything other than `false` (case-insensitive) is treated as on.
+        if val is False:
+            return False
+        if isinstance(val, str) and val.strip().lower() == "false":
+            return False
+        return True
+    except Exception as exc:  # noqa: BLE001
+        # Settings table missing or DB unreachable — keep current behaviour
+        # (env-var default) instead of hard-failing the worker.
+        log.warning("hitl_enabled lookup failed (%s) — falling back to env default", exc)
+        return INTERACTIVE_MODE
+
+
+def hitl_should_run() -> bool:
+    """The two gates the worker honours, joined with AND:
+      - INTERACTIVE_MODE env var (per-worker kill switch on the VM)
+      - system_settings.hitl_enabled (admin toggle via /admin/system)
+    Both must be true for HITL to actually fire. Env-var off = absolute
+    block regardless of DB; DB off = global block until an admin flips
+    it back on."""
+    if not INTERACTIVE_MODE:
+        return False
+    return _hitl_enabled_per_db()
 # MOBILE_PASS_ENABLED — controls whether scraper.py runs its mobile PPC
 # pass after the desktop SERP loop. Default on; set to 'off' on a
 # country/worker where captcha pain is high enough that the extra SERP
@@ -251,7 +284,13 @@ def run_scrape(
     if not MOBILE_PASS_ENABLED:
         # scraper.py defaults --mobile-pass=on; only forward the opt-out.
         cmd += ["--no-mobile-pass"]
-    if INTERACTIVE_MODE and job_id:
+    # HITL is gated on two flags: INTERACTIVE_MODE env var (per-VM kill
+    # switch) AND system_settings.hitl_enabled (admin toggle via
+    # /admin/system). Both must be true. The DB lookup happens once per
+    # job at this point — not per poll-loop iteration — so the runtime
+    # cost is negligible.
+    hitl_active = bool(job_id) and hitl_should_run()
+    if hitl_active:
         # When interactive mode is on, hand the scraper enough context
         # to write interactive_checkpoints rows. Subprocess timeout
         # also bumps so paused jobs don't get TERM'd while a human is
@@ -261,7 +300,7 @@ def run_scrape(
             "--job-id", job_id,
             "--worker-id", WORKER_ID,
         ]
-    timeout_s = INTERACTIVE_TIMEOUT_S if (INTERACTIVE_MODE and job_id) else SCRAPE_TIMEOUT_S
+    timeout_s = INTERACTIVE_TIMEOUT_S if hitl_active else SCRAPE_TIMEOUT_S
 
     # DISPLAY is set per-port in the scrape-worker@<port>.service systemd
     # drop-in so each worker writes to its own Xvfb. Don't override here
@@ -269,7 +308,7 @@ def run_scrape(
     env = os.environ.copy()
     log.info("launching scraper (port=%d profile=%s log=%s timeout=%ds interactive=%s)",
              GOLOGIN_PORT, profile_id[:8], log_path, timeout_s,
-             "yes" if (INTERACTIVE_MODE and job_id) else "no")
+             "yes" if hitl_active else "no")
 
     with open(log_path, "w", encoding="utf-8") as log_f:
         result = subprocess.run(

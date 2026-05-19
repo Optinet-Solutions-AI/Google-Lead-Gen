@@ -18,6 +18,7 @@ import {
   Menu,
   MessageCircle,
   Search,
+  Settings,
   Star,
   Users,
   X,
@@ -125,6 +126,12 @@ const ADMIN_NAV_ITEMS = [
     href: '/admin/google-login',
     icon: KeyRound,
     match: (p: string) => p.startsWith('/admin/google-login'),
+  },
+  {
+    label: 'System (Admin)',
+    href: '/admin/system',
+    icon: Settings,
+    match: (p: string) => p.startsWith('/admin/system'),
   },
 ] as const
 
