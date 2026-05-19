@@ -353,20 +353,28 @@ function DetailBody({ detail }: { detail: Detail }) {
           value={
             <span className="inline-flex flex-wrap items-center gap-1.5">
               <span>{lead.result_type ?? '—'}</span>
-              {lead.result_type === 'PPC' && lead.seen_on === 'mobile' && (
+              {lead.seen_on === 'mobile' && (
                 <span
                   className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-800"
-                  title="This ad only rendered when Google's SERP was loaded with a mobile UA + 375x812 viewport — invisible on desktop."
+                  title="Mobile-only: this URL only appeared when the SERP was loaded with an iPhone UA + 375x812 viewport."
                 >
                   mobile only
                 </span>
               )}
-              {lead.result_type === 'PPC' && lead.seen_on === 'both' && (
+              {lead.seen_on === 'both' && (
                 <span
                   className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-800"
-                  title="Same PPC ad URL was seen on both the desktop SERP and the mobile-emulated SERP — cross-device campaign."
+                  title="Cross-device: same URL was seen in BOTH the desktop and mobile SERP passes."
                 >
                   desktop + mobile
+                </span>
+              )}
+              {lead.seen_on === 'desktop' && (
+                <span
+                  className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700"
+                  title="Desktop-only: this URL was only seen in the desktop SERP pass."
+                >
+                  desktop only
                 </span>
               )}
             </span>

@@ -647,14 +647,52 @@ function TypeBadge({
       <span className={['inline-block rounded-full px-2 py-0.5 text-[10px] font-medium', styles].join(' ')}>
         {type}
       </span>
-      {type === 'PPC' && seenOn === 'mobile' && (
-        <span
-          className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-medium text-violet-800"
-          title="Mobile-only PPC: this ad only rendered when Google's SERP was loaded with a mobile UA + viewport. Invisible on desktop."
-        >
-          mobile
-        </span>
-      )}
+      <SeenOnBadge seenOn={seenOn} />
+    </span>
+  )
+}
+
+function SeenOnBadge({ seenOn }: { seenOn?: string | null | undefined }) {
+  // Show one of three badges so operators can audit which view captured
+  // each lead. Rows from before the mobile-pass feature landed have
+  // seen_on=null — render a muted "?" so they're visible as legacy.
+  if (seenOn === 'mobile') {
+    return (
+      <span
+        className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-medium text-violet-800"
+        title="Mobile-only: this URL only appeared when the SERP was loaded with an iPhone UA + 375x812 viewport."
+      >
+        mobile
+      </span>
+    )
+  }
+  if (seenOn === 'both') {
+    return (
+      <span
+        className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-medium text-sky-800"
+        title="Cross-device: same URL was seen in BOTH the desktop and mobile SERP passes."
+      >
+        both
+      </span>
+    )
+  }
+  if (seenOn === 'desktop') {
+    return (
+      <span
+        className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-700"
+        title="Desktop-only: this URL was seen only in the desktop SERP pass (mobile pass either didn't run, didn't return it, or aborted)."
+      >
+        desktop
+      </span>
+    )
+  }
+  // null / unknown — pre-feature row or skipped pass
+  return (
+    <span
+      className="rounded-full bg-[color:var(--color-bg-secondary)] px-1.5 py-0.5 text-[9px] font-medium text-[color:var(--color-text-secondary)]"
+      title="seen_on not recorded — row likely predates the mobile-pass feature."
+    >
+      —
     </span>
   )
 }
