@@ -110,13 +110,16 @@ function EngineBadge({ engine }: { engine: ScrapeJob['search_engine'] }) {
   const styles =
     e === 'bing'
       ? 'bg-cyan-100 text-cyan-800'
-      : 'bg-blue-100 text-blue-800'
+      : e === 'youtube'
+        ? 'bg-red-100 text-red-800'
+        : 'bg-blue-100 text-blue-800'
+  const label = e === 'youtube' ? 'YouTube' : e === 'bing' ? 'Bing' : 'Google'
   return (
     <span
-      title={`Scraped on ${e === 'bing' ? 'Bing' : 'Google'}`}
+      title={`Scraped on ${label}`}
       className={['inline-block rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide', styles].join(' ')}
     >
-      {e === 'bing' ? 'Bing' : 'Google'}
+      {label}
     </span>
   )
 }

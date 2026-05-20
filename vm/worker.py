@@ -93,6 +93,14 @@ SCRAPER_PATH         = os.environ.get(
     "SCRAPER_PATH",
     str(Path.home() / "scraper.py"),
 )
+YOUTUBE_SEARCH_PATH  = os.environ.get(
+    "YOUTUBE_SEARCH_PATH",
+    str(Path.home() / "youtube_search.py"),
+)
+# YouTube search is an HTTP call — no GoLogin/Selenium — so it finishes
+# in seconds. Cap at 5 min so a hung connection fails fast instead of
+# holding the worker for the full 20-min scrape budget.
+YOUTUBE_SEARCH_TIMEOUT_S = int(os.environ.get("YOUTUBE_SEARCH_TIMEOUT_SECONDS", "300"))
 KILL_SCRIPT_PATH     = os.environ.get(
     "KILL_SCRIPT_PATH",
     str(Path.home() / "kill_gologin.py"),
@@ -344,6 +352,138 @@ def run_scrape(
     return result.returncode, combined, output_path, log_path
 
 
+def run_youtube_search(
+    keyword: str,
+    country_name: str,
+    country_code: str,
+    language: str,
+    job_id: str,
+    max_results: int = 50,
+) -> tuple[int, str, Path, Path]:
+    """Invoke youtube_search.py as a subprocess.
+
+    Mirrors run_scrape()'s contract — combined stdout/stderr to a log
+    file, summary JSON written by the child to output_path — so
+    classify-the-outcome logic stays uniform. No GoLogin, no port,
+    no view_mode: YouTube Data API is a plain HTTP call.
+
+    Returns: (exit_code, combined_log_text, json_output_path, log_path)
+    """
+    output_path = Path(RESULTS_DIR) / f"youtube_{WORKER_ID}_{GOLOGIN_PORT}.json"
+    log_path    = Path(RESULTS_DIR) / f"youtube_{WORKER_ID}_{GOLOGIN_PORT}.log"
+    output_path.unlink(missing_ok=True)
+    log_path.unlink(missing_ok=True)
+
+    cmd = [
+        "python3",
+        "-u",   # unbuffered: [INFO] lines show in tail -f in real time
+        YOUTUBE_SEARCH_PATH,
+        "-k", keyword,
+        "-c", country_name,
+        "--country-code", country_code,
+        "--language", language,
+        "--max-results", str(max_results),
+        "--job-id", job_id,
+        "--worker-id", WORKER_ID,
+        "--output", str(output_path),
+    ]
+
+    env = os.environ.copy()
+    log.info("launching youtube_search (keyword=%r country=%s lang=%s log=%s timeout=%ds)",
+             keyword, country_code, language, log_path, YOUTUBE_SEARCH_TIMEOUT_S)
+
+    with open(log_path, "w", encoding="utf-8") as log_f:
+        result = subprocess.run(
+            cmd,
+            env=env,
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+            timeout=YOUTUBE_SEARCH_TIMEOUT_S,
+        )
+
+    try:
+        combined = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        combined = ""
+    return result.returncode, combined, output_path, log_path
+
+
+def process_youtube_job(job: dict[str, Any]) -> None:
+    """Handle a scrape_queue row where search_engine='youtube'.
+
+    Skips GoLogin profile lookup and the port-kill cycle (no Chromium
+    spawned). Reuses the same complete_scrape_job / fail_scrape_job /
+    active_profile_locks plumbing as Google/Bing so the queue state
+    machine is identical. The lock is set on country_code at claim
+    time and released by complete_scrape_job — for YouTube that just
+    serializes per-country (cheap; YouTube jobs finish in ~5-10s).
+    """
+    job_id = job["id"]
+    country_code = job["country_code"]
+    keyword = job["keyword"]
+    language = (job.get("language") or "en").strip().lower() or "en"
+
+    log.info("claimed youtube job %s | country=%s keyword=%r lang=%s",
+             job_id, country_code, keyword, language)
+
+    # country_name is logged-only for YouTube (regionCode is what the API
+    # actually uses); look it up best-effort so logs are readable, but
+    # don't fail the job if the profile row is missing.
+    profile = fetch_profile(country_code) or {}
+    country_name = profile.get("country_name") or country_code
+
+    try:
+        exit_code, combined_log, output_path, log_path = run_youtube_search(
+            keyword=keyword,
+            country_name=country_name,
+            country_code=country_code,
+            language=language,
+            job_id=job_id,
+        )
+    except subprocess.TimeoutExpired:
+        fail_job(job_id, f"youtube_search timed out after {YOUTUBE_SEARCH_TIMEOUT_S}s")
+        return
+    except Exception as exc:  # noqa: BLE001
+        fail_job(job_id, f"youtube_search invocation failed: {exc}")
+        return
+
+    if "[RESULT] SUCCESS" not in combined_log:
+        tail = combined_log[-800:] if combined_log else "(empty log)"
+        fail_job(job_id, f"youtube_search exit={exit_code} — {tail}")
+        return
+
+    if not output_path.exists():
+        fail_job(job_id, f"youtube_search reported SUCCESS but {output_path} is missing")
+        return
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        fail_job(job_id, f"Bad youtube_search output JSON: {exc}")
+        return
+
+    # Channels are already in public.youtube_channels (the child wrote
+    # them directly via Supabase). complete_scrape_job's leads-insert
+    # loop iterates over p_results — passing [] makes it a no-op, while
+    # the summary + status update still fire and the active_profile_lock
+    # is released. Same atomic-RPC path as Google/Bing.
+    summary = {
+        "total_results": payload.get("total_results"),
+        "organic_results": payload.get("organic_results"),
+        "ppc_results": payload.get("ppc_results"),
+        "pages_scraped": payload.get("pages_scraped"),
+        "scraped_at": payload.get("timestamp"),
+        "is_logged_in": None,
+        "view_mode": "desktop",   # YouTube has no mobile/desktop split
+    }
+    try:
+        complete_job(job_id, [], summary)
+    except Exception as exc:  # noqa: BLE001
+        log.error("complete_scrape_job RPC failed for youtube job %s: %s", job_id, exc)
+        return
+
+    log.info("youtube job %s completed | %d channels", job_id, summary.get("total_results") or 0)
+
+
 def process_job(job: dict[str, Any]) -> None:
     job_id = job["id"]
     country_code = job["country_code"]
@@ -353,8 +493,16 @@ def process_job(job: dict[str, Any]) -> None:
     # that pre-date the migration that added the column.
     language = (job.get("language") or "en").strip().lower() or "en"
     engine = (job.get("search_engine") or "google").strip().lower() or "google"
-    if engine not in ("google", "bing"):
+    if engine not in ("google", "bing", "youtube"):
         engine = "google"
+
+    # YouTube jobs take a completely different path — HTTP API, no
+    # GoLogin / Selenium / port management. Branch out before the
+    # profile lookup and never reach the scrape pipeline below.
+    if engine == "youtube":
+        process_youtube_job(job)
+        return
+
     # view_mode controls whether scraper.py runs the desktop pass, the
     # mobile (iPhone UA + 375x812 viewport) pass, or both. Default
     # 'both' for jobs from before the migration landed.

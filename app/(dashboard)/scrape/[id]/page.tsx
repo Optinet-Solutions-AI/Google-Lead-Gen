@@ -36,7 +36,7 @@ type Job = {
   completed_at: string | null
   error_message: string | null
   result_summary: Record<string, unknown> | null
-  search_engine: 'google' | 'bing' | null
+  search_engine: 'google' | 'bing' | 'youtube' | null
   view_mode: 'desktop' | 'mobile' | 'both' | null
   language: string | null
   created_at: string
@@ -171,19 +171,24 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   )
 }
 
-function EngineBadge({ engine }: { engine: 'google' | 'bing' | null }) {
+function EngineBadge({ engine }: { engine: 'google' | 'bing' | 'youtube' | null }) {
   const e = engine ?? 'google'
   const styles =
-    e === 'bing' ? 'bg-cyan-100 text-cyan-800' : 'bg-blue-100 text-blue-800'
+    e === 'bing'
+      ? 'bg-cyan-100 text-cyan-800'
+      : e === 'youtube'
+        ? 'bg-red-100 text-red-800'
+        : 'bg-blue-100 text-blue-800'
+  const label = e === 'youtube' ? 'YouTube' : e === 'bing' ? 'Bing' : 'Google'
   return (
     <span
-      title={`Scraped on ${e === 'bing' ? 'Bing' : 'Google'}`}
+      title={`Scraped on ${label}`}
       className={[
         'inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
         styles,
       ].join(' ')}
     >
-      {e === 'bing' ? 'Bing' : 'Google'}
+      {label}
     </span>
   )
 }

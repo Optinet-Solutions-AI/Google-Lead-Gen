@@ -178,12 +178,13 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
           <select
             name="search_engine"
             defaultValue="google"
-            title="Bing only changes the SERP capture step. Enrichment, redirect resolution, and screenshots all run in Chromium regardless. 'Both' queues one Google job + one Bing job per keyword."
+            title="Google/Bing scrape SERPs and produce URL leads (same downstream enrichment). 'Both' queues a Google job + a Bing job per keyword. YouTube uses the YouTube Data API to find affiliate channels — results land in youtube_channels, not the leads table, and the enrichment pipeline is bypassed."
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
           >
             <option value="google">Google</option>
             <option value="bing">Bing</option>
-            <option value="both">Both</option>
+            <option value="both">Both (G + B)</option>
+            <option value="youtube">YouTube</option>
           </select>
         </label>
 

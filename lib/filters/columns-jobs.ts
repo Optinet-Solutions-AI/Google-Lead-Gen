@@ -20,6 +20,7 @@ const ENRICHMENT_STATUS_OPTIONS = [
 const SEARCH_ENGINE_OPTIONS = [
   { value: 'google', label: 'Google' },
   { value: 'bing', label: 'Bing' },
+  { value: 'youtube', label: 'YouTube' },
 ] as const
 
 const VIEW_MODE_OPTIONS = [

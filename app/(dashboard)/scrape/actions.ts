@@ -90,12 +90,17 @@ export async function enqueueScrape(
   const engineRaw = String(formData.get('search_engine') ?? '').trim().toLowerCase()
   // The form lets the user pick a single engine OR "both" — the latter
   // fans out to two queue rows per keyword (one Google, one Bing).
-  const enginesToRun: Array<'google' | 'bing'> =
+  // 'youtube' is a separate path (Data API, channel results into
+  // youtube_channels) and intentionally NOT included in "both" — the
+  // output shape is too different to bundle into a SERP comparison.
+  const enginesToRun: Array<'google' | 'bing' | 'youtube'> =
     engineRaw === 'both'
       ? ['google', 'bing']
       : engineRaw === 'bing'
         ? ['bing']
-        : ['google']
+        : engineRaw === 'youtube'
+          ? ['youtube']
+          : ['google']
   // view_mode controls whether the scraper runs desktop, mobile (iPhone
   // UA + 375x812 viewport via CDP), or both passes. 'both' is the
   // default — catches mobile-only PPC ads + mobile-ranked organic that
@@ -215,7 +220,9 @@ export async function enqueueScrape(
       ? ' on Google + Bing'
       : enginesToRun[0] === 'bing'
         ? ' on Bing'
-        : ''
+        : enginesToRun[0] === 'youtube'
+          ? ' on YouTube'
+          : ''
 
   await logActivity({
     action: 'scrape.enqueue',
@@ -980,7 +987,7 @@ export async function rerunScrapeFiltered(
     priority: number
     with_enrichment: boolean
     language: string | null
-    search_engine: 'google' | 'bing' | null
+    search_engine: 'google' | 'bing' | 'youtube' | null
     view_mode: 'desktop' | 'mobile' | 'both' | null
     created_by_email: string | null
     created_by_username: string | null
@@ -1268,7 +1275,7 @@ export async function bulkRerunScrapeJobs(
     priority: number
     with_enrichment: boolean
     language: string | null
-    search_engine: 'google' | 'bing' | null
+    search_engine: 'google' | 'bing' | 'youtube' | null
     view_mode: 'desktop' | 'mobile' | 'both' | null
     result_type_filter: 'PPC' | 'Organic' | null
     created_by_email: string | null
