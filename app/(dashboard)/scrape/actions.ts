@@ -26,6 +26,14 @@ export type CheckMondayState =
   | { status: 'error'; error: string }
   | null
 
+// Monday duplicate check is the one per-job action that's intentionally
+// open to all signed-in users (not just the job owner / admins). The RPC
+// `mark_monday_duplicates_for_job` is idempotent, only touches the
+// informational `is_on_monday` / `monday_board` / `monday_item_id`
+// columns on this job's leads, and never enqueues scraper or proxy
+// work — so cross-user use is safe. QA reported the strict ownership
+// gate (R2 hardening) was blocking testers from re-running the check on
+// jobs they didn't queue.
 export async function checkMondayDuplicates(
   _prev: CheckMondayState,
   formData: FormData,
@@ -33,10 +41,21 @@ export async function checkMondayDuplicates(
   const jobId = String(formData.get('job_id') ?? '').trim()
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
 
-  const access = await requireJobAccess(jobId)
-  if (!access.ok) return { status: 'error', error: access.error }
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { status: 'error', error: 'Not signed in.' }
 
   const svc = createServiceClient()
+  const { data: jobExists, error: jobErr } = await svc
+    .from('scrape_queue')
+    .select('id')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (jobErr) return { status: 'error', error: safeError(jobErr, 'Failed to look up job.') }
+  if (!jobExists) return { status: 'error', error: 'Job not found.' }
+
   const { data, error } = await svc.rpc('mark_monday_duplicates_for_job', {
     p_job_id: jobId,
   })
@@ -270,10 +289,15 @@ export type StageRunState =
 
 /**
  * Authorise a per-job action: the caller must either own the job
- * (matched on `created_by_email`) or be an admin. All per-job
+ * (matched on `created_by_email`) or be an admin. Most per-job
  * actions in this file route through this — previously several
  * only checked "is the caller signed in" (BUGS.md #27, R2-1..R2-5),
  * leaving any signed-in user able to mutate any job_id they guessed.
+ *
+ * Carve-out: `checkMondayDuplicates` deliberately does NOT call this.
+ * That action is idempotent, only writes informational `is_on_monday`
+ * flags, and never enqueues scraper work — so QA testers need to run
+ * it on jobs they don't own. See the comment on that function.
  */
 async function requireJobAccess(
   jobId: string,
