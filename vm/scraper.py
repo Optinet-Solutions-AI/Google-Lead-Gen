@@ -7,6 +7,8 @@ import argparse
 import requests
 import shutil
 import zipfile
+import base64
+import re
 
 from gologin import GoLogin
 from urllib.parse import quote_plus, urlparse
@@ -1480,6 +1482,67 @@ def _bing_first_http_anchor(block):
     return None
 
 
+# Bing wraps every result href in https://www.bing.com/ck/a?…&u=<encoded>
+# (a click-tracker). The u-parameter is a 2-char type prefix (e.g. "a1")
+# followed by URL-safe base64 of the real target URL — either a relative
+# path like "/images/search?…" or an absolute "https://…".
+_BING_CK_U_RE = re.compile(r'[?&]u=([^&]+)')
+
+
+def _decode_bing_ck_url(href):
+    """Decode a bing.com/ck/a click-tracker into its real target URL.
+
+    Returns the input unchanged when href isn't a recognizable ck/a
+    redirect or the base64 payload can't be decoded.
+    """
+    if not href or "/ck/a" not in href:
+        return href
+    m = _BING_CK_U_RE.search(href)
+    if not m:
+        return href
+    payload = m.group(1)
+    if len(payload) < 3:
+        return href
+    body = payload[2:].replace('-', '+').replace('_', '/')
+    body += '=' * (-len(body) % 4)
+    try:
+        decoded = base64.b64decode(body).decode('utf-8')
+    except Exception:
+        return href
+    if decoded.startswith('//'):
+        return 'https:' + decoded
+    if decoded.startswith('/'):
+        return 'https://www.bing.com' + decoded
+    if not decoded.startswith('http'):
+        return href
+    return decoded
+
+
+def _bing_serp_state(driver):
+    """Classify the current Bing page as 'captcha', 'results', or ''.
+
+    - 'captcha': Cloudflare Turnstile challenge is up. No amount of
+      waiting will produce results on the current proxy/fingerprint.
+    - 'results': result containers (b_algo / data-bm) have hydrated.
+    - '': neither yet — keep waiting.
+    """
+    try:
+        return driver.execute_script("""
+            var src = document.documentElement.outerHTML;
+            if (src.indexOf('CloudflareHandleCaptcha') !== -1
+                || src.indexOf('challenge/verify') !== -1
+                || src.indexOf('captcha_text') !== -1) {
+              return 'captcha';
+            }
+            if (document.querySelector('li.b_algo, li[data-bm], div[data-bm]') !== null) {
+              return 'results';
+            }
+            return '';
+        """) or ''
+    except Exception:
+        return ''
+
+
 def get_bing_results(driver, keyword, country, page=0, language="en"):
     """
     Single-page Bing SERP fetch + parse. Returns the same per-result
@@ -1550,43 +1613,24 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
         check_for_captcha(driver)
         accept_bing_consent(driver)
 
-    # Bing now serves a JavaScript-rendered shell — page_source captured
-    # right after navigation has 0 result links because the result blocks
-    # (`[data-bm]` markers) hydrate from JS later. Wait for actual
-    # external links to populate, force lazy rendering with a scroll,
-    # then re-grab page_source. Up to 35s total.
-    #
-    # We don't wait for a specific container ID anymore (Bing has
-    # rotated through `b_results`, `b_content`, and several others).
-    # We wait for the result CONTENT to actually exist — at least 5
-    # outbound `<a>` tags pointing to non-bing/microsoft domains.
-
-    def _outbound_link_count(d):
-        try:
-            return d.execute_script("""
-                var anchors = document.querySelectorAll('a[href^="http"]');
-                var count = 0;
-                for (var i = 0; i < anchors.length; i++) {
-                  var h = anchors[i].href.toLowerCase();
-                  if (h.indexOf('bing.com') === -1
-                      && h.indexOf('microsoft.com') === -1
-                      && h.indexOf('msn.com') === -1
-                      && h.indexOf('live.com') === -1) {
-                    count++;
-                    if (count >= 5) return count;
-                  }
-                }
-                return count;
-            """)
-        except Exception:
-            return 0
-
+    # Bing's result blocks (b_algo / data-bm) hydrate from JS several
+    # seconds after navigation lands, so page_source captured immediately
+    # would be empty. Wait until either:
+    #   - Result containers actually appear in the DOM → parse them
+    #   - Cloudflare's Turnstile challenge fires ("One last step…")
+    #     → bail loudly; gambling-class queries on flagged proxies hit
+    #       this and won't settle no matter how long we wait
+    # Up to 35s total. A scroll halfway through nudges lazy hydration.
     deadline = time.time() + 35
     scrolled = False
+    captcha_detected = False
     while time.time() < deadline:
-        if _outbound_link_count(driver) >= 5:
+        state = _bing_serp_state(driver)
+        if state == 'captcha':
+            captcha_detected = True
             break
-        # Halfway through, force a scroll to trigger any lazy hydration.
+        if state == 'results':
+            break
         if not scrolled and time.time() > deadline - 20:
             try:
                 driver.execute_script(
@@ -1598,27 +1642,32 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
                 print(f"[WARN] scroll failed: {exc}")
         time.sleep(1)
 
-    # Final settle — even if links exist, give Bing a moment to finish.
+    # Final settle — even once blocks are present, give lazy chunks
+    # a moment to finish painting.
     time.sleep(2)
 
     page_source = driver.page_source
     landed_url = driver.current_url
     print(f"[INFO] Bing landed URL: {landed_url}")
     _maybe_save_bing_debug(page_source, landed_url)
+
+    # Captcha gate — if Cloudflare's challenge is up, the page will never
+    # contain results. Return [] with a clear warning so the worker treats
+    # the page as failed rather than silently producing a 0-result success.
+    if captcha_detected or _bing_serp_state(driver) == 'captcha':
+        print(
+            "[WARN] Bing returned a Cloudflare Turnstile challenge "
+            "(server-side bot detection). This proxy/fingerprint is "
+            "currently flagged for this query class."
+        )
+        return []
+
     soup = BeautifulSoup(page_source, "html.parser")
     # Crude size sanity check — if the page is suspiciously small, we
     # probably hit a consent banner / interstitial / redirect rather
     # than a real SERP.
     if len(page_source) < 5000:
         print(f"[WARN] Bing page_source is only {len(page_source)} bytes — likely an interstitial")
-    final_link_count = _outbound_link_count(driver)
-    print(f"[DEBUG] Bing final outbound-link count: {final_link_count}")
-    if final_link_count == 0:
-        print(
-            "[WARN] Bing returned a JS-only shell (no result links rendered). "
-            "Likely server-side bot detection on this proxy/fingerprint combination."
-        )
-        return []
     results = []
     position = 1
     overall_position = 1
@@ -1631,8 +1680,10 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
         a = _bing_first_http_anchor(ad_block)
         if not a:
             continue
-        href = a.get("href")
-        if href in seen_hrefs:
+        href = _decode_bing_ck_url(a.get("href"))
+        if not href or href in seen_hrefs:
+            continue
+        if "bing.com/" in href and "/search?" in href:
             continue
         title = a.get_text(strip=True)
         if not title:
@@ -1674,11 +1725,12 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
         a = _bing_first_http_anchor(algo)
         if not a:
             continue
-        href = a.get("href")
+        href = _decode_bing_ck_url(a.get("href"))
         if not href or href in seen_hrefs:
             continue
         # Bing internal links (e.g. /search redirects, image carousels)
-        # aren't real organic results — drop them.
+        # aren't real organic results — drop them. After ck/a decoding
+        # these surface as https://www.bing.com/images/search?... etc.
         if "bing.com/" in href and "/search?" in href:
             continue
         seen_hrefs.add(href)
@@ -1708,7 +1760,7 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
             a = h2.find("a", href=True)
             if not a:
                 continue
-            href = a.get("href")
+            href = _decode_bing_ck_url(a.get("href"))
             if not href or not href.startswith("http") or href in seen_hrefs:
                 continue
             if "bing.com/" in href and "/search?" in href:

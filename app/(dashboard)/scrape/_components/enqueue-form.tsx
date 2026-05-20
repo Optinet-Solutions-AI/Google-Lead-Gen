@@ -154,7 +154,7 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
           action={formAction}
           className="border-t border-[color:var(--color-border)] p-4"
         >
-          <div className="grid gap-3 md:grid-cols-[1fr_160px_140px_100px_100px] md:items-start">
+          <div className="grid gap-3 md:grid-cols-[1fr_120px_160px_140px_100px_100px] md:items-start">
         <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
           <span className="flex items-baseline justify-between">
             <span>Keywords</span>
@@ -173,15 +173,19 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
           />
         </label>
 
-        {/* Search engine selector hidden until Bing scraping is unblocked.
-         *  Bing serves a JavaScript-rendered shell with no result links to
-         *  our GoLogin/residential-proxy combo (server-side bot detection).
-         *  Backend still supports search_engine='bing' end-to-end — DB
-         *  column, worker, scraper.py — so re-enabling is a one-line UI
-         *  change once we have a working Bing path (ScrapingBee / Bing API
-         *  / different proxy pool). For now the action defaults to 'google'
-         *  when no value is submitted.
-         */}
+        <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
+          Search engine
+          <select
+            name="search_engine"
+            defaultValue="google"
+            title="Bing only changes the SERP capture step. Enrichment, redirect resolution, and screenshots all run in Chromium regardless. 'Both' queues one Google job + one Bing job per keyword."
+            className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
+          >
+            <option value="google">Google</option>
+            <option value="bing">Bing</option>
+            <option value="both">Both</option>
+          </select>
+        </label>
 
         <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
           Country
