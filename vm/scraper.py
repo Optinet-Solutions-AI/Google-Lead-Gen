@@ -2027,18 +2027,25 @@ def main():
             # escalate to a HITL checkpoint with reason
             # 'google_login_required'. See ensure_google_login_if_required
             # for the full decision tree.
-            try:
-                ensure_google_login_if_required(driver)
-            except InteractiveCancelException:
-                # Operator cancelled at the checkpoint — surface as a clean
-                # failure so the worker doesn't retry.
-                print("[INFO] google login: operator cancelled at HITL checkpoint")
-                raise
-            except Exception as exc:  # noqa: BLE001
-                # Login plumbing must never block scraping. If it crashes,
-                # log + continue — the scrape will still try; PPC may just
-                # be missing.
-                print(f"[WARN] google login: orchestrator crashed: {exc}", file=sys.stderr)
+            #
+            # Skip for Bing: Bing SERPs don't depend on a Google session.
+            # Running this for Bing scrapes burned operator-attention on
+            # an irrelevant HITL, and when nobody clicked Resume the
+            # CAPTCHA_HITL_TIMEOUT marker leaked into stdout and caused
+            # the worker to discard the otherwise-successful Bing scrape.
+            if args.engine == "google":
+                try:
+                    ensure_google_login_if_required(driver)
+                except InteractiveCancelException:
+                    # Operator cancelled at the checkpoint — surface as a clean
+                    # failure so the worker doesn't retry.
+                    print("[INFO] google login: operator cancelled at HITL checkpoint")
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    # Login plumbing must never block scraping. If it crashes,
+                    # log + continue — the scrape will still try; PPC may just
+                    # be missing.
+                    print(f"[WARN] google login: orchestrator crashed: {exc}", file=sys.stderr)
 
             # Step 3: Scrape — branch on engine. Both branches return the
             # same dict shape so save / webhook / final logging stays

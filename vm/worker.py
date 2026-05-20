@@ -547,24 +547,29 @@ def process_job(job: dict[str, Any]) -> None:
         return
 
     # Classify the outcome by the [RESULT] marker the scraper prints.
-    # CAPTCHA_HITL_TIMEOUT comes from request_interactive_checkpoint when
-    # the operator didn't click Resume within hitl_ttl_minutes. We route
-    # it to the terminal path (no auto-retry) so the operator can
-    # manually re-queue from /admin/interactive — see
-    # mark_scrape_job_captcha_terminal vs captcha_scrape_job.
-    if "[RESULT] CAPTCHA_HITL_TIMEOUT" in combined_log:
+    # SUCCESS wins over any earlier captcha markers: a scrape can emit
+    # CAPTCHA_HITL_TIMEOUT mid-run (e.g. an optional Google-login HITL
+    # window nobody clicked) and still go on to produce results. If the
+    # final [RESULT] SUCCESS line is there, the results are real — don't
+    # throw them away because of a non-blocking earlier checkpoint.
+    if "[RESULT] SUCCESS" in combined_log:
+        pass  # fall through to the results-loading path below
+    elif "[RESULT] CAPTCHA_HITL_TIMEOUT" in combined_log:
+        # Operator didn't click Resume within hitl_ttl_minutes and the
+        # scrape couldn't recover. Route to the terminal path (no
+        # auto-retry) so the operator can manually re-queue from
+        # /admin/interactive — see mark_scrape_job_captcha_terminal vs
+        # captcha_scrape_job.
         log.warning("job %s HITL timed out (log=%s) — marking terminal captcha", job_id, log_path)
         _kill_port()
         captcha_terminal(job_id)
         return
-
-    if "[RESULT] CAPTCHA" in combined_log:
+    elif "[RESULT] CAPTCHA" in combined_log:
         log.warning("job %s hit CAPTCHA (log=%s)", job_id, log_path)
         _kill_port()
         captcha_job(job_id)
         return
-
-    if "[RESULT] SUCCESS" not in combined_log:
+    else:
         _kill_port()
         tail = combined_log[-800:] if combined_log else "(empty log)"
         fail_job(job_id, f"Scraper exit={exit_code} — {tail}")
