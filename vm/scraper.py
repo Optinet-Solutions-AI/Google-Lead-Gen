@@ -1621,12 +1621,33 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     #     → bail loudly; gambling-class queries on flagged proxies hit
     #       this and won't settle no matter how long we wait
     # Up to 35s total. A scroll halfway through nudges lazy hydration.
+    # Wait-loop budget is refreshed after a successful HITL resume so the
+    # post-challenge SERP has a full 35s to hydrate (operator just spent
+    # 1–5 min on the challenge — don't immediately time out on them).
     deadline = time.time() + 35
     scrolled = False
     captcha_detected = False
+    hitl_attempted = False
     while time.time() < deadline:
         state = _bing_serp_state(driver)
         if state == 'captcha':
+            # Route through check_for_captcha so HITL fires the same way
+            # it does on the Google path: if interactive mode + job_id
+            # are set, park at an interactive_checkpoint and wait for an
+            # admin to clear Turnstile via noVNC. Otherwise raises
+            # CaptchaDetectedException, which main() turns into
+            # [RESULT] CAPTCHA → worker auto-retry. Only attempt once
+            # per page so a stuck challenge doesn't loop forever.
+            if not hitl_attempted:
+                hitl_attempted = True
+                check_for_captcha(driver)
+                # Operator resumed (or HITL was off and check_for_captcha
+                # would have raised). Reset the wait budget and re-poll
+                # — the post-challenge SERP needs time to hydrate.
+                deadline = time.time() + 35
+                scrolled = False
+                time.sleep(1)
+                continue
             captcha_detected = True
             break
         if state == 'results':
@@ -1651,16 +1672,38 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     print(f"[INFO] Bing landed URL: {landed_url}")
     _maybe_save_bing_debug(page_source, landed_url)
 
-    # Captcha gate — if Cloudflare's challenge is up, the page will never
-    # contain results. Return [] with a clear warning so the worker treats
-    # the page as failed rather than silently producing a 0-result success.
-    if captcha_detected or _bing_serp_state(driver) == 'captcha':
+    # Captcha gate. Two ways we get here with captcha still up:
+    #   1. captcha_detected=True from the wait loop — HITL already fired
+    #      once and still didn't clear. Don't loop HITL a second time;
+    #      just return [] and let the worker decide (auto-retry with a
+    #      fresh proxy/fingerprint usually beats another human attempt
+    #      on the same flagged session).
+    #   2. State only flipped to captcha during the 2s post-loop settle
+    #      → we never went through the in-loop HITL branch. Give it one
+    #      HITL attempt via check_for_captcha. If HITL is off this also
+    #      raises CaptchaDetectedException → main() emits [RESULT]
+    #      CAPTCHA → worker auto-retries.
+    if captcha_detected:
+        print(
+            "[WARN] Bing Turnstile still up after HITL attempt — "
+            "bailing this page."
+        )
+        return []
+    if _bing_serp_state(driver) == 'captcha':
         print(
             "[WARN] Bing returned a Cloudflare Turnstile challenge "
             "(server-side bot detection). This proxy/fingerprint is "
             "currently flagged for this query class."
         )
-        return []
+        check_for_captcha(driver)
+        if _bing_serp_state(driver) == 'captcha':
+            return []
+        # Operator solved it during the late check — re-grab the source
+        # so the parser below sees the post-challenge SERP, not the
+        # challenge HTML we captured at line 1670.
+        page_source = driver.page_source
+        landed_url = driver.current_url
+        print(f"[INFO] Bing post-HITL landed URL: {landed_url}")
 
     soup = BeautifulSoup(page_source, "html.parser")
     # Crude size sanity check — if the page is suspiciously small, we
