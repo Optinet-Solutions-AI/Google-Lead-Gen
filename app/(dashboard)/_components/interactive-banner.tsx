@@ -9,7 +9,8 @@ import { createServiceClient } from '@/lib/supabase/service'
  * dashboard page when at least one interactive_checkpoint is in
  * status='waiting'. Click → /admin/interactive.
  *
- * Hidden for non-admins since they can't act on it.
+ * Visible to any signed-in user — the /admin/interactive page lets
+ * anyone resolve captchas, so the banner should too.
  */
 export async function InteractiveBanner() {
   const supabase = await createServerClient()
@@ -19,9 +20,6 @@ export async function InteractiveBanner() {
   if (!user) return null
 
   const svc = createServiceClient()
-  const { data: isAdminFlag } = await svc.rpc('is_admin', { p_user_id: user.id })
-  if (!isAdminFlag) return null
-
   const { count } = await svc
     .from('interactive_checkpoints')
     .select('id', { head: true, count: 'exact' })
