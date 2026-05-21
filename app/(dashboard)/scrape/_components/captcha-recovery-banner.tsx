@@ -36,7 +36,8 @@ export function CaptchaRecoveryBanner({ jobId, errorMessage }: Props) {
           <>
             The captcha checkpoint wasn&apos;t solved in time and the worker
             gave up.{' '}
-            <strong>Try again</strong> below to re-queue this scrape — it&apos;ll
+            <strong>Try again</strong>{' '}
+            below to re-queue this scrape — it&apos;ll
             restart with a fresh proxy IP. If a captcha shows up again, you&apos;ll
             see it in the{' '}
             <Link
@@ -51,7 +52,8 @@ export function CaptchaRecoveryBanner({ jobId, errorMessage }: Props) {
         ) : (
           <>
             The scraper hit a captcha it couldn&apos;t auto-solve.{' '}
-            <strong>Try again</strong> below to re-queue with a fresh proxy IP —
+            <strong>Try again</strong>{' '}
+            below to re-queue with a fresh proxy IP —
             the IP rotates per session so a different result is likely.
           </>
         )}
