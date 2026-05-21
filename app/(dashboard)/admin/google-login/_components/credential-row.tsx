@@ -67,6 +67,7 @@ export function CredentialRow({ country, credential }: Props) {
   const [revealedPwd, setRevealedPwd] = useState<string | null>(null)
   const [revealError, setRevealError] = useState<string | null>(null)
   const [revealPending, startReveal] = useTransition()
+  const [copied, setCopied] = useState(false)
   const handleReveal = () => {
     if (revealedPwd !== null) {
       setRevealedPwd(null)
@@ -87,6 +88,8 @@ export function CredentialRow({ country, credential }: Props) {
     if (!revealedPwd) return
     try {
       await navigator.clipboard.writeText(revealedPwd)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
     } catch {
       /* ignore — older browsers / Safari fallback */
     }
@@ -179,11 +182,20 @@ export function CredentialRow({ country, credential }: Props) {
               <button
                 type="button"
                 onClick={handleCopy}
-                className="inline-flex items-center gap-1 rounded border border-amber-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-amber-900 hover:bg-amber-100"
-                title="Copy to clipboard"
+                className={[
+                  'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium transition-colors',
+                  copied
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                    : 'border-amber-200 bg-white text-amber-900 hover:bg-amber-100',
+                ].join(' ')}
+                title={copied ? 'Copied to clipboard' : 'Copy to clipboard'}
               >
-                <Copy className="h-3 w-3" />
-                Copy
+                {copied ? (
+                  <CheckCircle2 className="h-3 w-3" />
+                ) : (
+                  <Copy className="h-3 w-3" />
+                )}
+                {copied ? 'Copied!' : 'Copy'}
               </button>
             </p>
           )}
