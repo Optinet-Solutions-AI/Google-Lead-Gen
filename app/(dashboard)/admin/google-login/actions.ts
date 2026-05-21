@@ -85,6 +85,47 @@ export type DeactivateState =
   | { status: 'error'; error: string }
   | null
 
+/**
+ * Reveal the decrypted password for a country's stored credential.
+ * Admin-only — the RPC re-checks is_admin() so a hand-crafted POST
+ * can't bypass the UI's same gating. Called from the row's Show
+ * button; the value lives in client state only until the operator
+ * hides it again.
+ */
+export async function revealCredentialPasswordAction(
+  countryCode: string,
+): Promise<{ ok: true; email: string; password: string } | { ok: false; error: string }> {
+  const auth = await requireAdmin()
+  if (!auth.ok) return { ok: false, error: auth.error }
+
+  const code = countryCode.trim().toUpperCase()
+  if (!/^[A-Z]{2}$/.test(code)) {
+    return { ok: false, error: 'Country code must be a 2-letter ISO code.' }
+  }
+
+  const svc = createServiceClient()
+  const { data, error } = await svc.rpc('admin_reveal_google_login_credential', {
+    p_country_code: code,
+  })
+  if (error) return { ok: false, error: error.message }
+
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { email?: string | null; password?: string | null }
+    | null
+  if (!row || !row.password) {
+    return { ok: false, error: 'No active credential found for this country.' }
+  }
+
+  await logActivity({
+    action: 'google_login_credential.reveal',
+    entity_type: 'google_login_credential',
+    entity_id: null,
+    details: { country_code: code },
+  })
+
+  return { ok: true, email: row.email ?? '', password: row.password }
+}
+
 export async function deactivateCredentialAction(
   _prev: DeactivateState,
   fd: FormData,

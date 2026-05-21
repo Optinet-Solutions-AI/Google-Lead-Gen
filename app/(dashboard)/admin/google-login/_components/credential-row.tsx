@@ -1,9 +1,10 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { useActionState, useState, useTransition } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
+  Copy,
   Eye,
   EyeOff,
   KeyRound,
@@ -15,6 +16,7 @@ import {
 } from 'lucide-react'
 import {
   deactivateCredentialAction,
+  revealCredentialPasswordAction,
   setCredentialAction,
   type CredentialFormState,
   type DeactivateState,
@@ -59,12 +61,43 @@ export function CredentialRow({ country, credential }: Props) {
     initialDelete,
   )
 
+  // Reveal state for the existing-credential row. Fetched lazily via
+  // server action so the password isn't on-page until the operator
+  // clicks Show. Stays in component state only — no localStorage.
+  const [revealedPwd, setRevealedPwd] = useState<string | null>(null)
+  const [revealError, setRevealError] = useState<string | null>(null)
+  const [revealPending, startReveal] = useTransition()
+  const handleReveal = () => {
+    if (revealedPwd !== null) {
+      setRevealedPwd(null)
+      setRevealError(null)
+      return
+    }
+    startReveal(async () => {
+      setRevealError(null)
+      const res = await revealCredentialPasswordAction(country.country_code)
+      if (res.ok) {
+        setRevealedPwd(res.password)
+      } else {
+        setRevealError(res.error)
+      }
+    })
+  }
+  const handleCopy = async () => {
+    if (!revealedPwd) return
+    try {
+      await navigator.clipboard.writeText(revealedPwd)
+    } catch {
+      /* ignore — older browsers / Safari fallback */
+    }
+  }
+
   const errorMsg =
     setState?.status === 'error'
       ? setState.error
       : deleteState?.status === 'error'
         ? deleteState.error
-        : null
+        : revealError
 
   const showsCheckmark = setState?.status === 'ok' && !editing
   const hasCreds = credential !== null
@@ -135,7 +168,45 @@ export function CredentialRow({ country, credential }: Props) {
               {credential.notes && <span className="ml-2 italic">— {credential.notes}</span>}
             </p>
           )}
+          {revealedPwd !== null && (
+            <p className="mt-1 inline-flex flex-wrap items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+              <span className="font-semibold uppercase tracking-wide text-[10px]">
+                password:
+              </span>
+              <code className="rounded bg-white/60 px-1.5 py-0.5 font-mono text-[11px]">
+                {revealedPwd}
+              </code>
+              <button
+                type="button"
+                onClick={handleCopy}
+                className="inline-flex items-center gap-1 rounded border border-amber-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-amber-900 hover:bg-amber-100"
+                title="Copy to clipboard"
+              >
+                <Copy className="h-3 w-3" />
+                Copy
+              </button>
+            </p>
+          )}
         </div>
+
+        {!editing && hasCreds && (
+          <button
+            type="button"
+            onClick={handleReveal}
+            disabled={revealPending}
+            className="inline-flex items-center gap-1 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2 py-1 text-[11px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
+            title={revealedPwd ? 'Hide the password' : 'Reveal the stored password (admin only)'}
+          >
+            {revealPending ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : revealedPwd ? (
+              <EyeOff className="h-3 w-3" />
+            ) : (
+              <Eye className="h-3 w-3" />
+            )}
+            {revealedPwd ? 'Hide' : 'Show'}
+          </button>
+        )}
 
         {!editing && (
           <button
