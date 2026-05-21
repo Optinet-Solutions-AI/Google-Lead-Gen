@@ -447,11 +447,12 @@ class CaptchaDetectedException(Exception):
 # in the noVNC viewer affect the same session.
 
 CHECKPOINT_POLL_SECONDS = 5
-# Hard fallback when system_settings is unreachable. Default-on value
-# matches the migration seed; the worker reads the live value out of
-# system_settings.hitl_ttl_minutes for each checkpoint so an admin can
-# tune it via /admin/system without restarting workers.
-CHECKPOINT_DEFAULT_TTL_MINUTES = 2
+# Hard fallback when system_settings is unreachable. Matches the live
+# seed value (5 min, set by 20260522010000_hitl_5min_with_auto_refresh).
+# The worker reads the live value out of system_settings.hitl_ttl_minutes
+# for each checkpoint so an admin can tune it via /admin/system without
+# restarting workers; this constant only kicks in if the DB lookup fails.
+CHECKPOINT_DEFAULT_TTL_MINUTES = 5
 
 # Result markers the worker greps for after the scraper subprocess exits.
 # Distinct from the generic CAPTCHA marker (which triggers auto-retry via
@@ -584,9 +585,14 @@ def request_interactive_checkpoint(
     """Pause the scrape and wait for an admin to resolve via noVNC.
 
     Returns True when the operator clicked Resume — the caller should
-    re-check the page state and continue. Returns False when the
-    checkpoint was cancelled or timed out — the caller should treat
-    the wall as fatal (raise CaptchaDetectedException, etc).
+    re-check the page state and continue. Returns False when the TTL
+    elapsed without operator action. Raises InteractiveCancelException
+    when the operator clicked Cancel.
+
+    On TTL elapse this function flips the checkpoint row to 'timed_out'
+    via the timeout RPC but does NOT emit RESULT_MARKER_HITL_TIMEOUT —
+    that's the caller's job, so the refresh-loop wrapper can re-park
+    without prematurely routing the worker to the terminal path.
 
     Requires --interactive + --job-id + --worker-id to actually fire;
     when called without them, returns False immediately so legacy
@@ -699,12 +705,114 @@ def request_interactive_checkpoint(
             print(f"[WARN] timeout_interactive_checkpoint RPC failed: {exc}",
                   file=sys.stderr)
 
-    # Emit a distinct marker so worker.py routes us to the terminal
-    # path (mark_scrape_job_captcha_terminal) instead of the generic
-    # captcha auto-retry loop. Manual operator re-queue is the only way
-    # forward from here.
-    print(RESULT_MARKER_HITL_TIMEOUT)
+    # Caller (refresh-loop wrapper) decides whether this timeout means
+    # "try another cycle" or "all attempts exhausted — emit the
+    # RESULT_MARKER_HITL_TIMEOUT and let worker.py go terminal".
     return False
+
+
+# Default cap on HITL park cycles before we give up and route the job
+# to the terminal path. 10 × 5min = 50 min ceiling per stuck captcha.
+# Matches the existing captcha auto-retry cap for symmetry.
+CHECKPOINT_MAX_REFRESH_ATTEMPTS = 10
+# Settle time after driver.refresh() before re-probing the page state.
+# Long enough for Cloudflare/Google challenge scripts to mount; short
+# enough that the operator's wait time isn't padded.
+CHECKPOINT_POST_REFRESH_SETTLE_S = 4.0
+
+
+def _request_interactive_checkpoint_with_refresh(
+    driver,
+    *,
+    job_id: str | None,
+    worker_id: str | None,
+    worker_port: int,
+    reason: str,
+    is_still_blocked,
+    ttl_minutes: int | None = None,
+    max_attempts: int = CHECKPOINT_MAX_REFRESH_ATTEMPTS,
+    post_refresh_settle_s: float = CHECKPOINT_POST_REFRESH_SETTLE_S,
+) -> bool:
+    """Park at an HITL checkpoint with auto-refresh + re-park.
+
+    Up to max_attempts park cycles. Between cycles, driver.refresh() is
+    called and is_still_blocked() is re-checked — a refresh that happens
+    to clear the wall returns True without burning another operator slot.
+
+    Returns True when the page is clear (operator solved OR a refresh
+    cleared it). Returns False after exhausting max_attempts; emits
+    RESULT_MARKER_HITL_TIMEOUT before returning so worker.py routes the
+    job to the terminal path.
+
+    InteractiveCancelException (operator clicked Cancel) propagates
+    immediately — explicit cancel is not retried.
+    """
+    if not job_id:
+        # Same short-circuit as the underlying function — caller falls
+        # through to its existing fail path.
+        return False
+
+    def _still_blocked() -> bool:
+        # Transient Selenium errors from the page-state probe (stale
+        # element refs during navigation, etc.) shouldn't crash the
+        # loop. Treat any exception as "still blocked" so we re-park
+        # rather than falsely returning success.
+        try:
+            return bool(is_still_blocked())
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[WARN] checkpoint: is_still_blocked() raised: {exc} — assuming blocked",
+                file=sys.stderr,
+            )
+            return True
+
+    for attempt in range(1, max_attempts + 1):
+        resumed = request_interactive_checkpoint(
+            driver,
+            job_id=job_id,
+            worker_id=worker_id,
+            worker_port=worker_port,
+            reason=reason,
+            ttl_minutes=ttl_minutes,
+        )
+        # InteractiveCancelException from an operator click propagates
+        # out untouched — explicit cancel is not retried.
+
+        if resumed and not _still_blocked():
+            if attempt > 1:
+                print(f"[INFO] checkpoint: cleared after {attempt} attempt(s)")
+            return True
+
+        if attempt >= max_attempts:
+            print(
+                f"[WARN] checkpoint: exhausted {max_attempts} refresh attempts "
+                f"({reason!r}) — giving up",
+                file=sys.stderr,
+            )
+            print(RESULT_MARKER_HITL_TIMEOUT)
+            return False
+
+        why = "operator resumed but page still blocked" if resumed else "TTL elapsed"
+        print(
+            f"[INFO] checkpoint: {why} (attempt {attempt}/{max_attempts}) "
+            f"— refreshing browser and re-parking"
+        )
+        try:
+            driver.refresh()
+            time.sleep(post_refresh_settle_s)
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[WARN] checkpoint: driver.refresh() failed: {exc}",
+                file=sys.stderr,
+            )
+
+        # A refresh can clear the wall on its own (e.g. Cloudflare lets
+        # the new request through). Skip the next park if so.
+        if not _still_blocked():
+            print("[INFO] checkpoint: refresh alone cleared the blocker — resuming scrape")
+            return True
+
+    return False  # unreachable — exhaustion branch above returns False
 
 
 # ---------------------------
@@ -875,25 +983,28 @@ def attempt_google_login(driver, email, password):
 
 def _request_login_checkpoint(driver):
     """Park the scrape at a HITL checkpoint with reason='google_login_required'.
+    Auto-refreshes + re-parks up to CHECKPOINT_MAX_REFRESH_ATTEMPTS times if
+    the operator times out or finishes but the profile isn't signed in yet.
     Returns True if the operator finished the login and the profile is now
     signed in, False otherwise. Raises InteractiveCancelException on cancel."""
     if not _HITL_CTX.get("interactive") or not _HITL_CTX.get("job_id"):
         print("[WARN] google login: HITL disabled, continuing without login",
               file=sys.stderr)
         return False
-    resumed = request_interactive_checkpoint(
+    country_code = _HITL_CTX.get("country_code")
+    cleared = _request_interactive_checkpoint_with_refresh(
         driver,
         job_id=_HITL_CTX.get("job_id"),
         worker_id=_HITL_CTX.get("worker_id"),
         worker_port=_HITL_CTX.get("worker_port", 9222),
         reason="google_login_required",
-        ttl_minutes=CHECKPOINT_DEFAULT_TTL_MINUTES,
+        is_still_blocked=lambda: detect_login_state(driver) is not True,
     )
-    country_code = _HITL_CTX.get("country_code")
-    if not resumed:
+    if not cleared:
         mark_google_login_used(country_code, "checkpoint_unresolved")
         return False
-    # Operator clicked Resume — re-check state.
+    # Helper verified detect_login_state is True at the moment of return.
+    # Re-check defensively in case state flipped during the brief window.
     new_state = detect_login_state(driver)
     if new_state is True:
         mark_google_login_used(country_code, "checkpoint_success")
@@ -1018,21 +1129,22 @@ def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, 
 
     if interactive and job_id:
         try:
-            resumed = request_interactive_checkpoint(
+            cleared = _request_interactive_checkpoint_with_refresh(
                 driver,
                 job_id=job_id,
                 worker_id=worker_id,
                 worker_port=worker_port,
                 reason="captcha",
+                is_still_blocked=_is_captcha,
             )
         except InteractiveCancelException:
             # Operator clicked Cancel — bubble out as captcha so the
             # worker logs / classifies the failure consistently.
             raise CaptchaDetectedException("operator cancelled at captcha checkpoint")
-        if resumed and not _is_captcha():
+        if cleared:
             return
-        # Either timed out or operator clicked Resume but the page
-        # still shows captcha. Fall through to fail.
+        # All refresh attempts exhausted (helper already emitted
+        # RESULT_MARKER_HITL_TIMEOUT). Fall through to fail.
 
     raise CaptchaDetectedException("CAPTCHA detected")
 

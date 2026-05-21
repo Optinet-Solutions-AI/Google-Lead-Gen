@@ -44,11 +44,14 @@ GOLOGIN_PORT         = int(os.environ.get("GOLOGIN_PORT", "9222"))
 POLL_INTERVAL        = int(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
 SCRAPE_TIMEOUT_S     = int(os.environ.get("SCRAPE_TIMEOUT_SECONDS", "1200"))  # 20 min
 # When interactive mode is on, the scraper may park at a wall and wait
-# for an admin to resolve via noVNC. Bump the subprocess timeout to
-# match the worst-case checkpoint TTL (default 15 min) plus the
-# regular 20 min scrape budget. Set INTERACTIVE_MODE=off to disable.
+# for an admin to resolve via noVNC. With the refresh-loop wrapper in
+# scraper.py (CHECKPOINT_MAX_REFRESH_ATTEMPTS=10, hitl_ttl_minutes=5),
+# the worst case is 10 cycles x 5 min = 50 min of HITL waiting plus the
+# regular 20 min scrape budget = 70 min. 65 min gives a small under-cap
+# so a truly stuck captcha doesn't hold a worker hostage for 70+ min.
+# Set INTERACTIVE_MODE=off to disable.
 INTERACTIVE_MODE          = os.environ.get("INTERACTIVE_MODE", "on").strip().lower() != "off"
-INTERACTIVE_TIMEOUT_S     = int(os.environ.get("INTERACTIVE_SCRAPE_TIMEOUT_SECONDS", "2400"))  # 40 min
+INTERACTIVE_TIMEOUT_S     = int(os.environ.get("INTERACTIVE_SCRAPE_TIMEOUT_SECONDS", "3900"))  # 65 min
 
 
 def _hitl_enabled_per_db() -> bool:
