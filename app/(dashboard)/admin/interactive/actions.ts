@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { buildSignedVncUrl } from '@/lib/interactive/signed-vnc-url'
 import { logActivity } from '@/lib/activity-log'
 
 export type CheckpointMutationState =
@@ -97,6 +98,126 @@ export async function requeueCheckpointAction(
   revalidatePath('/admin/interactive')
   revalidatePath('/scrape', 'layout')
   return { status: 'ok' }
+}
+
+// ============================================================
+// Soft claim — Open VNC + release
+// ============================================================
+//
+// "Open VNC" no longer just hands the operator a signed URL — it first
+// atomically takes the claim via claim_interactive_checkpoint(). On
+// success the action returns the signed URL and the client opens it
+// in the blank tab that was pre-allocated during the click event
+// (popup-blockers stay happy because the open happens inside the user
+// gesture). On conflict the client closes the blank tab and shows
+// "Solving by X — Ym left" instead.
+
+export type OpenVncResult =
+  | {
+      ok: true
+      vnc_url: string
+      claim_expires_at: string
+      claimed_by_display: string | null
+    }
+  | {
+      ok: false
+      reason: 'claimed_by_other' | 'not_waiting' | 'not_found' | 'no_vnc_config' | 'forbidden' | 'unknown'
+      error?: string
+      claimed_by_display?: string | null
+      claim_expires_at?: string
+    }
+
+export async function openVncAction(
+  checkpointId: number,
+  workerPort: number,
+): Promise<OpenVncResult> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return { ok: false, reason: 'forbidden', error: auth.error }
+  if (!Number.isInteger(checkpointId) || checkpointId <= 0) {
+    return { ok: false, reason: 'unknown', error: 'Missing checkpoint id.' }
+  }
+
+  const svc = createServiceClient()
+  const { data, error } = await svc.rpc('claim_interactive_checkpoint', {
+    p_id: checkpointId,
+    p_user_id: auth.user_id,
+    p_display: auth.display,
+  })
+  if (error) return { ok: false, reason: 'unknown', error: error.message }
+
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | {
+        ok: boolean
+        reason: string | null
+        claimed_by_uid: string | null
+        claimed_by_display: string | null
+        claim_expires_at: string | null
+      }
+    | null
+  if (!row) return { ok: false, reason: 'unknown', error: 'No response from claim RPC.' }
+
+  if (!row.ok) {
+    const reasonNarrowed = (
+      [
+        'claimed_by_other',
+        'not_waiting',
+        'not_found',
+        'no_vnc_config',
+        'forbidden',
+        'unknown',
+      ] as const
+    ).includes(row.reason as never)
+      ? (row.reason as 'claimed_by_other' | 'not_waiting' | 'not_found' | 'no_vnc_config' | 'forbidden' | 'unknown')
+      : 'unknown'
+    const result: OpenVncResult = {
+      ok: false,
+      reason: reasonNarrowed,
+      claimed_by_display: row.claimed_by_display,
+    }
+    if (row.claim_expires_at) result.claim_expires_at = row.claim_expires_at
+    return result
+  }
+
+  const vnc_url = await buildSignedVncUrl({ workerPort })
+  if (!vnc_url) {
+    return {
+      ok: false,
+      reason: 'no_vnc_config',
+      error: 'NEXT_PUBLIC_VNC_BASE_URL or INTERACTIVE_VNC_HMAC_SECRET is missing on the server.',
+    }
+  }
+
+  await logActivity({
+    action: 'interactive.claim',
+    entity_type: 'interactive_checkpoint',
+    entity_id: checkpointId,
+    details: { claim_expires_at: row.claim_expires_at },
+  })
+
+  revalidatePath('/admin/interactive')
+  return {
+    ok: true,
+    vnc_url,
+    claim_expires_at: row.claim_expires_at ?? new Date(Date.now() + 8 * 60_000).toISOString(),
+    claimed_by_display: row.claimed_by_display,
+  }
+}
+
+export async function releaseCheckpointClaimAction(
+  checkpointId: number,
+): Promise<{ ok: boolean }> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return { ok: false }
+  if (!Number.isInteger(checkpointId) || checkpointId <= 0) return { ok: false }
+
+  const svc = createServiceClient()
+  const { data, error } = await svc.rpc('release_interactive_checkpoint', {
+    p_id: checkpointId,
+    p_user_id: auth.user_id,
+  })
+  if (error) return { ok: false }
+  revalidatePath('/admin/interactive')
+  return { ok: data === true }
 }
 
 export async function cancelCheckpointAction(

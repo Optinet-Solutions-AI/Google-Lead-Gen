@@ -33,6 +33,12 @@ type CheckpointRow = {
   expires_at: string
   created_at: string
   updated_at: string
+  // Claim state — set when a user clicks Open VNC. Auto-expires after
+  // 8 minutes if no Resume / Cancel.
+  claimed_by_user_id: string | null
+  claimed_by_display: string | null
+  claimed_at: string | null
+  claim_expires_at: string | null
 }
 
 export default async function InteractiveCheckpointsPage({
@@ -61,7 +67,7 @@ export default async function InteractiveCheckpointsPage({
   let q = svc
     .from('interactive_checkpoints')
     .select(
-      'id, job_id, worker_id, worker_port, reason, current_url, page_title, screenshot_path, status, resolution_note, resolved_at, resolved_by, expires_at, created_at, updated_at',
+      'id, job_id, worker_id, worker_port, reason, current_url, page_title, screenshot_path, status, resolution_note, resolved_at, resolved_by, expires_at, created_at, updated_at, claimed_by_user_id, claimed_by_display, claimed_at, claim_expires_at',
     )
     .order('created_at', { ascending: false })
     .limit(200)
@@ -82,6 +88,12 @@ export default async function InteractiveCheckpointsPage({
   // Pre-sign noVNC URLs + screenshot URLs for waiting rows so the
   // operator can click straight through. Resolved/cancelled rows
   // don't need a live VNC link — the session is gone.
+  //
+  // The pre-signed URL is only ever shown to operators who already hold
+  // the claim. Open-VNC click flow goes through openVncAction which
+  // performs the claim atomically and returns the signed URL. We still
+  // generate it server-side here so the card can show "Re-open VNC"
+  // immediately for the holder without an extra round trip.
   const liveCards = await Promise.all(
     rows.map(async row => {
       let vncUrl: string | null = null
@@ -177,6 +189,7 @@ export default async function InteractiveCheckpointsPage({
               row={card.row}
               vncUrl={card.vncUrl}
               screenshotUrl={card.screenshotUrl}
+              currentUserId={user.id}
             />
           ))}
         </div>

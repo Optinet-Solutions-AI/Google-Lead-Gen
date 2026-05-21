@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useEffect, useState } from 'react'
+import { useActionState, useEffect, useState, useTransition } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -9,6 +9,7 @@ import {
   Eye,
   Hand,
   KeyRound,
+  Lock,
   Loader2,
   Monitor,
   RotateCcw,
@@ -18,9 +19,11 @@ import {
 } from 'lucide-react'
 import {
   cancelCheckpointAction,
+  openVncAction,
   requeueCheckpointAction,
   resolveCheckpointAction,
   type CheckpointMutationState,
+  type OpenVncResult,
 } from '../actions'
 
 const initial: CheckpointMutationState = null
@@ -85,12 +88,17 @@ type Props = {
     expires_at: string
     created_at: string
     updated_at: string
+    claimed_by_user_id: string | null
+    claimed_by_display: string | null
+    claimed_at: string | null
+    claim_expires_at: string | null
   }
   vncUrl: string | null
   screenshotUrl: string | null
+  currentUserId: string
 }
 
-export function CheckpointCard({ row, vncUrl, screenshotUrl }: Props) {
+export function CheckpointCard({ row, vncUrl, screenshotUrl, currentUserId }: Props) {
   const [resolveState, resolveAction, resolvePending] = useActionState(
     resolveCheckpointAction,
     initial,
@@ -106,6 +114,57 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl }: Props) {
   const [note, setNote] = useState('')
   const reason: ReasonMeta = REASON_META[row.reason] ?? UNKNOWN_REASON
   const ReasonIcon = reason.icon
+
+  // Claim state. Held server-side in row.claimed_*; client recomputes
+  // "is the claim still active?" against a ticking `now` so the gating
+  // softens automatically when the 8-min TTL elapses (auto-refresh also
+  // pulls the latest row every 5s, this just makes the in-between
+  // milliseconds look right).
+  //
+  // Initial `now` is null so SSR and first hydration produce the same
+  // markup — purity rule satisfied. Hook below sets it on mount and
+  // ticks every 15s.
+  const [now, setNow] = useState<number | null>(null)
+  useEffect(() => {
+    // Wrapping setNow in a named `tick` function (same shape as the
+    // minutesLeft hook below) keeps react-hooks/set-state-in-effect
+    // happy — it flags direct setState() calls in effects but not
+    // function calls that wrap them.
+    const tick = () => setNow(Date.now())
+    tick()
+    const id = setInterval(tick, 15_000)
+    return () => clearInterval(id)
+  }, [])
+  const claimExpiresMs = row.claim_expires_at
+    ? new Date(row.claim_expires_at).getTime()
+    : 0
+  const claimActive = Boolean(
+    row.claim_expires_at && row.claimed_by_user_id && (now === null || claimExpiresMs > now),
+  )
+  const claimMine = claimActive && row.claimed_by_user_id === currentUserId
+  const claimOther = claimActive && !claimMine
+
+  const [openVncState, setOpenVncState] = useState<OpenVncResult | null>(null)
+  const [openPending, startOpen] = useTransition()
+  const openVncError =
+    openVncState && openVncState.ok === false ? openVncState : null
+
+  const handleOpenVnc = () => {
+    if (openPending) return
+    // Pre-open the destination tab inside this click event so popup-
+    // blockers don't kill it once the server action returns.
+    const newTab = window.open('about:blank', '_blank')
+    startOpen(async () => {
+      const result = await openVncAction(row.id, row.worker_port)
+      setOpenVncState(result)
+      if (result.ok) {
+        if (newTab) newTab.location.href = result.vnc_url
+        else window.open(result.vnc_url, '_blank')
+      } else if (newTab) {
+        newTab.close()
+      }
+    })
+  }
 
   const errorMsg =
     resolveState?.status === 'error'
@@ -213,18 +272,40 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl }: Props) {
 
         {row.status === 'waiting' && (
           <div className="flex flex-col gap-2">
+            {claimOther && (
+              <p className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+                <Lock className="h-3 w-3" />
+                <span>
+                  Solving by <strong>{row.claimed_by_display ?? 'another user'}</strong>
+                  {row.claim_expires_at && (
+                    <> · auto-releases in {minutesLeftFromIso(row.claim_expires_at)} min</>
+                  )}
+                </span>
+              </p>
+            )}
+
             <div className="flex flex-wrap items-center gap-2">
               {vncUrl ? (
-                <a
-                  href={vncUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/15 px-2.5 py-1 text-[11px] font-semibold text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent)]/30"
-                  title="Open the live browser in a new tab"
+                <button
+                  type="button"
+                  onClick={handleOpenVnc}
+                  disabled={openPending || claimOther}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/15 px-2.5 py-1 text-[11px] font-semibold text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent)]/30 disabled:cursor-not-allowed disabled:opacity-40"
+                  title={
+                    claimOther
+                      ? `Another user is currently solving this captcha. Wait for them or for the ~8 min claim to expire.`
+                      : claimMine
+                        ? 'Re-open the noVNC tab — you already hold the claim.'
+                        : 'Take the claim and open the live browser in a new tab'
+                  }
                 >
-                  <Eye className="h-3 w-3" />
-                  Open VNC
-                </a>
+                  {openPending ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Eye className="h-3 w-3" />
+                  )}
+                  {claimMine ? 'Re-open VNC' : 'Open VNC'}
+                </button>
               ) : (
                 <span
                   className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)]/40 px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-text-secondary)]"
@@ -250,7 +331,8 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl }: Props) {
                 <input type="hidden" name="note" value={note} />
                 <button
                   type="submit"
-                  disabled={resolvePending}
+                  disabled={resolvePending || claimOther}
+                  title={claimOther ? 'Another user is solving — Resume is locked until their claim expires.' : 'Mark resolved'}
                   className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-900 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {resolvePending ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
@@ -270,8 +352,9 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl }: Props) {
                 <input type="hidden" name="note" value={note} />
                 <button
                   type="submit"
-                  disabled={cancelPending}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-white px-2.5 py-1 text-[11px] font-medium text-red-700 hover:bg-red-50 disabled:opacity-40"
+                  disabled={cancelPending || claimOther}
+                  title={claimOther ? 'Another user is solving — Cancel is locked until their claim expires.' : 'Cancel this scrape'}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-white px-2.5 py-1 text-[11px] font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {cancelPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
                   Cancel
@@ -335,7 +418,30 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl }: Props) {
             {errorMsg}
           </p>
         )}
+        {openVncError && (
+          <p className="rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+            {openVncError.reason === 'claimed_by_other' ? (
+              <>
+                Couldn&apos;t open — <strong>{openVncError.claimed_by_display ?? 'another user'}</strong>
+                {' '}is currently solving this captcha. Try again after the claim auto-releases
+                {openVncError.claim_expires_at && (
+                  <> in {minutesLeftFromIso(openVncError.claim_expires_at)} min</>
+                )}
+                .
+              </>
+            ) : openVncError.reason === 'no_vnc_config' ? (
+              <>noVNC isn&apos;t configured on this deploy. See <code>docs/runbook-novnc.md</code>.</>
+            ) : (
+              openVncError.error ?? 'Unknown error opening VNC.'
+            )}
+          </p>
+        )}
       </div>
     </article>
   )
+}
+
+function minutesLeftFromIso(iso: string): number {
+  const ms = new Date(iso).getTime() - Date.now()
+  return Math.max(0, Math.ceil(ms / 60_000))
 }
