@@ -185,7 +185,7 @@ def captcha_terminal(job_id: str, error: str | None = None) -> None:
     burn proxy quota cycling the same captcha 10x in 20 minutes."""
     supabase.rpc(
         "mark_scrape_job_captcha_terminal",
-        {"p_job_id": job_id, "p_error": (error or "HITL timed out without operator action")[:2000]},
+        {"p_job_id": job_id, "p_error": (error or "Couldn't continue — a captcha appeared and nobody was around to solve it. Click 'Re-queue with HITL' on the Interactive page to try again.")[:2000]},
     ).execute()
 
 
@@ -226,10 +226,18 @@ _FAILURE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
                 r"|insufficient (balance|credit)", re.I),
      "Proxy ran out of bandwidth — rotate to a fresh proxy or top up the plan."),
 
+    # ---- Proxy IP-check failure (geo.myip.link) — almost always bandwidth ----
+    # The scraper hits geo.myip.link via the SOCKS proxy at startup to verify
+    # its exit IP. If that very first proxied request fails, the proxy itself
+    # is dead — usually because it ran out of bandwidth (Chris's '5 GB' scenario)
+    # or its credentials expired. Must come BEFORE the generic SOCKS pattern.
+    (re.compile(r"geo\.myip\.link", re.I),
+     "Couldn't connect through the proxy at all — usually means the proxy ran out of bandwidth, or its credentials expired. Rotate to a fresh proxy or top up the plan."),
+
     # ---- Network / proxy failures ----
     (re.compile(r"ProxyError|proxy.*(refused|reset|timed? out|connection)"
                 r"|TunnelError|SOCKS.*error", re.I),
-     "Couldn't reach the site through the proxy — connection refused or timed out."),
+     "Couldn't reach the site through the proxy — usually bandwidth ran out or the proxy is unreachable. Rotate to a fresh proxy or top up the plan."),
     (re.compile(r"Failed to establish a new connection|getaddrinfo failed"
                 r"|name or service not known|temporary failure in name resolution", re.I),
      "Network error — couldn't reach the target site from this worker."),
