@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
     .select('id')
     .eq('with_enrichment', true)
     .eq('status', 'completed')
-    .or('enrichment_status.is.null,enrichment_status.in.(pending,affiliate_running,all_running)')
+    .or('enrichment_status.is.null,enrichment_status.in.(pending,affiliate_running,rooster_running,all_running,contact_running)')
     .order('completed_at', { ascending: true })
     .limit(50)
 
