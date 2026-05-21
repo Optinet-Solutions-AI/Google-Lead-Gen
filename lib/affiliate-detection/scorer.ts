@@ -390,6 +390,7 @@ const SKIP_DOMAINS = [
   'youtube.com',
   'youtu.be',
   'twitch.tv',
+  'kick.com',
   'facebook.com',
   'twitter.com',
   'x.com',

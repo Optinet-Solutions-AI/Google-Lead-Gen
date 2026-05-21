@@ -237,7 +237,7 @@ export function CredentialRow({ country, credential }: Props) {
             onSubmit={e => {
               if (
                 !confirm(
-                  `Remove the Google credential for ${country.country_name}? The scraper will fall back to HITL on next logged-out detection.`,
+                  `Remove the Google credential for ${country.country_name}? The scraper will fall back to the Captcha helper on next logged-out detection.`,
                 )
               ) {
                 e.preventDefault()

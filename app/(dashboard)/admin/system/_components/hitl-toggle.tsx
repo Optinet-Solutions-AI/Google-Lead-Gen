@@ -26,7 +26,7 @@ export function HitlToggle({ enabled }: { enabled: boolean }) {
               enabled ? 'bg-emerald-600' : 'bg-rose-600',
             ].join(' ')}
           />
-          HITL is currently {enabled ? 'ON' : 'OFF'}
+          Captcha helper is currently {enabled ? 'ON' : 'OFF'}
         </span>
 
         <form action={action}>
@@ -42,8 +42,8 @@ export function HitlToggle({ enabled }: { enabled: boolean }) {
             ].join(' ')}
             title={
               enabled
-                ? 'Disable HITL — captchas will fail the job instantly'
-                : 'Enable HITL — captchas will park in /admin/interactive'
+                ? 'Turn off Captcha helper — captchas will fail the job instantly'
+                : 'Turn on Captcha helper — captchas will park in /admin/interactive'
             }
           >
             {pending ? (
@@ -53,7 +53,7 @@ export function HitlToggle({ enabled }: { enabled: boolean }) {
             ) : (
               <Hand className="h-3.5 w-3.5" />
             )}
-            {enabled ? 'Turn HITL OFF' : 'Turn HITL ON'}
+            {enabled ? 'Turn Captcha helper OFF' : 'Turn Captcha helper ON'}
           </button>
         </form>
       </div>

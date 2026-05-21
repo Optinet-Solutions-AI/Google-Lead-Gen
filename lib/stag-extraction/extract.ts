@@ -20,6 +20,7 @@ const STAG_PARAM_ORDER = ['btag', 'stag', 'cxd', 'mid', 'affid'] as const
 const EXCLUDED_DOMAINS = new Set([
   'youtube.com',
   'youtu.be',
+  'kick.com',
   'facebook.com',
   'twitter.com',
   'x.com',

@@ -1037,7 +1037,9 @@ def ensure_google_login_if_required(driver):
         cur = ""
     if "google.com" not in cur:
         try:
-            driver.get("https://www.google.com")
+            # ?hl=en forces English UI so a German-proxy captcha doesn't
+            # render in German (operators can't read it).
+            driver.get("https://www.google.com/?hl=en")
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
@@ -1066,8 +1068,9 @@ def ensure_google_login_if_required(driver):
             mark_google_login_used(country_code, "success")
             # Reset to a clean google.com so the rest of the scrape
             # doesn't navigate from inside the accounts.google.com domain.
+            # ?hl=en keeps the UI in English regardless of proxy geo.
             try:
-                driver.get("https://www.google.com")
+                driver.get("https://www.google.com/?hl=en")
             except Exception:  # noqa: BLE001
                 pass
             return
@@ -2004,7 +2007,7 @@ def save_to_file(data, filename="/tmp/google_results.json"):
 def check_browser_connectivity(driver):
     """Verify the browser and proxy are reachable before scraping"""
     try:
-        driver.get("https://www.google.com")
+        driver.get("https://www.google.com/?hl=en")
         WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.TAG_NAME, "body"))
         )

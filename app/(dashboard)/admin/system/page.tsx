@@ -39,7 +39,7 @@ export default async function AdminSystemPage() {
       <section className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-4">
         <header className="mb-3">
           <h2 className="text-[13px] font-semibold text-[color:var(--color-text-primary)]">
-            Human-in-the-loop captcha resolver
+            Captcha helper
           </h2>
           <p className="mt-1 max-w-3xl text-[11px] text-[color:var(--color-text-secondary)]">
             When ON, scrapes that hit a captcha / age gate / cookie banner

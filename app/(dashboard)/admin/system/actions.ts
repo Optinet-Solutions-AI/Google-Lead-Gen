@@ -59,7 +59,7 @@ export async function setHitlEnabledAction(
   return {
     status: 'ok',
     message: next
-      ? 'HITL captcha resolver is now ON — captchas park to /admin/interactive instead of failing the job.'
-      : 'HITL captcha resolver is now OFF — captchas will fail the job (status=captcha) instead of waiting for a human.',
+      ? 'Captcha helper is now ON — captchas park to /admin/interactive instead of failing the job.'
+      : 'Captcha helper is now OFF — captchas will fail the job (status=captcha) instead of waiting for a human.',
   }
 }
