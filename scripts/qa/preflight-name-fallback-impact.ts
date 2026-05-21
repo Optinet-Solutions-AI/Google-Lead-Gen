@@ -94,7 +94,7 @@ async function main() {
   let wouldFlip = 0
   let wouldFlipNotRelevant = 0
   for (const row of sample as Array<{ id: number; domain: string | null; url: string | null }>) {
-    const d = (row.domain || row.url || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].trim()
+    const d = ((row.domain || row.url || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0] ?? '').trim()
     if (!d) continue
     // Current matcher
     const { data: hits } = await svc.rpc('search_website_on_monday', { p_domain: d })
