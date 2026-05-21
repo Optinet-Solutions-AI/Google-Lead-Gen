@@ -26,6 +26,7 @@ import {
   type CheckpointMutationState,
   type OpenVncResult,
 } from '../actions'
+import { useHideExpiryTimers } from './timer-prefs'
 
 const initial: CheckpointMutationState = null
 
@@ -205,7 +206,19 @@ export function CheckpointCard({
     const id = setInterval(tick, 30_000)
     return () => clearInterval(id)
   }, [row.expires_at, row.status])
-  const expiryWarn = row.status === 'waiting' && minutesLeft !== null && minutesLeft <= 3
+  // Tier the countdown so colour itself signals urgency:
+  //   > 3 min — subtle (default chip styling, no alarm)
+  //   ≤ 3 min — solid red, white text, full-strength alert
+  //   ≤ 1 min — pulsing red ring, "about to time out"
+  const timerTier: 'idle' | 'warn' | 'critical' =
+    row.status === 'waiting' && minutesLeft !== null
+      ? minutesLeft <= 1
+        ? 'critical'
+        : minutesLeft <= 3
+          ? 'warn'
+          : 'idle'
+      : 'idle'
+  const hideTimer = useHideExpiryTimers()
 
   return (
     <article className="flex flex-col gap-3 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 md:flex-row">
@@ -262,13 +275,15 @@ export function CheckpointCard({
               by {requester.display ?? requester.username}
             </span>
           )}
-          {row.status === 'waiting' && (
+          {row.status === 'waiting' && !hideTimer && (
             <span
               className={[
-                'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold',
-                expiryWarn
-                  ? 'bg-rose-100 text-rose-800'
-                  : 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]',
+                'inline-flex items-center gap-1 rounded-md text-[10px] font-semibold',
+                timerTier === 'critical'
+                  ? 'animate-pulse bg-rose-600 px-2 py-0.5 text-white shadow-sm ring-2 ring-rose-300'
+                  : timerTier === 'warn'
+                    ? 'bg-rose-600 px-2 py-0.5 text-white shadow-sm'
+                    : 'bg-[color:var(--color-bg-secondary)] px-1.5 py-0.5 text-[color:var(--color-text-secondary)]',
               ].join(' ')}
             >
               <Timer className="h-2.5 w-2.5" />

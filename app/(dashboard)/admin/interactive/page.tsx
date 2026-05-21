@@ -4,6 +4,7 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { buildSignedVncUrl } from '@/lib/interactive/signed-vnc-url'
 import { CheckpointCard } from './_components/checkpoint-card'
+import { HideTimersToggle, TimerPrefsProvider } from './_components/timer-prefs'
 
 export const dynamic = 'force-dynamic'
 
@@ -204,26 +205,35 @@ export default async function InteractiveCheckpointsPage({
         })}
       </nav>
 
-      {liveCards.length === 0 ? (
-        <div className="rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-10 text-center text-[12px] text-[color:var(--color-text-secondary)]">
-          {filter === 'waiting'
-            ? 'No paused scrapes — workers are humming along on their own.'
-            : `No checkpoints under "${filter}".`}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {liveCards.map(card => (
-            <CheckpointCard
-              key={card.row.id}
-              row={card.row}
-              vncUrl={card.vncUrl}
-              screenshotUrl={card.screenshotUrl}
-              currentUserId={user.id}
-              requester={card.requester}
-            />
-          ))}
-        </div>
-      )}
+      <TimerPrefsProvider>
+        {liveCards.length === 0 ? (
+          <div className="rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-10 text-center text-[12px] text-[color:var(--color-text-secondary)]">
+            {filter === 'waiting'
+              ? 'No paused scrapes — workers are humming along on their own.'
+              : `No checkpoints under "${filter}".`}
+          </div>
+        ) : (
+          <>
+            {filter === 'waiting' && (
+              <div className="flex justify-end">
+                <HideTimersToggle />
+              </div>
+            )}
+            <div className="flex flex-col gap-3">
+              {liveCards.map(card => (
+                <CheckpointCard
+                  key={card.row.id}
+                  row={card.row}
+                  vncUrl={card.vncUrl}
+                  screenshotUrl={card.screenshotUrl}
+                  currentUserId={user.id}
+                  requester={card.requester}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </TimerPrefsProvider>
     </div>
   )
 }
