@@ -248,6 +248,16 @@ _FAILURE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"captcha|cloudflare.*(challenge|turnstile)|recaptcha", re.I),
      "Search engine showed a captcha that wasn't resolved in time."),
 
+    # ---- Chromium GPU / WebGL log noise ----
+    # Chromium constantly spams GPU driver warnings to stderr ("GPU stall due
+    # to ReadPixels", "GL_CLOSE_PATH_NV", "WebGL-0x..."). These are harmless
+    # on their own — the scrape was killed for another reason and this junk
+    # just happened to be the last thing on stderr. Match early so it doesn't
+    # leak into the fallback message shown to clients.
+    (re.compile(r"gpu/command_buffer|GL_CLOSE_PATH_NV|GPU stall|WebGL-0x"
+                r"|GL Driver Message|gpu_init|skia.*gpu", re.I),
+     "Browser closed unexpectedly during the scrape. Auto-retry will run."),
+
     # ---- Sign-up / consent walls (Chris's meeting concern) ----
     (re.compile(r"sign[- ]?up|create.*account|consent.*wall|join now", re.I),
      "Search engine showed a sign-up wall — browser refresh didn't clear it."),
@@ -290,10 +300,16 @@ def classify_failure(*, exit_code: int | None,
         if pattern.search(haystack):
             return friendly
 
-    snippet = re.sub(r"\s+", " ", haystack).strip()[-180:]
-    if exit_code is not None:
-        return f"{source} failed (exit {exit_code}). Last log line: {snippet or '(empty)'}"
-    return f"{source} failed. Detail: {snippet or '(empty)'}"
+    # Negative exit codes from subprocess mean the process was killed by a
+    # signal (abs(code) == signal number). -15 = SIGTERM, -9 = SIGKILL.
+    # Almost always means the worker tore the scrape down (timeout, restart,
+    # OOM) rather than a real error in the scraper itself.
+    if exit_code is not None and exit_code < 0:
+        return ("Scrape was stopped before it could finish "
+                "(took too long, or the worker was restarted). "
+                "Auto-retry will run.")
+
+    return f"{source} couldn't finish — no specific cause detected. Try re-queueing; full log is on the VM."
 
 
 SERP_SCREENSHOT_BUCKET = os.environ.get("SCREENSHOT_BUCKET", "lead-screenshots")
