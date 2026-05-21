@@ -12,7 +12,7 @@ import { createClient } from '@supabase/supabase-js'
 
 loadEnv({ path: join(process.cwd(), '.env.local') })
 
-const CHUNK = 2000
+const CHUNK = 500
 
 async function main() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
