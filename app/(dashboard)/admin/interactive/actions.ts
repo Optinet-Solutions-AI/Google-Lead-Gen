@@ -53,12 +53,15 @@ export async function resolveCheckpointAction(
   const note = String(fd.get('note') ?? '').trim() || null
 
   const svc = createServiceClient()
-  const { error } = await svc.rpc('resolve_interactive_checkpoint', {
+  const { data, error } = await svc.rpc('resolve_interactive_checkpoint', {
     p_id: id,
+    p_user_id: auth.user_id,
     p_note: note,
     p_user: auth.display,
   })
   if (error) return { status: 'error', error: error.message }
+  const conflict = pickClaimConflict(data)
+  if (conflict) return { status: 'error', error: conflict }
 
   await logActivity({
     action: 'interactive.resolve',
@@ -233,12 +236,15 @@ export async function cancelCheckpointAction(
   const note = String(fd.get('note') ?? '').trim() || null
 
   const svc = createServiceClient()
-  const { error } = await svc.rpc('cancel_interactive_checkpoint', {
+  const { data, error } = await svc.rpc('cancel_interactive_checkpoint', {
     p_id: id,
+    p_user_id: auth.user_id,
     p_note: note,
     p_user: auth.display,
   })
   if (error) return { status: 'error', error: error.message }
+  const conflict = pickClaimConflict(data)
+  if (conflict) return { status: 'error', error: conflict }
 
   await logActivity({
     action: 'interactive.cancel',
@@ -250,4 +256,29 @@ export async function cancelCheckpointAction(
   revalidatePath('/admin/interactive')
   revalidatePath('/scrape', 'layout')
   return { status: 'ok' }
+}
+
+/**
+ * resolve / cancel RPCs now return a structured row: ok=false +
+ * reason='claimed_by_other' means another user holds the live VNC
+ * claim. Translate that into a friendly inline error; everything else
+ * (not_waiting, not_found) we surface verbatim — it generally means
+ * the row already moved on between the user's last refresh and the
+ * click, and Next will revalidate so the card disappears anyway.
+ */
+function pickClaimConflict(data: unknown): string | null {
+  const row = Array.isArray(data) ? data[0] : data
+  if (!row || typeof row !== 'object') return null
+  const r = row as { ok?: boolean; reason?: string | null; claimed_by_display?: string | null }
+  if (r.ok !== false) return null
+  if (r.reason === 'claimed_by_other') {
+    return `Locked — ${r.claimed_by_display ?? 'another user'} is currently solving this captcha. Wait for their claim to expire (up to 8 min) and try again.`
+  }
+  if (r.reason === 'not_waiting') {
+    return 'This checkpoint was already resolved or cancelled by someone else — refreshing.'
+  }
+  if (r.reason === 'not_found') {
+    return 'Checkpoint not found.'
+  }
+  return null
 }
