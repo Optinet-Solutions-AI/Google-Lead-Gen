@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -190,6 +191,101 @@ def captcha_terminal(job_id: str, error: str | None = None) -> None:
 
 def fail_job(job_id: str, error: str) -> None:
     supabase.rpc("fail_scrape_job", {"p_job_id": job_id, "p_error": error[:2000]}).execute()
+
+
+# ---------------------------------------------------------------------------
+# Failure classification — turn raw subprocess stderr / Python exceptions
+# into a one-line user-facing message for scrape_queue.error_message.
+# ---------------------------------------------------------------------------
+# Patterns are checked in order; first match wins. Both subprocess stderr
+# tails and stringified Python exceptions are fed through the same matcher
+# because most of the recognisable signatures (BadZipFile, WebDriver
+# crashes, proxy errors) show up in either path.
+_FAILURE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # ---- GoLogin profile transient (already auto-retried by scraper) ----
+    (re.compile(r"BadZipFile|bad zip file", re.I),
+     "GoLogin profile download glitched — auto-retry usually fixes this."),
+
+    # ---- Browser / Selenium crashes ----
+    (re.compile(r"chrome not reachable|DevToolsActivePort|chrome failed to start"
+                r"|session not created|session deleted because of page crash", re.I),
+     "Browser crashed during the scrape — auto-retry will run."),
+    (re.compile(r"WebDriverException|InvalidSessionId|NoSuchWindowException", re.I),
+     "Browser session died mid-scrape — auto-retry will run."),
+
+    # ---- GoLogin API auth / profile issues ----
+    (re.compile(r"GoLogin.*(401|403|forbidden|unauthorized)"
+                r"|gologin.*api.*token", re.I),
+     "GoLogin authentication failed — the API token may have expired."),
+    (re.compile(r"profile (id )?not found|profile_id.*does not exist", re.I),
+     "GoLogin profile is missing or was deleted — check the country config."),
+
+    # ---- Proxy bandwidth / quota (Chris's '5 GB' scenario) ----
+    (re.compile(r"(bandwidth|data|traffic|quota).*(exceeded|reached|out of|limit)"
+                r"|out of (bandwidth|data|traffic)"
+                r"|insufficient (balance|credit)", re.I),
+     "Proxy ran out of bandwidth — rotate to a fresh proxy or top up the plan."),
+
+    # ---- Network / proxy failures ----
+    (re.compile(r"ProxyError|proxy.*(refused|reset|timed? out|connection)"
+                r"|TunnelError|SOCKS.*error", re.I),
+     "Couldn't reach the site through the proxy — connection refused or timed out."),
+    (re.compile(r"Failed to establish a new connection|getaddrinfo failed"
+                r"|name or service not known|temporary failure in name resolution", re.I),
+     "Network error — couldn't reach the target site from this worker."),
+    (re.compile(r"Read timed out|HTTPSConnectionPool.*timeout", re.I),
+     "The target site took too long to respond — usually a slow proxy."),
+
+    # ---- HITL / captcha (defensive; markers should normally catch these) ----
+    (re.compile(r"captcha|cloudflare.*(challenge|turnstile)|recaptcha", re.I),
+     "Search engine showed a captcha that wasn't resolved in time."),
+
+    # ---- Sign-up / consent walls (Chris's meeting concern) ----
+    (re.compile(r"sign[- ]?up|create.*account|consent.*wall|join now", re.I),
+     "Search engine showed a sign-up wall — browser refresh didn't clear it."),
+
+    # ---- Google login failure ----
+    (re.compile(r"Couldn.?t sign you in|google[_ ]login.*fail"
+                r"|account.*disabled|verify it.?s you", re.I),
+     "Google sign-in failed — the saved credentials may be wrong or the account is challenged."),
+
+    # ---- Worker setup / environment ----
+    (re.compile(r"ModuleNotFoundError|ImportError", re.I),
+     "Worker is missing a Python package — needs a pip install on the VM."),
+    (re.compile(r"PermissionError|Permission denied", re.I),
+     "Worker doesn't have permission to run a needed file on the VM."),
+    (re.compile(r"FileNotFoundError|No such file or directory", re.I),
+     "Worker can't find a required file on the VM."),
+    (re.compile(r"MemoryError|Out of memory|Killed", re.I),
+     "Worker ran out of memory mid-scrape — auto-retry will run."),
+    (re.compile(r"Disk quota exceeded|No space left on device", re.I),
+     "VM is out of disk space — clear /tmp logs and retry."),
+)
+
+
+def classify_failure(*, exit_code: int | None,
+                     error_text: str | None,
+                     source: str = "scraper") -> str:
+    """Turn a raw subprocess stderr tail or stringified Python exception
+    into a one-line friendly message for scrape_queue.error_message.
+
+    Walks _FAILURE_PATTERNS in order; first match wins. Falls back to a
+    sanitised short snippet (last ~180 chars, whitespace-collapsed) so
+    nothing useful is lost when the pattern list doesn't cover a case —
+    ops can still SSH in and read /tmp/scrape_vm1-*_*.log for full detail.
+
+    source: 'scraper' or 'youtube_search' — only used in the fallback
+    string so the user knows which path failed.
+    """
+    haystack = (error_text or "")[-2000:]
+    for pattern, friendly in _FAILURE_PATTERNS:
+        if pattern.search(haystack):
+            return friendly
+
+    snippet = re.sub(r"\s+", " ", haystack).strip()[-180:]
+    if exit_code is not None:
+        return f"{source} failed (exit {exit_code}). Last log line: {snippet or '(empty)'}"
+    return f"{source} failed. Detail: {snippet or '(empty)'}"
 
 
 SERP_SCREENSHOT_BUCKET = os.environ.get("SCREENSHOT_BUCKET", "lead-screenshots")
@@ -444,24 +540,23 @@ def process_youtube_job(job: dict[str, Any]) -> None:
             job_id=job_id,
         )
     except subprocess.TimeoutExpired:
-        fail_job(job_id, f"youtube_search timed out after {YOUTUBE_SEARCH_TIMEOUT_S}s")
+        fail_job(job_id, f"YouTube search took too long ({YOUTUBE_SEARCH_TIMEOUT_S}s) and was stopped.")
         return
     except Exception as exc:  # noqa: BLE001
-        fail_job(job_id, f"youtube_search invocation failed: {exc}")
+        fail_job(job_id, classify_failure(exit_code=None, error_text=str(exc), source="youtube_search"))
         return
 
     if "[RESULT] SUCCESS" not in combined_log:
-        tail = combined_log[-800:] if combined_log else "(empty log)"
-        fail_job(job_id, f"youtube_search exit={exit_code} — {tail}")
+        fail_job(job_id, classify_failure(exit_code=exit_code, error_text=combined_log, source="youtube_search"))
         return
 
     if not output_path.exists():
-        fail_job(job_id, f"youtube_search reported SUCCESS but {output_path} is missing")
+        fail_job(job_id, "YouTube search finished but the results file is missing on disk — likely a file-system or permissions issue.")
         return
     try:
         payload = json.loads(output_path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
-        fail_job(job_id, f"Bad youtube_search output JSON: {exc}")
+        fail_job(job_id, "YouTube search finished but the results file is corrupted — re-run usually fixes this.")
         return
 
     # Channels are already in public.youtube_channels (the child wrote
@@ -542,11 +637,11 @@ def process_job(job: dict[str, Any]) -> None:
     except subprocess.TimeoutExpired:
         _kill_port()
         timeout_used = INTERACTIVE_TIMEOUT_S if INTERACTIVE_MODE else SCRAPE_TIMEOUT_S
-        fail_job(job_id, f"Scraper timed out after {timeout_used}s")
+        fail_job(job_id, f"Scrape took too long ({timeout_used // 60} min) and was stopped.")
         return
     except Exception as exc:  # noqa: BLE001
         _kill_port()
-        fail_job(job_id, f"Scraper invocation failed: {exc}")
+        fail_job(job_id, classify_failure(exit_code=None, error_text=str(exc), source="scraper"))
         return
 
     # Classify the outcome by the [RESULT] marker the scraper prints.
@@ -574,20 +669,19 @@ def process_job(job: dict[str, Any]) -> None:
         return
     else:
         _kill_port()
-        tail = combined_log[-800:] if combined_log else "(empty log)"
-        fail_job(job_id, f"Scraper exit={exit_code} — {tail}")
+        fail_job(job_id, classify_failure(exit_code=exit_code, error_text=combined_log, source="scraper"))
         return
 
     # Load the results JSON the scraper dropped for us
     if not output_path.exists():
         _kill_port()
-        fail_job(job_id, f"Scraper reported SUCCESS but {output_path} is missing")
+        fail_job(job_id, "Scraper finished but the results file is missing on disk — likely a file-system or permissions issue.")
         return
     try:
         payload = json.loads(output_path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
         _kill_port()
-        fail_job(job_id, f"Bad output JSON: {exc}")
+        fail_job(job_id, "Scraper finished but the results file is corrupted — re-run usually fixes this.")
         return
 
     results = payload.get("results") or []

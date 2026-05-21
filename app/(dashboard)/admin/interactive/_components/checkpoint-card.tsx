@@ -309,7 +309,7 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl, currentUserId }: Pr
               ) : (
                 <span
                   className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)]/40 px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-text-secondary)]"
-                  title="noVNC not configured — see the runbook"
+                  title="noVNC isn't configured on this deploy. See docs/runbook-novnc.md."
                 >
                   <Eye className="h-3 w-3" />
                   Open VNC (not configured)
@@ -385,8 +385,7 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl, currentUserId }: Pr
                 onSubmit={e => {
                   if (
                     !confirm(
-                      'Re-queue this scrape with a fresh HITL window? The worker will re-claim the job, navigate to the same SERP again, and you\'ll get another ' +
-                        '~2-min window to resolve the captcha. Resets attempts + captcha_attempts counters.',
+                      'Re-queue this scrape with a fresh HITL window? The worker will re-claim the job, navigate to the same SERP again, and you\'ll get up to 10 chances (5 min each) to solve the captcha — the browser auto-refreshes between attempts. Resets attempts + captcha_attempts counters.',
                     )
                   ) {
                     e.preventDefault()
@@ -432,7 +431,7 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl, currentUserId }: Pr
             ) : openVncError.reason === 'no_vnc_config' ? (
               <>noVNC isn&apos;t configured on this deploy. See <code>docs/runbook-novnc.md</code>.</>
             ) : (
-              openVncError.error ?? 'Unknown error opening VNC.'
+              openVncError.error ?? "Couldn't open the VNC session. Try again, or check that the scraper is still running on the VM."
             )}
           </p>
         )}
