@@ -46,8 +46,11 @@ export type LeadDetail = {
     monday_board: string | null
     monday_item_id: string | null
     /** How the match was found: 'exact', 'registered' (subdomain
-     *  variant), or 'mentioned_in_updates' (domain found in a board
-     *  comment/post). Null when the lead isn't on Monday. */
+     *  variant), 'exact_name' (Monday item title is the domain but
+     *  Website column was empty), 'registered_name' (subdomain variant
+     *  of a title-only Monday item), or 'mentioned_in_updates'
+     *  (domain found in a board comment/post). Null when the lead
+     *  isn't on Monday. */
     monday_match_kind: string | null
     is_affiliate: boolean | null
     affiliate_score: number | null

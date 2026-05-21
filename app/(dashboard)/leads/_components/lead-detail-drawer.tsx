@@ -757,6 +757,16 @@ function MatchKindBadge({ kind }: { kind: string | null }) {
       cls: 'bg-amber-100 text-amber-800',
       title: 'Matched on the registered domain (eTLD+1) — the lead is a subdomain variant of the Monday item.',
     },
+    exact_name: {
+      label: 'item-title match',
+      cls: 'bg-violet-100 text-violet-800',
+      title: 'Matched on the Monday item’s title — the brand domain is the item name and the Website column on Monday wasn’t filled in.',
+    },
+    registered_name: {
+      label: 'item-title subdomain',
+      cls: 'bg-violet-100 text-violet-800',
+      title: 'Matched on the registered domain of the Monday item’s title — the lead is a subdomain variant of a title-only Monday item (Website column empty).',
+    },
     mentioned_in_updates: {
       label: 'in updates',
       cls: 'bg-sky-100 text-sky-800',
