@@ -103,8 +103,12 @@ export async function revealCredentialPasswordAction(
     return { ok: false, error: 'Country code must be a 2-letter ISO code.' }
   }
 
-  const svc = createServiceClient()
-  const { data, error } = await svc.rpc('admin_reveal_google_login_credential', {
+  // Must use the user-authenticated client (not service-role) — the RPC
+  // re-checks auth.uid() / is_admin() internally, and a service-role
+  // client has no JWT so auth.uid() returns null and the RPC raises
+  // "not signed in".
+  const supabase = await createServerClient()
+  const { data, error } = await supabase.rpc('admin_reveal_google_login_credential', {
     p_country_code: code,
   })
   if (error) return { ok: false, error: error.message }
