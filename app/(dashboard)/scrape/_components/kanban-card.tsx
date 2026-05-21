@@ -133,7 +133,7 @@ export function KanbanCard({ job, variant }: KanbanCardProps) {
   return (
     <article
       className={[
-        'rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-2 transition-shadow',
+        'min-w-0 max-w-full overflow-hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-2 transition-shadow',
         expanded ? 'shadow-md' : 'shadow-sm hover:shadow-md',
       ].join(' ')}
     >
@@ -250,7 +250,10 @@ export function KanbanCard({ job, variant }: KanbanCardProps) {
             </>
           )}
           {variant === 'failed' && errorPreview && (
-            <p className="rounded-md bg-red-50 px-2 py-1 text-[10px] text-red-700">
+            <p
+              className="overflow-hidden whitespace-pre-wrap break-all rounded-md bg-red-50 px-2 py-1 text-[10px] leading-snug text-red-700"
+              title={job.error_message ?? undefined}
+            >
               {errorPreview}
               {(job.error_message?.length ?? 0) > 200 ? '…' : ''}
             </p>
