@@ -15,6 +15,7 @@ import {
   RotateCcw,
   ShieldCheck,
   Timer,
+  User,
   XCircle,
 } from 'lucide-react'
 import {
@@ -96,9 +97,22 @@ type Props = {
   vncUrl: string | null
   screenshotUrl: string | null
   currentUserId: string
+  /** Who originally enqueued the scrape — denormalized from scrape_queue
+   *  so operators can tell whose job they're being asked to unblock. */
+  requester: {
+    display: string | null
+    username: string | null
+    keyword: string | null
+  } | null
 }
 
-export function CheckpointCard({ row, vncUrl, screenshotUrl, currentUserId }: Props) {
+export function CheckpointCard({
+  row,
+  vncUrl,
+  screenshotUrl,
+  currentUserId,
+  requester,
+}: Props) {
   const [resolveState, resolveAction, resolvePending] = useActionState(
     resolveCheckpointAction,
     initial,
@@ -235,6 +249,19 @@ export function CheckpointCard({ row, vncUrl, screenshotUrl, currentUserId }: Pr
           <span className="text-[11px] text-[color:var(--color-text-secondary)]">
             worker {row.worker_id} · port {row.worker_port}
           </span>
+          {requester && (requester.display || requester.username) && (
+            <span
+              className="inline-flex items-center gap-1 rounded-md bg-[color:var(--color-bg-secondary)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-text-secondary)]"
+              title={
+                requester.keyword
+                  ? `Scrape queued by ${requester.display ?? requester.username} — keyword: ${requester.keyword}`
+                  : `Scrape queued by ${requester.display ?? requester.username}`
+              }
+            >
+              <User className="h-2.5 w-2.5" />
+              by {requester.display ?? requester.username}
+            </span>
+          )}
           {row.status === 'waiting' && (
             <span
               className={[

@@ -85,6 +85,34 @@ export default async function InteractiveCheckpointsPage({
   }
   const totalAll = counts?.length ?? 0
 
+  // Pull the requester per job — operators on the HITL page need to know
+  // whose scrape they're solving, especially when multiple users have
+  // queued work at the same time. `created_by_*` is denormalized on
+  // scrape_queue at enqueue time, so this is a single id-list lookup.
+  const jobIds = Array.from(new Set(rows.map(r => r.job_id)))
+  const requesterByJobId = new Map<
+    string,
+    { display: string | null; username: string | null; keyword: string | null }
+  >()
+  if (jobIds.length > 0) {
+    const { data: jobRows } = await svc
+      .from('scrape_queue')
+      .select('id, keyword, created_by_display, created_by_username')
+      .in('id', jobIds)
+    for (const j of (jobRows ?? []) as Array<{
+      id: string
+      keyword: string | null
+      created_by_display: string | null
+      created_by_username: string | null
+    }>) {
+      requesterByJobId.set(j.id, {
+        display: j.created_by_display,
+        username: j.created_by_username,
+        keyword: j.keyword,
+      })
+    }
+  }
+
   // Pre-sign noVNC URLs + screenshot URLs for waiting rows so the
   // operator can click straight through. Resolved/cancelled rows
   // don't need a live VNC link — the session is gone.
@@ -107,7 +135,8 @@ export default async function InteractiveCheckpointsPage({
           .createSignedUrl(row.screenshot_path, 60 * 60)
         screenshotUrl = signed?.signedUrl ?? null
       }
-      return { row, vncUrl, screenshotUrl }
+      const requester = requesterByJobId.get(row.job_id) ?? null
+      return { row, vncUrl, screenshotUrl, requester }
     }),
   )
 
@@ -190,6 +219,7 @@ export default async function InteractiveCheckpointsPage({
               vncUrl={card.vncUrl}
               screenshotUrl={card.screenshotUrl}
               currentUserId={user.id}
+              requester={card.requester}
             />
           ))}
         </div>
