@@ -47,8 +47,10 @@ export default async function InteractiveCheckpointsPage({
   if (!user) redirect('/login?from=/admin/interactive')
 
   const svc = createServiceClient()
-  const { data: callerIsAdmin } = await svc.rpc('is_admin', { p_user_id: user.id })
-  if (!callerIsAdmin) redirect('/')
+  // No admin gate — any signed-in user can resolve captchas. Bottlenecking
+  // HITL on a single admin defeats the point. The URL keeps the /admin/
+  // prefix for backwards-compatibility; rename to /interactive in a future
+  // cleanup if it bothers anyone.
 
   const sp = await searchParams
   const filter =

@@ -55,6 +55,15 @@ const NAV_ITEMS = [
     match: (p: string) => p.startsWith('/monday'),
   },
   {
+    // Open to all signed-in users so the whole ops team can clear
+    // captchas, not just the admin. URL keeps the /admin/ prefix for
+    // backwards-compat (banner deep links, browser history).
+    label: 'Interactive Checkpoints',
+    href: '/admin/interactive',
+    icon: Hand,
+    match: (p: string) => p.startsWith('/admin/interactive'),
+  },
+  {
     label: 'Country Profiles',
     href: '/profiles',
     icon: Globe,
@@ -110,12 +119,6 @@ const ADMIN_NAV_ITEMS = [
     href: '/admin/feedback',
     icon: MessageCircle,
     match: (p: string) => p.startsWith('/admin/feedback'),
-  },
-  {
-    label: 'Interactive Checkpoints (Admin)',
-    href: '/admin/interactive',
-    icon: Hand,
-    match: (p: string) => p.startsWith('/admin/interactive'),
   },
   {
     label: 'Google Login (Admin)',

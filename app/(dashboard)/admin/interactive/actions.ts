@@ -10,7 +10,15 @@ export type CheckpointMutationState =
   | { status: 'error'; error: string }
   | null
 
-async function requireAdmin(): Promise<
+/**
+ * Any signed-in user can resolve / cancel / re-queue a checkpoint.
+ * Captcha resolution is a routine ops task — bottlenecking it on a
+ * single admin defeats the point of HITL when the team is more than
+ * one person. The DB layer still enforces admin-only for re-queue via
+ * defense-in-depth (see migration 20260519050000), but server actions
+ * here call via service-role so that gate passes through.
+ */
+async function requireSignedIn(): Promise<
   | { ok: true; user_id: string; display: string | null }
   | { ok: false; error: string }
 > {
@@ -21,10 +29,6 @@ async function requireAdmin(): Promise<
   if (!user) return { ok: false, error: 'Not signed in.' }
 
   const svc = createServiceClient()
-  const { data: adminFlag, error: adminErr } = await svc.rpc('is_admin', { p_user_id: user.id })
-  if (adminErr) return { ok: false, error: adminErr.message }
-  if (!adminFlag) return { ok: false, error: 'Admin access required.' }
-
   const { data: profileRow } = await svc
     .from('user_profiles')
     .select('username, display_name')
@@ -39,7 +43,7 @@ export async function resolveCheckpointAction(
   _prev: CheckpointMutationState,
   fd: FormData,
 ): Promise<CheckpointMutationState> {
-  const auth = await requireAdmin()
+  const auth = await requireSignedIn()
   if (!auth.ok) return { status: 'error', error: auth.error }
 
   const id = Number(fd.get('id'))
@@ -71,7 +75,7 @@ export async function requeueCheckpointAction(
   _prev: CheckpointMutationState,
   fd: FormData,
 ): Promise<CheckpointMutationState> {
-  const auth = await requireAdmin()
+  const auth = await requireSignedIn()
   if (!auth.ok) return { status: 'error', error: auth.error }
 
   const jobId = String(fd.get('job_id') ?? '').trim()
@@ -99,7 +103,7 @@ export async function cancelCheckpointAction(
   _prev: CheckpointMutationState,
   fd: FormData,
 ): Promise<CheckpointMutationState> {
-  const auth = await requireAdmin()
+  const auth = await requireSignedIn()
   if (!auth.ok) return { status: 'error', error: auth.error }
 
   const id = Number(fd.get('id'))
