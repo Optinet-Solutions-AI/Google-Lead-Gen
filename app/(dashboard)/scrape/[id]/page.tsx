@@ -13,6 +13,7 @@ import {
   queryLeads,
 } from '../../leads/_lib/query'
 import { AutoRefresh } from '../_components/auto-refresh'
+import { CaptchaRecoveryBanner } from '../_components/captcha-recovery-banner'
 import { EnrichmentStages } from '../_components/enrichment-stages'
 import { fetchStageSummary } from '../_lib/queries'
 
@@ -147,6 +148,10 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
 
       <JobMeta job={job} />
 
+      {job.status === 'captcha' && (
+        <CaptchaRecoveryBanner jobId={job.id} errorMessage={job.error_message} />
+      )}
+
       <EnrichmentStages jobId={job.id} summary={stageSummary} />
 
       <div className="pt-2">
@@ -249,7 +254,7 @@ function JobMeta({ job }: { job: Job }) {
           {mobileSkippedExplanation(mobileSkipped)}
         </div>
       )}
-      {job.error_message && (
+      {job.error_message && job.status !== 'captcha' && (
         <div className="col-span-full mt-1 rounded-md bg-red-50 px-3 py-2 text-red-700">
           <span className="font-medium">Error:</span> {job.error_message}
         </div>
