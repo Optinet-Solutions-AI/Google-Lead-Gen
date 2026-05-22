@@ -9,6 +9,8 @@
  * them up too.
  */
 import { readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const ANCHOR_HREF_RE = /href=["']([^"']+)["']/gi
 const TRACKING_PATH_RE = /\/(track|click|go|visit|out|redirect|creat|aff|ref|link|offer|bonus|promo)\//i
@@ -47,10 +49,10 @@ function extractTrackingLinks(html: string, baseUrl: string): string[] {
   return Array.from(found)
 }
 
-const FIXTURE_DIR = 'C:/Users/terde/AppData/Local/Temp/stag-fix-check'
+const FIXTURE_DIR = process.env.STAG_FIX_FIXTURE_DIR ?? join(tmpdir(), 'stag-fix-check')
 const CASES: [string, string][] = [
-  [`${FIXTURE_DIR}/footitalia.html`, 'https://www.footitalia.com/gambling-sites/golden-panda/'],
-  [`${FIXTURE_DIR}/betkiwi.html`,    'https://www.betkiwi.co.nz/online-casinos/golden-panda-casino/'],
+  [join(FIXTURE_DIR, 'footitalia.html'), 'https://www.footitalia.com/gambling-sites/golden-panda/'],
+  [join(FIXTURE_DIR, 'betkiwi.html'),    'https://www.betkiwi.co.nz/online-casinos/golden-panda-casino/'],
 ]
 
 for (const [path, base] of CASES) {
