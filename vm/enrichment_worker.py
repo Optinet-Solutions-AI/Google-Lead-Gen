@@ -234,13 +234,16 @@ def _crawl_for_tracking_links(
     url: str,
     lead_id: int,
     label: str,
-) -> set[str]:
+) -> list[str]:
     """Load homepage + up to MAX_EXTRA_PAGES casino-listing pages, return
-    the deduped set of tracking-link URLs found across them. Shared by
-    both the desktop and mobile passes."""
+    the deduped list of tracking-link URLs in page-visit order (homepage
+    first, then each listing page in the order they were discovered).
+    Order matters because callers cap how many links they actually
+    resolve — homepage CTAs are the highest-value links and need to be
+    kept under any cap."""
     home_html = _navigate(driver, url)
     if not home_html:
-        return set()
+        return []
 
     pages_html: list[tuple[str, str]] = [(url, home_html)]
     for extra_url in _pick_stag_pages(home_html, url):
@@ -248,16 +251,20 @@ def _crawl_for_tracking_links(
         if chunk:
             pages_html.append((extra_url, chunk))
 
-    seen_tracking: set[str] = set()
+    ordered: list[str] = []
+    seen: set[str] = set()
     for page_url, page_html in pages_html:
         for link in extract_tracking_links(page_html, page_url):
-            seen_tracking.add(link)
+            if link in seen:
+                continue
+            seen.add(link)
+            ordered.append(link)
 
     log.info(
         "stag: lead=%s pass=%s found %d tracking links across %d pages",
-        lead_id, label, len(seen_tracking), len(pages_html),
+        lead_id, label, len(ordered), len(pages_html),
     )
-    return seen_tracking
+    return ordered
 
 
 def process_stag_in_browser(
@@ -317,7 +324,7 @@ def process_stag_in_browser(
     # operator complaint. 10 keeps the worst case ~3 min while still
     # covering every affiliate-review top-list we've seen.
     resolved: list[dict] = []
-    tracking_list = list(seen_tracking)[:10]
+    tracking_list = seen_tracking[:10]
     for i, tracking_url in enumerate(tracking_list):
         # Cooperative cancellation: dashboard cancel sets cancel_requested=true
         # on this row; we bail out between redirects so partial results stick.
