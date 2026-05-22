@@ -485,7 +485,15 @@ def extract_tracking_links(html: str, base_url: str) -> list[str]:
             host = re.sub(r"^www\.", "", urlparse(absolute).netloc.lower())
         except Exception:  # noqa: BLE001
             return
-        if not host or host == base_host or host in EXCLUDED_HOSTS:
+        # Same-host links are kept on purpose: affiliate sites routinely
+        # cloak outbound links behind their own domain
+        # (e.g. footitalia.com/visit/goldenpanda/, betkiwi.co.nz/visit/X/casino/)
+        # which 302s to the real affiliate URL. The earlier same-host
+        # filter dropped all of these and was the dominant reason S-tag
+        # found zero links on most leads. _is_tracking_link() already
+        # filtered the URL shape, so false positives are just wasted
+        # navigations downstream, not bad DB rows.
+        if not host or host in EXCLUDED_HOSTS:
             return
         found.add(absolute)
 
