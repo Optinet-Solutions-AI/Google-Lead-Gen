@@ -308,9 +308,16 @@ def process_stag_in_browser(
     # No dedupe by tag value — if the affiliate page exposes 10
     # outbound tracking links, we want 10 s_tag rows, even if some
     # links collapse to the same short ID after truncation. This
-    # matches the operator's "10 links = 10 s-tags" expectation.
+    # matches the operator's "10 links = 10 s-tags" expectation, so
+    # we cap at 10. Each link costs ~15-20s of browser
+    # navigation + redirect resolve + screenshot upload, so a cap
+    # of 30 (the previous value) blew per-lead runtime out to ~10
+    # minutes once the same-host fix started surfacing the full
+    # cloaked-link inventory — that's the "keep trying for so long"
+    # operator complaint. 10 keeps the worst case ~3 min while still
+    # covering every affiliate-review top-list we've seen.
     resolved: list[dict] = []
-    tracking_list = list(seen_tracking)[:30]
+    tracking_list = list(seen_tracking)[:10]
     for i, tracking_url in enumerate(tracking_list):
         # Cooperative cancellation: dashboard cancel sets cancel_requested=true
         # on this row; we bail out between redirects so partial results stick.
