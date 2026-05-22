@@ -40,6 +40,8 @@ Environment=DISPLAY=:1
 ExecStart=/usr/bin/python3 /home/ubuntu/enrichment_worker.py
 Restart=always
 RestartSec=10
+MemoryMax=1500M
+OOMPolicy=kill
 StandardOutput=journal
 StandardError=journal
 
