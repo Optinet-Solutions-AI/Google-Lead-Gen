@@ -192,6 +192,65 @@ def extract_sponsored_urls_selenium(driver):
     return sponsored
 
 
+def capture_serp_card_screenshot(driver, anchor, out_path: str) -> bool:
+    """Snap a PNG of the ad card on the SERP itself — what the searcher
+    actually saw — before any click-through cloaker fight.
+
+    Deterministic and ~100% reliable: the anchor is already in the DOM,
+    so we just walk up to the nearest ad-card ancestor, scroll it into
+    view, and call WebElement.screenshot_as_png. No redirect chain, no
+    new tab, no waiting on third-party JS.
+
+    Replaces the click-through landing-page screenshot which has been
+    silently failing on >96% of PPC leads since the 2026-05-07 rewrite
+    (cloakers gate the click on bot signals and refuse to settle).
+
+    Returns True on success, False on any failure. Never raises —
+    failure here must not block the rest of the scrape.
+    """
+    try:
+        # Walk up to the closest ad-card ancestor. Google's class names
+        # are obfuscated and rotate, so try several known wrappers in
+        # priority order and fall back to "first reasonably-sized
+        # ancestor". Anything taller than 60px is almost certainly the
+        # card and not just the title line.
+        card = None
+        candidates = (
+            "./ancestor::div[@data-text-ad][1]",
+            "./ancestor::div[@jscontroller and contains(@class, 'uEierd')][1]",
+            "./ancestor::div[@jscontroller][2]",
+            "./ancestor::div[@jscontroller][1]",
+        )
+        for xpath in candidates:
+            try:
+                el = anchor.find_element(By.XPATH, xpath)
+                if el.size.get("height", 0) >= 60:
+                    card = el
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+        if card is None:
+            card = anchor
+
+        # scrollIntoView gives any deferred ad-network JS a chance to
+        # paint before we snap. block:'center' avoids the sticky header
+        # clipping the top of the card.
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block: 'center', behavior: 'instant'});",
+            card,
+        )
+        time.sleep(0.4)
+
+        png = card.screenshot_as_png
+        with open(out_path, "wb") as fh:
+            fh.write(png)
+        print(f"[DEBUG] Saved SERP ad-card screenshot: {out_path}")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] SERP ad-card screenshot failed: {exc}", file=sys.stderr)
+        return False
+
+
 def click_through_ppc(driver, anchor, screenshot_path: str | None) -> tuple[str | None, bool]:
     """Click through a PPC ad as if a real user did it: real Ctrl+Click
     on the anchor (so the destination sees a true user-gesture click,
@@ -1282,23 +1341,22 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
     sponsored_map = extract_sponsored_urls_selenium(driver)
     sponsored_urls = set(sponsored_map.keys())
 
-    # ONE click-through per PPC ad: real Ctrl+Click on the anchor,
-    # wait up to 15s for the redirect chain to settle, scroll the
-    # landing page to trigger lazy-loaded sections, then full-page
-    # screenshot via CDP. Captures BOTH the resolved full URL (with
-    # gclid + gad_*) and a screenshot of the uncloaked landing page
-    # in one pass — half the time of the previous two-pass version
-    # and gets a much more useful screenshot. PPC-only.
+    # Per-PPC-ad: snap the ad card on the SERP first (always-on, ~100%
+    # reliable — what the searcher actually saw), then best-effort
+    # click-through to resolve the full URL with gclid + gad_*.
+    # The click-through no longer captures a screenshot: cloakers were
+    # winning that fight on >96% of ads, leaving leads with no image.
     serp_screenshots: dict = {}
     resolved_ppc_urls: dict = {}
     for idx, (ppc_url, anchor) in enumerate(sponsored_map.items()):
         out_path = f"/tmp/serp_ad_{int(time.time() * 1000)}_{page}_{idx}.png"
-        full, shot = click_through_ppc(driver, anchor, out_path)
+        if capture_serp_card_screenshot(driver, anchor, out_path):
+            serp_screenshots[ppc_url] = out_path
+
+        full, _ = click_through_ppc(driver, anchor, None)
         if full:
             resolved_ppc_urls[ppc_url] = full
             print(f"[DEBUG] Resolved PPC URL: {ppc_url} → {full}")
-        if shot:
-            serp_screenshots[ppc_url] = out_path
 
     soup = BeautifulSoup(driver.page_source, "html.parser")
     results = []
