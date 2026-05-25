@@ -74,6 +74,64 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 _running = True
 
 
+# ---------------------------------------------------------------------------
+# Workaround for gologin 2026.02.03 bug at gologin.py:762 — int('') ValueError
+# when a profile's navigator.userAgent lacks a "Chrome/X.Y" token. This was
+# the cause of 90% of enrichment failures in the 7d window before this patch.
+# Pre-seed executablePath + orbita_major_version so spawnBrowser() skips the
+# broken version-derivation branch entirely.
+# ---------------------------------------------------------------------------
+def _find_latest_orbita() -> tuple[str, int]:
+    base = os.path.expanduser("~/.gologin/browser")
+    try:
+        candidates: list[tuple[int, str]] = []
+        for name in os.listdir(base):
+            if not name.startswith("orbita-browser-"):
+                continue
+            tail = name.rsplit("-", 1)[-1]
+            if not tail.isdigit():
+                continue
+            path = os.path.join(base, name, "chrome")
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                candidates.append((int(tail), path))
+        if candidates:
+            candidates.sort(reverse=True)
+            return candidates[0][1], candidates[0][0]
+    except OSError:
+        pass
+    return "/usr/bin/google-chrome", 0
+
+
+_ORBITA_FALLBACK_PATH, _ORBITA_FALLBACK_MAJOR = _find_latest_orbita()
+log.info("orbita fallback resolved: path=%s major=%d", _ORBITA_FALLBACK_PATH, _ORBITA_FALLBACK_MAJOR)
+
+
+def _install_gologin_spawn_patch() -> None:
+    import gologin.gologin as _gologin_mod
+    _orig_spawn = _gologin_mod.GoLogin.spawnBrowser
+
+    def _safe_spawn(self):
+        if not getattr(self, "executablePath", ""):
+            profile = getattr(self, "profile", None) or {}
+            ua = (profile.get("navigator") or {}).get("userAgent") or ""
+            chrome_part = ua.split("Chrome/")[1].split(" ")[0] if "Chrome/" in ua else ""
+            major_str = chrome_part.split(".")[0] if chrome_part else ""
+            if not major_str.isdigit():
+                log.warning(
+                    "gologin: profile UA missing Chrome/X.Y — using local Orbita %d at %s",
+                    _ORBITA_FALLBACK_MAJOR, _ORBITA_FALLBACK_PATH,
+                )
+                self.executablePath = _ORBITA_FALLBACK_PATH
+                self.orbita_major_version = _ORBITA_FALLBACK_MAJOR
+                self.chromium_version = f"{_ORBITA_FALLBACK_MAJOR}.0.0.0"
+        return _orig_spawn(self)
+
+    _gologin_mod.GoLogin.spawnBrowser = _safe_spawn
+
+
+_install_gologin_spawn_patch()
+
+
 def _handle_signal(sig: int, _frame: Any) -> None:
     global _running
     log.info("signal %d received — finishing iteration then stopping", sig)
@@ -763,6 +821,7 @@ def _open_and_fetch(
 
         return "\n".join(chunks), screenshot_bytes, None
     except Exception as exc:  # noqa: BLE001
+        log.exception("fetch_with_browser failed for %s", url)
         return None, None, str(exc)
     finally:
         if driver is not None:
