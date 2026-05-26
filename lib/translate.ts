@@ -1,93 +1,113 @@
 /**
- * Google Cloud Translation v2 — keyword → English.
+ * MyMemory translation API — keyword → English.
  *
  * The QA team scrapes in local languages (Arabic, German, Norwegian…)
  * and needs to know what the keyword actually means before they can
  * triage a job. We translate the keyword once at enqueue time and
  * store the result on `scrape_queue.keyword_en`.
  *
- * The translation is best-effort: if GOOGLE_TRANSLATE_API_KEY isn't
- * set, the network call times out, or Google returns an error, we
- * return null and the caller leaves the column NULL. The UI handles
- * NULL by showing the original keyword only — translation must
- * never block an enqueue.
+ * Why MyMemory and not Google Cloud Translation?
+ *   - No GCP project, no billing, no API key to manage.
+ *   - 5k words/day anonymous, 50k/day with a `de=<email>` param
+ *     (unverified — set MYMEMORY_EMAIL to lift the limit).
+ *   - Trade-off: quality is "decent" not "great" — fine for
+ *     "what's this keyword roughly about" but reads more literal
+ *     than Google for non-Latin scripts. Acceptable for QA triage.
+ *
+ * The translation is best-effort: timeouts, non-2xx responses, and
+ * over-quota errors all return null without throwing. Translation
+ * must never block an enqueue.
  */
 
-const TRANSLATE_URL = 'https://translation.googleapis.com/language/translate/v2'
+const MYMEMORY_URL = 'https://api.mymemory.translated.net/get'
 const TIMEOUT_MS = 5_000
+// Per-keyword requests run in parallel up to this fan-out. MyMemory
+// doesn't publish a rate limit; 5 is conservative enough to stay
+// well clear of any abuse heuristics while keeping a 10-keyword
+// batch under ~1.5 s end-to-end.
+const CONCURRENCY = 5
 
-type TranslateResponse = {
-  data?: {
-    translations?: Array<{
-      translatedText?: string
-      detectedSourceLanguage?: string
-    }>
-  }
-  error?: { message?: string }
+type MyMemoryResponse = {
+  responseData?: { translatedText?: string; match?: number }
+  responseStatus?: number | string
+  responseDetails?: string
 }
 
 /**
  * Translate one or more keywords from `sourceLang` into English.
  * Returns a Map keyed by the ORIGINAL keyword so callers can match
- * results back to the input regardless of array order. Returns an
- * empty Map on missing key / network failure / non-2xx — never throws.
+ * results back to the input regardless of completion order. Returns
+ * an empty Map for English source / empty input / total API failure —
+ * never throws. Individual keywords that fail are silently dropped.
  */
 export async function translateKeywordsToEnglish(
   keywords: string[],
   sourceLang: string,
 ): Promise<Map<string, string>> {
   const result = new Map<string, string>()
-
-  const apiKey = process.env.GOOGLE_TRANSLATE_API_KEY
-  if (!apiKey) {
-    console.warn('[translate] GOOGLE_TRANSLATE_API_KEY not set — skipping translation')
-    return result
-  }
   if (sourceLang === 'en') return result
 
   const unique = Array.from(new Set(keywords.map(k => k.trim()).filter(Boolean)))
   if (unique.length === 0) return result
 
+  const email = process.env.MYMEMORY_EMAIL?.trim() || undefined
+
+  // Bounded-concurrency worker pool: shift keywords off a shared queue.
+  const queue = [...unique]
+  async function worker(): Promise<void> {
+    while (queue.length > 0) {
+      const keyword = queue.shift()
+      if (!keyword) return
+      const translated = await translateOne(keyword, sourceLang, email)
+      if (translated && translated !== keyword) {
+        result.set(keyword, translated)
+      }
+    }
+  }
+  const workers = Math.min(CONCURRENCY, unique.length)
+  await Promise.all(Array.from({ length: workers }, worker))
+
+  return result
+}
+
+async function translateOne(
+  text: string,
+  sourceLang: string,
+  email: string | undefined,
+): Promise<string | null> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
 
   try {
-    // Google Translate v2 accepts repeated `q=` params. URLSearchParams
-    // serialises an array as `q=a&q=b&q=c`, which matches their docs.
-    const params = new URLSearchParams()
-    for (const k of unique) params.append('q', k)
-    params.set('source', sourceLang)
-    params.set('target', 'en')
-    params.set('format', 'text')
-    params.set('key', apiKey)
+    const params = new URLSearchParams({
+      q: text,
+      langpair: `${sourceLang}|en`,
+    })
+    if (email) params.set('de', email)
 
-    const res = await fetch(TRANSLATE_URL, {
-      method: 'POST',
+    const res = await fetch(`${MYMEMORY_URL}?${params.toString()}`, {
       signal: controller.signal,
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString(),
     })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       console.warn(`[translate] ${res.status}: ${body.slice(0, 200)}`)
-      return result
+      return null
     }
-    const json = (await res.json()) as TranslateResponse
-    const translations = json.data?.translations ?? []
-    // Google preserves input order in `translations[]`, so we can zip
-    // against `unique` 1:1. Skip empty / identical results — no point
-    // storing a translation that's the same as the original.
-    for (let i = 0; i < unique.length && i < translations.length; i++) {
-      const original = unique[i]!
-      const translated = translations[i]?.translatedText?.trim()
-      if (translated && translated !== original) {
-        result.set(original, translated)
-      }
+    const json = (await res.json()) as MyMemoryResponse
+    // MyMemory returns responseStatus as either a number (200) or a
+    // string ("200") depending on the error type. Numeric coerce both.
+    const status = Number(json.responseStatus)
+    if (status !== 200) {
+      console.warn(
+        `[translate] responseStatus=${json.responseStatus}: ${(json.responseDetails ?? '').slice(0, 200)}`,
+      )
+      return null
     }
-    return result
+    const translated = json.responseData?.translatedText?.trim()
+    return translated || null
   } catch (err) {
     console.warn('[translate] call failed:', err instanceof Error ? err.message : err)
-    return result
+    return null
   } finally {
     clearTimeout(timer)
   }

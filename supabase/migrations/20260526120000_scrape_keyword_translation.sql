@@ -7,9 +7,9 @@
 -- can show "كازينو كريبتو عمان موثوق  →  Trusted Oman crypto casino"
 -- without re-hitting the translation API on every page view.
 --
--- - Nullable: the translation is best-effort. If the Google
---   Translate API key isn't set or the call fails, the column
---   stays NULL and the UI just shows the original.
+-- - Nullable: the translation is best-effort. If the translation
+--   API is unreachable, over quota, or fails, the column stays
+--   NULL and the UI just shows the original.
 -- - Skipped when language = 'en' (no point translating EN→EN).
 -- - Filled by the enqueue server action at scrape-creation time,
 --   with a lazy backfill on first detail-page view for rows
