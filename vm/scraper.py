@@ -690,7 +690,11 @@ def request_interactive_checkpoint(
 
     screenshot_path = _upload_checkpoint_screenshot(driver, job_id)
 
-    # Insert the checkpoint row + flip scrape_queue status to needs_human
+    # Insert the checkpoint row + flip scrape_queue status to needs_human.
+    # VM_PUBLIC_HOST tells the dashboard which VM to route Open-VNC to;
+    # required once we run more than one worker box. NULL falls back to
+    # the dashboard's NEXT_PUBLIC_VNC_BASE_URL env var.
+    vnc_host = os.environ.get("VM_PUBLIC_HOST") or None
     checkpoint_id: int | None = None
     try:
         resp = _supabase_request(
@@ -705,6 +709,7 @@ def request_interactive_checkpoint(
                 "p_page_title": page_title,
                 "p_screenshot_path": screenshot_path,
                 "p_ttl_minutes": ttl_minutes,
+                "p_vnc_host": vnc_host,
             },
         )
         if resp.status_code >= 300:

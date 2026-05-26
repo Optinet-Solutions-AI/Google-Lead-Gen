@@ -40,6 +40,8 @@ type CheckpointRow = {
   claimed_by_display: string | null
   claimed_at: string | null
   claim_expires_at: string | null
+  // Per-checkpoint VM ingress host. NULL falls back to NEXT_PUBLIC_VNC_BASE_URL.
+  vnc_host: string | null
 }
 
 export default async function InteractiveCheckpointsPage({
@@ -68,7 +70,7 @@ export default async function InteractiveCheckpointsPage({
   let q = svc
     .from('interactive_checkpoints')
     .select(
-      'id, job_id, worker_id, worker_port, reason, current_url, page_title, screenshot_path, status, resolution_note, resolved_at, resolved_by, expires_at, created_at, updated_at, claimed_by_user_id, claimed_by_display, claimed_at, claim_expires_at',
+      'id, job_id, worker_id, worker_port, reason, current_url, page_title, screenshot_path, status, resolution_note, resolved_at, resolved_by, expires_at, created_at, updated_at, claimed_by_user_id, claimed_by_display, claimed_at, claim_expires_at, vnc_host',
     )
     .order('created_at', { ascending: false })
     .limit(200)
@@ -127,7 +129,10 @@ export default async function InteractiveCheckpointsPage({
     rows.map(async row => {
       let vncUrl: string | null = null
       if (row.status === 'waiting') {
-        vncUrl = await buildSignedVncUrl({ workerPort: row.worker_port })
+        vncUrl = await buildSignedVncUrl({
+          workerPort: row.worker_port,
+          hostBase: row.vnc_host,
+        })
       }
       let screenshotUrl: string | null = null
       if (row.screenshot_path) {

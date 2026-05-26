@@ -181,7 +181,19 @@ export async function openVncAction(
     return result
   }
 
-  const vnc_url = await buildSignedVncUrl({ workerPort })
+  // Pull the per-checkpoint VM host so multi-VM fleets route to the
+  // right ingress. NULL is fine — buildSignedVncUrl falls back to
+  // NEXT_PUBLIC_VNC_BASE_URL when this is unset (single-VM dev).
+  const { data: hostRow } = await svc
+    .from('interactive_checkpoints')
+    .select('vnc_host')
+    .eq('id', checkpointId)
+    .maybeSingle<{ vnc_host: string | null }>()
+
+  const vnc_url = await buildSignedVncUrl({
+    workerPort,
+    hostBase: hostRow?.vnc_host ?? null,
+  })
   if (!vnc_url) {
     return {
       ok: false,

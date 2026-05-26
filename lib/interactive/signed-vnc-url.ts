@@ -48,17 +48,25 @@ export type SignedVncUrlOptions = {
   workerPort: number
   /** Token TTL in seconds. Default 15 min. */
   ttlSeconds?: number
+  /**
+   * Per-checkpoint VM ingress host (e.g. "https://54.79.22.202.nip.io").
+   * Set by the worker when it creates the checkpoint so the dashboard
+   * routes the URL to the right VM in a multi-VM fleet. NULL/undefined
+   * falls back to NEXT_PUBLIC_VNC_BASE_URL.
+   */
+  hostBase?: string | null
 }
 
 /**
  * Returns a fully-resolved URL the dashboard can hand to the operator
- * to open in a new tab. Returns null when the env vars aren't
- * configured (NEXT_PUBLIC_VNC_BASE_URL + INTERACTIVE_VNC_HMAC_SECRET).
+ * to open in a new tab. Returns null when neither hostBase nor the
+ * NEXT_PUBLIC_VNC_BASE_URL env var is configured, or when
+ * INTERACTIVE_VNC_HMAC_SECRET is missing.
  */
 export async function buildSignedVncUrl(
   opts: SignedVncUrlOptions,
 ): Promise<string | null> {
-  const base = process.env.NEXT_PUBLIC_VNC_BASE_URL
+  const base = opts.hostBase || process.env.NEXT_PUBLIC_VNC_BASE_URL
   const secret = process.env.INTERACTIVE_VNC_HMAC_SECRET
   if (!base || !secret) return null
 
