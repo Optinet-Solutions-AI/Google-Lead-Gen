@@ -358,8 +358,11 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                 <LinkTd href={href}>
                   <StatusBadge job={job} />
                 </LinkTd>
-                <LinkTd href={href}>
-                  <span suppressHydrationWarning>{formatDateTime(job.started_at)}</span>
+                <LinkTd
+                  href={href}
+                  title={startedCellTooltip(job)}
+                >
+                  <StartedCell job={job} />
                 </LinkTd>
                 <td className="p-0 align-middle">
                   <DurationCell job={job} href={href} />
@@ -647,6 +650,76 @@ function formatDateTime(iso: string | null): string {
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+    })
+  } catch {
+    return iso
+  }
+}
+
+/** Started-column renderer. Pending jobs never set `started_at`, and a
+ *  failed job's claim is cleared on retry — both leave the cell blank.
+ *  Fall back to `created_at` (queue time) so the user always sees when
+ *  the scrape entered the system, and italicise to flag the fallback. */
+function StartedCell({ job }: { job: ScrapeJob }) {
+  if (job.started_at) {
+    return <span suppressHydrationWarning>{formatDateTime(job.started_at)}</span>
+  }
+  return (
+    <span
+      suppressHydrationWarning
+      className="italic text-[color:var(--color-text-secondary)]"
+    >
+      {formatDateTime(job.created_at)}
+    </span>
+  )
+}
+
+function startedCellTooltip(job: ScrapeJob): string {
+  if (job.started_at) {
+    return `Started: ${formatTooltipDateTime(job.started_at)} — ${statusPhrase(job)}`
+  }
+  return `Queued at ${formatTooltipDateTime(job.created_at)} — ${statusPhrase(job)}`
+}
+
+/** Short human phrase describing the job's current state — appended to
+ *  the Started-cell tooltip so users see why the cell value is what it is. */
+function statusPhrase(job: ScrapeJob): string {
+  switch (job.status) {
+    case 'pending':
+      return (job.captcha_attempts ?? 0) > 0
+        ? 'auto-retrying after a captcha hit'
+        : 'scrape has not started yet'
+    case 'running':
+      return 'scrape is currently running'
+    case 'completed':
+      return 'scrape completed'
+    case 'failed':
+      return `scrape failed${job.attempts > 1 ? ` after ${job.attempts} attempts` : ''}`
+    case 'captcha':
+      return 'scrape stopped — captcha hit the retry cap'
+    case 'paused':
+      return 'scrape is paused'
+    case 'cancelled':
+      return 'scrape was cancelled'
+    default:
+      return job.status
+  }
+}
+
+/** Tooltip format: longer than the cell (adds year + seconds) but still
+ *  human-readable. e.g. "May 26, 2026, 03:44:52 PM". */
+function formatTooltipDateTime(iso: string | null): string {
+  if (!iso) return '—'
+  try {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return iso
+    return d.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
     })
   } catch {
     return iso
