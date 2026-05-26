@@ -1349,16 +1349,25 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
     # Per-PPC-ad: snap the ad card on the SERP first (always-on, ~100%
     # reliable — what the searcher actually saw), then best-effort
     # click-through to resolve the full URL with gclid + gad_*.
-    # The click-through no longer captures a screenshot: cloakers were
-    # winning that fight on >96% of ads, leaving leads with no image.
+    # Two screenshots per PPC ad:
+    #   serp_screenshots[ppc_url]    — the ad card on Google's SERP (100% reliable)
+    #   landing_screenshots[ppc_url] — the post-click landing page (cloakers may
+    #                                  win, but the real-user Ctrl+Click gesture
+    #                                  beats them more often than not). When this
+    #                                  fails the lead falls back to the enrichment
+    #                                  pass for the landing-page screenshot.
     serp_screenshots: dict = {}
+    landing_screenshots: dict = {}
     resolved_ppc_urls: dict = {}
     for idx, (ppc_url, anchor) in enumerate(sponsored_map.items()):
         out_path = f"/tmp/serp_ad_{int(time.time() * 1000)}_{page}_{idx}.png"
         if capture_serp_card_screenshot(driver, anchor, out_path):
             serp_screenshots[ppc_url] = out_path
 
-        full, _ = click_through_ppc(driver, anchor, None)
+        landing_path = f"/tmp/ppc_landing_{int(time.time() * 1000)}_{page}_{idx}.png"
+        full, landing_taken = click_through_ppc(driver, anchor, landing_path)
+        if landing_taken:
+            landing_screenshots[ppc_url] = landing_path
         if full:
             resolved_ppc_urls[ppc_url] = full
             print(f"[DEBUG] Resolved PPC URL: {ppc_url} → {full}")
@@ -1413,6 +1422,8 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
             # rewrites it to a Storage bucket path before it ever
             # reaches the DB.
             result_row["local_serp_screenshot"] = serp_screenshots[link]
+        if result_type == "PPC" and link in landing_screenshots:
+            result_row["local_landing_screenshot"] = landing_screenshots[link]
         results.append(result_row)
 
         overall_position += 1
@@ -1448,6 +1459,8 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
         }
         if ppc_url in serp_screenshots:
             result_row["local_serp_screenshot"] = serp_screenshots[ppc_url]
+        if ppc_url in landing_screenshots:
+            result_row["local_landing_screenshot"] = landing_screenshots[ppc_url]
         results.append(result_row)
         overall_position += 1
 

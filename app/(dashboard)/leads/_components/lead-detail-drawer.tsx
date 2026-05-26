@@ -701,11 +701,13 @@ function SerpScreenshotSection({ url }: { url: string }) {
   return (
     <section className="flex flex-col gap-1">
       <h3 className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
-        SERP ad screenshot
+        Ad creative (SERP)
       </h3>
       <p className="text-[10px] italic text-[color:var(--color-text-secondary)]">
-        Captured at scrape time on Google&apos;s results page — the small
-        ad creative as it appeared to a searcher.
+        Captured on Google&apos;s search results page — the small ad
+        creative as it appeared to a searcher. The post-click landing
+        page is captured separately below (when the advertiser
+        doesn&apos;t cloak it).
       </p>
       <div className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-2">
         <a
@@ -754,7 +756,7 @@ function ScreenshotSection({
     <section className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
         <h3 className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
-          Screenshot{isPPC ? ' · PPC' : ''}
+          {isPPC ? 'Landing page (post-click)' : 'Landing page'}
         </h3>
         {url && (
           <button
@@ -793,7 +795,7 @@ function ScreenshotSection({
         ) : (
           <p className="text-[11px] text-[color:var(--color-text-secondary)]">
             {isPPC
-              ? 'No screenshot yet — run affiliate detection on this batch and the worker will capture one.'
+              ? 'Landing page screenshot unavailable — most likely the advertiser uses a cloaker that blocks bot screenshots after the click. The SERP ad creative above is always captured.'
               : 'No screenshot.'}
           </p>
         )}

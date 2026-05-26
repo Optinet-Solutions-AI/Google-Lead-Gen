@@ -352,6 +352,45 @@ def _upload_serp_screenshots(job_id: str, results: list[dict[str, Any]]) -> None
                 pass
 
 
+def _upload_landing_screenshots(job_id: str, results: list[dict[str, Any]]) -> None:
+    """Best-effort upload of per-PPC post-click landing-page screenshots.
+
+    Mirrors _upload_serp_screenshots, but for the second screenshot the
+    scraper now captures during the Ctrl+Click pass it does for URL
+    resolution. The scraper drops PNGs at `/tmp/ppc_landing_*.png` and
+    tags successful captures with `local_landing_screenshot=<path>`.
+    Here we upload to the lead-screenshots bucket under
+    `landing/<job_id>/<idx>.png` and rewrite the field to
+    `screenshot_content_link` so complete_scrape_job persists it on
+    the lead row alongside serp_screenshot_path. Failures are logged
+    but never block the rest of the job — cloakers win some of these.
+    """
+    for idx, row in enumerate(results):
+        local = row.pop("local_landing_screenshot", None)
+        if not local or not os.path.exists(local):
+            continue
+        bucket_path = f"landing/{job_id}/{idx}_{int(time.time() * 1000)}.png"
+        try:
+            with open(local, "rb") as f:
+                png = f.read()
+            supabase.storage.from_(SERP_SCREENSHOT_BUCKET).upload(
+                bucket_path,
+                png,
+                {"content-type": "image/png", "upsert": "true"},
+            )
+            row["screenshot_content_link"] = bucket_path
+            log.info("uploaded PPC landing screenshot for job=%s idx=%d → %s",
+                     job_id, idx, bucket_path)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Landing screenshot upload failed for job=%s idx=%d: %s",
+                        job_id, idx, exc)
+        finally:
+            try:
+                os.unlink(local)
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def fetch_profile(country_code: str) -> dict[str, Any] | None:
     result = (
         supabase.table("gologin_profiles")
@@ -731,6 +770,10 @@ def process_job(job: dict[str, Any]) -> None:
     # Replaces local_serp_screenshot (a /tmp path) with serp_screenshot_path
     # (a bucket-relative path) on each result row before the RPC fires.
     _upload_serp_screenshots(job_id, results)
+
+    # Same for the post-click landing-page screenshot; rewrites
+    # local_landing_screenshot → screenshot_content_link.
+    _upload_landing_screenshots(job_id, results)
 
     try:
         complete_job(job_id, results, summary)
