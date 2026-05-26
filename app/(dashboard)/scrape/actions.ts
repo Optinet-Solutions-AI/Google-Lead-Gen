@@ -6,6 +6,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { logActivity } from '@/lib/activity-log'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
+import { translateKeywordsToEnglish } from '@/lib/translate'
 
 // Log the raw Supabase error server-side, hand the user a generic message.
 // Direct copy of the helper in leads/actions.ts (BUGS.md R2-16). Keeps
@@ -211,9 +212,19 @@ export async function enqueueScrape(
   const createdByUsername = userProfile?.username ?? fallbackUser
   const createdByDisplay = userProfile?.display_name ?? createdByUsername
 
+  // Translate non-English keywords to English so the detail-page
+  // header and QA reviewers can read what's being scraped. Best-effort:
+  // a missing API key or a Translate API failure returns an empty map
+  // and the rows just get keyword_en = null. Never blocks the enqueue.
+  const translations =
+    finalLang === 'en'
+      ? new Map<string, string>()
+      : await translateKeywordsToEnglish(keywords, finalLang)
+
   const rows = keywords.flatMap(keyword =>
     enginesToRun.map(engine => ({
       keyword,
+      keyword_en: translations.get(keyword) ?? null,
       country_code,
       pages,
       priority,

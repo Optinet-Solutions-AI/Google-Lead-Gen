@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react'
 import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
 import { parseFilters, parseSorts } from '@/lib/filters/serialize'
 import { createServiceClient } from '@/lib/supabase/service'
+import { translateKeywordsToEnglish } from '@/lib/translate'
 import { AdvancedFilters } from '../../_components/advanced-filters'
 import { Pagination } from '../../monday/_components/pagination'
 import { LeadsTable } from '../../leads/_components/leads-table'
@@ -27,6 +28,7 @@ type Props = {
 type Job = {
   id: string
   keyword: string
+  keyword_en: string | null
   country_code: string
   pages: number
   status: 'pending' | 'running' | 'completed' | 'failed' | 'captcha' | 'paused' | 'cancelled'
@@ -63,16 +65,39 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const { data: jobRaw, error: jobError } = await svc
     .from('scrape_queue')
     .select(
-      'id, keyword, country_code, pages, status, attempts, batch_id, claimed_by, started_at, completed_at, error_message, result_summary, search_engine, view_mode, language, created_at',
+      'id, keyword, keyword_en, country_code, pages, status, attempts, batch_id, claimed_by, started_at, completed_at, error_message, result_summary, search_engine, view_mode, language, created_at',
     )
     .eq('id', id)
     .maybeSingle()
   if (jobError) {
-    console.error('[scrape/[id]]', jobError)
-    throw new Error('Failed to load job.')
+    // PostgrestError doesn't survive Next's error-overlay serializer
+    // (logs render as `{}`), so pull the useful fields out by hand.
+    console.error('[scrape/[id]]', {
+      message: jobError.message,
+      details: jobError.details,
+      hint: jobError.hint,
+      code: jobError.code,
+    })
+    throw new Error(`Failed to load job: ${jobError.message}`)
   }
   if (!jobRaw) notFound()
   const job = jobRaw as Job
+
+  // Lazy backfill: jobs queued before the translation feature shipped
+  // have keyword_en = null. Translate on first non-English view and
+  // persist so subsequent visits don't re-hit the API. Failure is
+  // silent — page just renders without the translation.
+  if (job.keyword_en === null && job.language && job.language !== 'en') {
+    const translations = await translateKeywordsToEnglish([job.keyword], job.language)
+    const translated = translations.get(job.keyword) ?? null
+    if (translated) {
+      job.keyword_en = translated
+      await svc
+        .from('scrape_queue')
+        .update({ keyword_en: translated })
+        .eq('id', job.id)
+    }
+  }
 
   const page = clampInt(sp.page, 1, 1_000_000, 1)
   const size = clampEnum(sp.size, LEAD_PAGE_SIZES, DEFAULT_LEAD_PAGE_SIZE)
@@ -124,6 +149,14 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
               <EngineBadge engine={job.search_engine} />
               <ViewModeBadge mode={job.view_mode} />
             </h1>
+            {job.keyword_en && (
+              <p
+                className="mt-0.5 text-[13px] italic text-[color:var(--color-text-secondary)]"
+                title={`English translation of "${job.keyword}"`}
+              >
+                English: {job.keyword_en}
+              </p>
+            )}
             <p className="mt-0.5 text-[12px] text-[color:var(--color-text-secondary)]">
               {job.country_code} · {job.pages} page{job.pages === 1 ? '' : 's'}
               {job.language && job.language !== 'en' && <> · lang {job.language}</>}
