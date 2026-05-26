@@ -1896,6 +1896,46 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
         landed_url = driver.current_url
         print(f"[INFO] Bing post-HITL landed URL: {landed_url}")
 
+    # SERP ad-card screenshots — Selenium pass first because element
+    # screenshots need WebElement references (BeautifulSoup tags can't
+    # be screenshotted). Map decoded-href → on-disk PNG; the BeautifulSoup
+    # builder below attaches the path to each PPC result row via the
+    # same local_serp_screenshot field the Google path uses, so the
+    # worker's existing upload helper handles both engines uniformly.
+    bing_serp_screenshots: dict = {}
+    try:
+        ad_containers = driver.find_elements(
+            By.CSS_SELECTOR,
+            'li.b_ad, li.b_adTop, li.b_adBottom, li.b_adLastChild',
+        )
+        for idx, container in enumerate(ad_containers):
+            decoded = None
+            try:
+                anchors = container.find_elements(By.CSS_SELECTOR, 'a[href^="http"]')
+                for a in anchors:
+                    raw = a.get_attribute('href')
+                    if not raw:
+                        continue
+                    candidate = _decode_bing_ck_url(raw)
+                    if candidate and candidate.startswith('http') and (
+                        'bing.com/' not in candidate or '/search?' not in candidate
+                    ):
+                        decoded = candidate
+                        break
+            except Exception:  # noqa: BLE001
+                continue
+            if not decoded or decoded in bing_serp_screenshots:
+                continue
+            out_path = f"/tmp/serp_ad_{int(time.time() * 1000)}_{page}_{idx}.png"
+            # capture_serp_card_screenshot walks up for Google-specific
+            # ancestors and falls back to the element it was handed when
+            # none match — so passing the Bing ad container directly
+            # screenshots the whole card, which is exactly what we want.
+            if capture_serp_card_screenshot(driver, container, out_path):
+                bing_serp_screenshots[decoded] = out_path
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] Bing SERP ad-card capture pass failed: {exc}", file=sys.stderr)
+
     soup = BeautifulSoup(page_source, "html.parser")
     # Crude size sanity check — if the page is suspiciously small, we
     # probably hit a consent banner / interstitial / redirect rather
@@ -1925,7 +1965,7 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
         seen_hrefs.add(href)
         parsed = urlparse(href)
         full_url = f"{parsed.scheme}://{parsed.netloc}"
-        results.append({
+        result_row = {
             "url": href,
             "full_url": full_url,
             "title": title,
@@ -1935,7 +1975,10 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
             "overall_position": overall_position,
             "keyword": keyword,
             "country": country,
-        })
+        }
+        if href in bing_serp_screenshots:
+            result_row["local_serp_screenshot"] = bing_serp_screenshots[href]
+        results.append(result_row)
         overall_position += 1
 
     # ----- Organic -----
