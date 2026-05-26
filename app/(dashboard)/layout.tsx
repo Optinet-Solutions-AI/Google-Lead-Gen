@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { DashboardShell } from './_components/dashboard-shell'
@@ -26,6 +27,17 @@ export default async function DashboardLayout({
     const svc = createServiceClient()
     const { data } = await svc.rpc('is_admin', { p_user_id: user.id })
     isAdmin = data === true
+  }
+
+  // Maintenance gate. If the flag is ON and the caller is not an admin,
+  // redirect to /maintenance regardless of which dashboard page they hit.
+  // Admins keep full access so they can deploy / migrate / debug.
+  if (!isAdmin) {
+    const svc = createServiceClient()
+    const { data: maintRaw } = await svc.rpc('get_system_setting', {
+      p_key: 'maintenance_mode',
+    })
+    if (maintRaw === true) redirect('/maintenance')
   }
 
   return (

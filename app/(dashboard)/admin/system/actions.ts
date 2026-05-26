@@ -63,3 +63,50 @@ export async function setHitlEnabledAction(
       : 'Captcha helper is now OFF — captchas will fail the job (status=captcha) instead of waiting for a human.',
   }
 }
+
+export async function setMaintenanceModeAction(
+  _prev: SettingState,
+  fd: FormData,
+): Promise<SettingState> {
+  const auth = await requireAdmin()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+
+  const raw = String(fd.get('value') ?? '').trim().toLowerCase()
+  const next = raw === 'true'
+
+  const svc = createServiceClient()
+  const { error } = await svc.rpc('set_system_setting', {
+    p_key: 'maintenance_mode',
+    p_value: next,
+  })
+  if (error) return { status: 'error', error: error.message }
+
+  // Boot every non-admin session on enable so they get redirected to
+  // /maintenance immediately instead of waiting for their next request.
+  let kicked = 0
+  if (next) {
+    const { data: kickCount, error: kickErr } = await svc.rpc('force_logout_non_admins')
+    if (kickErr) {
+      // Non-fatal — the layout gate will still catch them on next request.
+      console.error('[maintenance] force_logout_non_admins failed:', kickErr)
+    } else if (typeof kickCount === 'number') {
+      kicked = kickCount
+    }
+  }
+
+  await logActivity({
+    action: next ? 'system_settings.maintenance_enable' : 'system_settings.maintenance_disable',
+    entity_type: 'system_setting',
+    entity_id: null,
+    details: { key: 'maintenance_mode', value: next, kicked },
+  })
+
+  revalidatePath('/admin/system')
+  revalidatePath('/', 'layout')
+  return {
+    status: 'ok',
+    message: next
+      ? `Maintenance mode ON — non-admin sessions cleared (${kicked}) and sign-ins blocked.`
+      : 'Maintenance mode OFF — everyone can sign back in.',
+  }
+}

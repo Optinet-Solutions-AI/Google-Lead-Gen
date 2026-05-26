@@ -2,8 +2,12 @@
 
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 
 export type LoginState = { error: string } | null
+
+const MAINTENANCE_NOTICE =
+  'Hi Everyone, we are doing major revisions in the backend today and the lead gen tool will be temporarily unavailable. Sorry for the inconvenience.'
 
 /** Supabase requires email — we map usernames to <username>@rooster.local. */
 const EMAIL_DOMAIN = '@rooster.local'
@@ -28,11 +32,28 @@ export async function signInAction(
   const email = usernameToEmail(username)
 
   const supabase = await createClient()
-  const { error } = await supabase.auth.signInWithPassword({ email, password })
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
 
   if (error) {
     // Don't leak Supabase's internal error shape to the UI.
     return { error: 'Invalid username or password.' }
+  }
+
+  // Maintenance gate. Admins always get through; everyone else gets the
+  // notice and their fresh session is revoked so they can't slip past.
+  if (data.user?.id) {
+    const svc = createServiceClient()
+    const [
+      { data: maintRaw },
+      { data: isAdmin },
+    ] = await Promise.all([
+      svc.rpc('get_system_setting', { p_key: 'maintenance_mode' }),
+      svc.rpc('is_admin', { p_user_id: data.user.id }),
+    ])
+    if (maintRaw === true && isAdmin !== true) {
+      await supabase.auth.signOut()
+      return { error: MAINTENANCE_NOTICE }
+    }
   }
 
   const safeRedirect = isSafePath(from) ? from : '/monday/leads'

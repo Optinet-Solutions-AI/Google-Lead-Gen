@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { HitlToggle } from './_components/hitl-toggle'
+import { MaintenanceToggle } from './_components/maintenance-toggle'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,10 +20,12 @@ export default async function AdminSystemPage() {
   // Fetch the current value. The RPC returns jsonb; we coerce to a strict
   // boolean defaulting to true (the schema seeded that, but be defensive
   // against missing/legacy rows).
-  const { data: hitlRaw } = await svc.rpc('get_system_setting', {
-    p_key: 'hitl_enabled',
-  })
+  const [{ data: hitlRaw }, { data: maintRaw }] = await Promise.all([
+    svc.rpc('get_system_setting', { p_key: 'hitl_enabled' }),
+    svc.rpc('get_system_setting', { p_key: 'maintenance_mode' }),
+  ])
   const hitlEnabled = hitlRaw === false ? false : true
+  const maintenanceEnabled = maintRaw === true
 
   return (
     <div className="flex min-w-0 flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
@@ -53,6 +56,23 @@ export default async function AdminSystemPage() {
         </header>
 
         <HitlToggle enabled={hitlEnabled} />
+      </section>
+
+      <section className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-4">
+        <header className="mb-3">
+          <h2 className="text-[13px] font-semibold text-[color:var(--color-text-primary)]">
+            Maintenance mode
+          </h2>
+          <p className="mt-1 max-w-3xl text-[11px] text-[color:var(--color-text-secondary)]">
+            When ON, every non-admin user is signed out and any sign-in
+            attempt by a non-admin is rejected — they see a maintenance
+            notice instead. Admins keep full access so deploys and
+            migrations can land safely. Toggle OFF when work is done to
+            let everyone back in.
+          </p>
+        </header>
+
+        <MaintenanceToggle enabled={maintenanceEnabled} />
       </section>
     </div>
   )
