@@ -170,10 +170,62 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // ----------------------------------------------------------------
+  // PPC screenshot safety net — ensure every PPC lead gets enriched
+  // (and therefore screenshotted) even when the user queued the scrape
+  // without with_enrichment, or when the scrape engine has no scrape-
+  // time screenshot path (Bing). We find PPC leads from the last 24h
+  // that have no screenshot AND no fetch row yet, and enqueue affiliate
+  // detection with want_screenshot=true.
+  // ----------------------------------------------------------------
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const { data: orphanPpc } = await svc
+    .from('google_lead_gen_table')
+    .select('id, country_code, url, scrape_job_id')
+    .eq('result_type', 'PPC')
+    .is('screenshot_content_link', null)
+    .neq('is_not_relevant', true)
+    .gte('created_at', since)
+    .order('id', { ascending: false })
+    .limit(50)
+  const ppcCandidates = ((orphanPpc ?? []) as Array<{
+    id: number
+    country_code: string | null
+    url: string | null
+    scrape_job_id: string | null
+  }>).filter(r => r.country_code && r.url && r.url.startsWith('http'))
+
+  let ppcEnqueued = 0
+  if (ppcCandidates.length > 0) {
+    const ids = ppcCandidates.map(r => r.id)
+    const { data: existingFetches } = await svc
+      .from('enrichment_fetch_queue')
+      .select('lead_id')
+      .in('lead_id', ids)
+    const alreadyEnqueued = new Set(
+      ((existingFetches ?? []) as Array<{ lead_id: number }>).map(r => r.lead_id),
+    )
+    const toInsert = ppcCandidates
+      .filter(r => !alreadyEnqueued.has(r.id))
+      .map(r => ({
+        lead_id: r.id,
+        country_code: r.country_code!,
+        url: r.url!,
+        want_html: true,
+        want_screenshot: true,
+        process_stages: ['affiliate'],
+      }))
+    if (toInsert.length > 0) {
+      const { error: insErr } = await svc.from('enrichment_fetch_queue').insert(toInsert)
+      if (!insErr) ppcEnqueued = toInsert.length
+    }
+  }
+
   return Response.json({
     ok: true,
     now: now.toISOString(),
     runs,
     enrichment_advances: advances,
+    ppc_screenshot_enqueued: ppcEnqueued,
   })
 }
