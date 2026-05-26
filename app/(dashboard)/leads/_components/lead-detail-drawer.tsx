@@ -296,7 +296,9 @@ export function LeadDetailDrawer({
         <div className="flex-1 overflow-y-auto">
           {loading && <Loading />}
           {error && <ErrorPanel message={error} />}
-          {detail && !loading && !error && <DetailBody detail={detail} />}
+          {detail && !loading && !error && (
+            <DetailBody detail={detail} onOpenLead={onNavigate} />
+          )}
         </div>
       </aside>
     </>
@@ -319,7 +321,13 @@ function ErrorPanel({ message }: { message: string }) {
   )
 }
 
-function DetailBody({ detail }: { detail: Detail }) {
+function DetailBody({
+  detail,
+  onOpenLead,
+}: {
+  detail: Detail
+  onOpenLead?: ((id: number) => void) | undefined
+}) {
   const lead = detail.lead
   if (!lead) {
     return (
@@ -627,6 +635,64 @@ function DetailBody({ detail }: { detail: Detail }) {
           </ul>
         )}
       </Section>
+
+      <Section
+        title={`Owner network (${detail.cohort.length})`}
+        subtitle="Other affiliate sites that share at least one s-tag value with this lead — strong signal of common operator."
+      >
+        {detail.cohort.length === 0 ? (
+          <p className="text-[color:var(--color-text-secondary)]">
+            {detail.stags.length === 0
+              ? 'No s-tags collected yet — owner network unavailable until enrichment completes.'
+              : 'No other lead shares any s-tag with this one yet.'}
+          </p>
+        ) : (
+          <ul className="space-y-1.5">
+            {detail.cohort.map(sib => {
+              const display = sib.domain || sib.url || `lead #${sib.lead_id}`
+              const Wrap: React.ElementType = onOpenLead ? 'button' : 'div'
+              return (
+                <li key={sib.lead_id}>
+                  <Wrap
+                    {...(onOpenLead
+                      ? {
+                          type: 'button',
+                          onClick: () => onOpenLead(sib.lead_id),
+                        }
+                      : {})}
+                    className={[
+                      'flex w-full items-center justify-between gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-2.5 py-2 text-left text-[11px]',
+                      onOpenLead
+                        ? 'cursor-pointer transition-colors hover:bg-[color:var(--color-bg-primary)]'
+                        : '',
+                    ].join(' ')}
+                  >
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate font-medium text-[color:var(--color-text-primary)]">
+                        {display}
+                      </span>
+                      <span className="text-[10px] text-[color:var(--color-text-secondary)]">
+                        {sib.country_code ?? '—'} · {sib.shared_count} shared{' '}
+                        {sib.shared_count === 1 ? 's-tag' : 's-tags'}
+                      </span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1">
+                      {sib.is_rooster_partner && (
+                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-medium text-rose-800">
+                          Rooster
+                        </span>
+                      )}
+                      <span className="rounded-full bg-[color:var(--color-bg-primary)] px-2 py-0.5 font-mono text-[10px] text-[color:var(--color-text-secondary)]">
+                        ×{sib.shared_count}
+                      </span>
+                    </span>
+                  </Wrap>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </Section>
     </div>
   )
 }
@@ -736,12 +802,23 @@ function ScreenshotSection({
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string
+  subtitle?: string
+  children: React.ReactNode
+}) {
   return (
     <section className="flex flex-col gap-1">
       <h3 className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
         {title}
       </h3>
+      {subtitle && (
+        <p className="text-[10px] text-[color:var(--color-text-secondary)]">{subtitle}</p>
+      )}
       <div className="flex flex-col gap-1 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2">
         {children}
       </div>

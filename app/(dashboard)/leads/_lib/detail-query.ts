@@ -27,6 +27,23 @@ export type StagDetail = {
   extracted_via: string | null
 }
 
+/** One sibling lead that shares at least one s-tag value with the
+ *  current lead — strong (not definitive) evidence of common
+ *  ownership across affiliate sites. Returned by find_lead_cohort. */
+export type CohortSibling = {
+  lead_id: number
+  domain: string | null
+  url: string | null
+  country_code: string | null
+  is_rooster_partner: boolean | null
+  shared_count: number
+  shared_tags: Array<{
+    s_tag: string
+    source_param: string | null
+    brand: string | null
+  }>
+}
+
 export type LeadDetail = {
   lead: {
     id: number
@@ -81,6 +98,11 @@ export type LeadDetail = {
   } | null
   contact: ContactDetail | null
   stags: StagDetail[]
+  /** Other affiliate sites that share at least one s-tag with this
+   *  one — the operator workflow uses this to decide whether the
+   *  whole network should be pushed to Monday at once. Empty when
+   *  this lead has no s-tags yet or no siblings share its tags. */
+  cohort: CohortSibling[]
   /** Pre-signed URL to the landing-page screenshot PNG (captured during
    *  enrichment), valid ~1h. Null when no screenshot exists or it's
    *  been deleted. */
@@ -186,10 +208,26 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
     }),
   )
 
+  // Owner-network cohort: every other lead in the DB that shares at
+  // least one s-tag value with this one. Best-effort — the RPC itself
+  // is harmless to fail and shouldn't block drawer load.
+  let cohort: CohortSibling[] = []
+  if (stags.length > 0) {
+    const { data: cohortRows, error: cohortErr } = await svc.rpc('find_lead_cohort', {
+      p_lead_id: leadId,
+    })
+    if (cohortErr) {
+      console.error(`[loadLeadDetail/cohort/${leadId}]`, cohortErr)
+    } else {
+      cohort = (cohortRows ?? []) as CohortSibling[]
+    }
+  }
+
   return {
     lead,
     contact: (contactRes.data ?? null) as ContactDetail | null,
     stags,
+    cohort,
     screenshot_url: screenshotUrl,
     serp_screenshot_url: serpScreenshotUrl,
   }
