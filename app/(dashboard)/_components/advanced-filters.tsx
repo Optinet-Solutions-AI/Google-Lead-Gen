@@ -50,8 +50,22 @@ export function AdvancedFilters({ columns, preserve = [] }: Props) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
-  const filters = useMemo(() => parseFilters(searchParams.getAll('f')), [searchParams])
-  const sorts = useMemo(() => parseSorts(searchParams.getAll('s')), [searchParams])
+  // Key parsed filters/sorts off the raw URL strings, not the searchParams
+  // reference. `useSearchParams()` can hand back a new ReadonlyURLSearchParams
+  // instance on `router.refresh()` even when the query hasn't changed — that
+  // would otherwise invalidate the parsed arrays and the re-sync effect below
+  // would wipe a user's in-progress draft every time AutoRefresh ticks on the
+  // scrape page. Values are URI-encoded so '\n' is safe as a join separator.
+  const filtersSig = searchParams.getAll('f').join('\n')
+  const sortsSig = searchParams.getAll('s').join('\n')
+  const filters = useMemo(
+    () => parseFilters(filtersSig ? filtersSig.split('\n') : []),
+    [filtersSig],
+  )
+  const sorts = useMemo(
+    () => parseSorts(sortsSig ? sortsSig.split('\n') : []),
+    [sortsSig],
+  )
   const q = searchParams.get('q') ?? ''
 
   const filterableCols = useMemo(() => columns.filter(c => c.filterable), [columns])
