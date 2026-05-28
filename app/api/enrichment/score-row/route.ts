@@ -60,7 +60,7 @@ export async function POST(req: Request): Promise<Response> {
   const svc = createServiceClient()
   const { data: lead, error: leadErr } = await svc
     .from('google_lead_gen_table')
-    .select('id, url, domain, country_code, result_type, is_contact_overridden_at')
+    .select('id, url, domain, country_code, result_type, is_contact_overridden_at, monday_board')
     .eq('id', leadId)
     .maybeSingle()
   if (leadErr) {
@@ -85,6 +85,7 @@ export async function POST(req: Request): Promise<Response> {
   const url = (lead as { url: string | null }).url ?? ''
   const domain = (lead as { domain: string | null }).domain ?? null
   const countryCode = (lead as { country_code: string | null }).country_code ?? null
+  const mondayBoard = (lead as { monday_board: string | null }).monday_board ?? null
   const contactOverridden =
     (lead as { is_contact_overridden_at: string | null }).is_contact_overridden_at !== null
 
@@ -109,6 +110,23 @@ export async function POST(req: Request): Promise<Response> {
   // ----- inner handlers -----
   async function scoreAffiliateStage(): Promise<Response> {
     if (fetchError) {
+      // If the lead is already on Monday's Affiliates board, trust that
+      // signal over the failed fetch instead of leaving is_affiliate null.
+      if (mondayBoard === 'affiliates') {
+        await svc
+          .from('google_lead_gen_table')
+          .update({
+            is_affiliate: true,
+            affiliate_confidence: 'MONDAY_AFFILIATE_BOARD',
+            affiliate_indicators: [
+              'Already on Monday Affiliates board',
+              `Fetch failed: ${fetchError}`,
+            ],
+            affiliate_checked_at: now,
+          })
+          .eq('id', leadId)
+        return NextResponse.json({ ok: true, status: 'monday_affiliate_inferred' })
+      }
       await svc
         .from('google_lead_gen_table')
         .update({

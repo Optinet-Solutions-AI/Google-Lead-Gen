@@ -355,7 +355,7 @@ export async function runAffiliateDetection(
   const svc = createServiceClient()
   const { data: leads, error: leadsErr } = await svc
     .from('google_lead_gen_table')
-    .select('id, url, domain, country_code, result_type')
+    .select('id, url, domain, country_code, result_type, monday_board')
     .eq('scrape_job_id', jobId)
     .is('is_affiliate_overridden_at', null)
   if (leadsErr) return { status: 'error', error: safeError(leadsErr, 'Failed to load leads for this job.') }
@@ -378,10 +378,27 @@ export async function runAffiliateDetection(
     domain: string | null
     country_code: string | null
     result_type: string | null
+    monday_board: string | null
   }>) {
     const url = lead.url ?? ''
     if (!url || !url.startsWith('http')) continue
     if (!lead.country_code) continue
+    // Already classified on Monday's Affiliates board — trust that signal
+    // and skip the fetch. Avoids wasted work and prevents "fetch failed"
+    // rows from showing as unknown when we already know they're affiliates.
+    if (lead.monday_board === 'affiliates') {
+      await svc
+        .from('google_lead_gen_table')
+        .update({
+          is_affiliate: true,
+          affiliate_confidence: 'MONDAY_AFFILIATE_BOARD',
+          affiliate_indicators: ['Already on Monday Affiliates board'],
+          affiliate_checked_at: now,
+        })
+        .eq('id', lead.id)
+      skippedCount++
+      continue
+    }
     if (shouldSkipDomain(lead.domain)) {
       await svc
         .from('google_lead_gen_table')
