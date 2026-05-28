@@ -1060,6 +1060,101 @@ export async function rerunScrapeFiltered(
   }
 }
 
+// Re-queue a clone of the source job with view_mode forced to 'mobile'.
+// Triggered from the scrape detail page when the original 'both' job's
+// mobile pass got silently aborted on a captcha — the desktop results
+// are intact, but we never captured the mobile breakdown for the
+// keyword. The clone returns the mobile data via the regular Captcha
+// solver path (no silent abort in 'mobile' mode).
+export type RerunMobileOnlyState =
+  | { status: 'ok'; message: string; newJobId: string }
+  | { status: 'error'; error: string }
+  | null
+
+export async function rerunMobileOnly(
+  _prev: RerunMobileOnlyState,
+  fd: FormData,
+): Promise<RerunMobileOnlyState> {
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+  const { data: job, error: readErr } = await svc
+    .from('scrape_queue')
+    .select('keyword, country_code, pages, priority, with_enrichment, language, search_engine, view_mode, result_type_filter, result_summary, created_by_email, created_by_username, created_by_display')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (readErr) return { status: 'error', error: safeError(readErr, 'Failed to load the source job.') }
+  if (!job) return { status: 'error', error: 'Original job not found.' }
+  const j = job as {
+    keyword: string
+    country_code: string
+    pages: number
+    priority: number
+    with_enrichment: boolean
+    language: string | null
+    search_engine: 'google' | 'bing' | 'youtube' | null
+    view_mode: 'desktop' | 'mobile' | 'both' | null
+    result_type_filter: 'PPC' | 'Organic' | null
+    result_summary: Record<string, unknown> | null
+    created_by_email: string | null
+    created_by_username: string | null
+    created_by_display: string | null
+  }
+
+  // Guardrail: only meaningful when the source actually had its mobile
+  // pass captcha-aborted. If the operator triggers this from any other
+  // state (e.g. clean 'both' job, mobile-only job) the rerun would just
+  // duplicate work or hit the same captcha — refuse politely instead of
+  // silently queueing.
+  const skipped = j.result_summary?.['mobile_pass_skipped']
+  if (skipped !== 'captcha') {
+    return {
+      status: 'error',
+      error: 'This job\'s mobile pass was not captcha-aborted — nothing to re-run.',
+    }
+  }
+
+  const { data: inserted, error: insertError } = await svc
+    .from('scrape_queue')
+    .insert({
+      keyword: j.keyword,
+      country_code: j.country_code,
+      pages: j.pages,
+      priority: j.priority,
+      with_enrichment: j.with_enrichment,
+      language: j.language ?? 'en',
+      search_engine: j.search_engine ?? 'google',
+      view_mode: 'mobile',
+      result_type_filter: j.result_type_filter,
+      created_by_email: j.created_by_email,
+      created_by_username: j.created_by_username,
+      created_by_display: j.created_by_display,
+    })
+    .select('id')
+    .single()
+  if (insertError || !inserted) {
+    return { status: 'error', error: safeError(insertError, 'Failed to queue the mobile-only re-run.') }
+  }
+  const newJobId = (inserted as { id: string }).id
+
+  await logActivity({
+    action: 'scrape.rerun_mobile_only',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { keyword: j.keyword, new_job_id: newJobId },
+  })
+
+  revalidatePath('/scrape')
+  return {
+    status: 'ok',
+    newJobId,
+    message: `Queued a mobile-only re-run for "${j.keyword}".`,
+  }
+}
+
 async function checkConfirmation(
   jobId: string,
   confirmationText: string,

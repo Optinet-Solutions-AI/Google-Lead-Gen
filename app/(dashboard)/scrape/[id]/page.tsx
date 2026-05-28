@@ -15,6 +15,7 @@ import {
 } from '../../leads/_lib/query'
 import { AutoRefresh } from '../_components/auto-refresh'
 import { CaptchaRecoveryBanner } from '../_components/captcha-recovery-banner'
+import { MobileSkippedRetryBanner } from '../_components/mobile-skipped-retry-banner'
 import { EnrichmentStages } from '../_components/enrichment-stages'
 import { fetchStageSummary } from '../_lib/queries'
 
@@ -109,7 +110,15 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const filters = parseFilters(sp.f)
   const sorts = parseSorts(sp.s)
 
-  const [{ rows, total }, stageSummary] = await Promise.all([
+  // The mobile-skipped retry banner needs the Captcha solver flag so it
+  // can warn the operator when the solver is off (a mobile-only retry on
+  // a captcha-trippy keyword will just abort again). Fetched here so the
+  // banner stays a client component without its own RSC fetch.
+  const mobileCaptchaAborted =
+    job.view_mode === 'both' &&
+    job.result_summary?.['mobile_pass_skipped'] === 'captcha'
+
+  const [{ rows, total }, stageSummary, captchaSolverEnabled] = await Promise.all([
     queryLeads({
       page,
       size,
@@ -123,6 +132,11 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       sorts,
     }),
     fetchStageSummary(id),
+    mobileCaptchaAborted
+      ? svc
+          .rpc('get_system_setting', { p_key: 'captcha_solver_enabled' })
+          .then(({ data }) => data !== false)
+      : Promise.resolve(true),
   ])
 
   // Country and batch are constant for one job, so drop them from the
@@ -183,6 +197,13 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
 
       {job.status === 'captcha' && (
         <CaptchaRecoveryBanner jobId={job.id} errorMessage={job.error_message} />
+      )}
+
+      {mobileCaptchaAborted && (
+        <MobileSkippedRetryBanner
+          jobId={job.id}
+          captchaSolverEnabled={captchaSolverEnabled}
+        />
       )}
 
       <EnrichmentStages jobId={job.id} summary={stageSummary} />
@@ -281,7 +302,7 @@ function JobMeta({ job }: { job: Job }) {
           </dd>
         </div>
       ))}
-      {mobileRequested && mobileSkipped && (
+      {mobileRequested && mobileSkipped && mobileSkipped !== 'captcha' && (
         <div className="col-span-full mt-1 rounded-md bg-amber-50 px-3 py-2 text-amber-800">
           <span className="font-medium">Mobile pass skipped:</span>{' '}
           {mobileSkippedExplanation(mobileSkipped)}
