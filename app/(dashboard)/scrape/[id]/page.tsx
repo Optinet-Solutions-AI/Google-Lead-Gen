@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
 import { parseFilters, parseSorts } from '@/lib/filters/serialize'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -58,6 +58,18 @@ const STATUS_STYLES: Record<Job['status'], string> = {
 
 export const dynamic = 'force-dynamic'
 
+async function countNotRelevantInJob(
+  svc: ReturnType<typeof createServiceClient>,
+  jobId: string,
+): Promise<number> {
+  const { count } = await svc
+    .from('google_lead_gen_table')
+    .select('id', { head: true, count: 'exact' })
+    .eq('scrape_job_id', jobId)
+    .eq('is_not_relevant', true)
+  return count ?? 0
+}
+
 export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const { id } = await params
   const sp = await searchParams
@@ -109,6 +121,12 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const resultType = typeof sp.result_type === 'string' ? sp.result_type : ''
   const filters = parseFilters(sp.f)
   const sorts = parseSorts(sp.s)
+  // Default: hide rows flagged is_not_relevant — which now includes
+  // Monday duplicates (existing), manual user flags (existing), AND
+  // casino-operator domains auto-flagged at enrichment time
+  // (20260528200000_operator_denylist.sql). `?show_hidden=1` shows
+  // every row. Mirrors the /leads toggle so the UX is consistent.
+  const showHidden = sp.show_hidden === '1'
 
   // The mobile-skipped retry banner needs the Captcha solver flag so it
   // can warn the operator when the solver is off (a mobile-only retry on
@@ -118,7 +136,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
     job.view_mode === 'both' &&
     job.result_summary?.['mobile_pass_skipped'] === 'captcha'
 
-  const [{ rows, total }, stageSummary, captchaSolverEnabled] = await Promise.all([
+  const [{ rows, total }, hiddenCount, stageSummary, captchaSolverEnabled] = await Promise.all([
     queryLeads({
       page,
       size,
@@ -130,7 +148,9 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       scrapeJobId: id,
       filters,
       sorts,
+      includeNotRelevant: showHidden,
     }),
+    countNotRelevantInJob(svc, id),
     fetchStageSummary(id),
     mobileCaptchaAborted
       ? svc
@@ -138,6 +158,18 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
           .then(({ data }) => data !== false)
       : Promise.resolve(true),
   ])
+
+  const toggleHref = (() => {
+    const next = new URLSearchParams()
+    for (const [k, v] of Object.entries(sp)) {
+      if (k === 'show_hidden' || k === 'page') continue
+      if (typeof v === 'string') next.set(k, v)
+      else if (Array.isArray(v)) for (const item of v) next.append(k, item)
+    }
+    if (!showHidden) next.set('show_hidden', '1')
+    const qs = next.toString()
+    return qs ? `/scrape/${id}?${qs}` : `/scrape/${id}`
+  })()
 
   // Country and batch are constant for one job, so drop them from the
   // filter dropdowns; URL is constant so omitting them keeps the picker tidy.
@@ -179,17 +211,38 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
               <span className="text-[color:var(--color-text-primary)]">
                 {total.toLocaleString()}
               </span>
-              {' '}row{total === 1 ? '' : 's'} scraped
+              {' '}row{total === 1 ? '' : 's'}
+              {!showHidden && hiddenCount > 0 && (
+                <span className="ml-1">
+                  · {hiddenCount.toLocaleString()} hidden as not relevant
+                </span>
+              )}
             </p>
           </div>
-          <span
-            className={[
-              'shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium',
-              STATUS_STYLES[job.status],
-            ].join(' ')}
-          >
-            {job.status}
-          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            {(showHidden || hiddenCount > 0) && (
+              <Link
+                href={toggleHref}
+                className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]"
+                title={
+                  showHidden
+                    ? 'Hide rows marked as not relevant'
+                    : 'Include rows marked as not relevant (operators, Monday duplicates, manual flags) in the table below'
+                }
+              >
+                {showHidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                {showHidden ? 'Hide not-relevant' : `Show not-relevant (${hiddenCount})`}
+              </Link>
+            )}
+            <span
+              className={[
+                'shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium',
+                STATUS_STYLES[job.status],
+              ].join(' ')}
+            >
+              {job.status}
+            </span>
+          </div>
         </div>
       </header>
 
@@ -209,7 +262,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       <EnrichmentStages jobId={job.id} summary={stageSummary} />
 
       <div className="pt-2">
-        <AdvancedFilters columns={columns} />
+        <AdvancedFilters columns={columns} preserve={['show_hidden']} />
       </div>
 
       <LeadsTable rows={rows} jobContext />
