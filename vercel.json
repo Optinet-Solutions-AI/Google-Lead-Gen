@@ -6,8 +6,20 @@
       "schedule": "* * * * *"
     },
     {
-      "path": "/api/monday/sync",
+      "path": "/api/monday/sync?board=leads",
       "schedule": "0 23 * * *"
+    },
+    {
+      "path": "/api/monday/sync?board=affiliates",
+      "schedule": "10 23 * * *"
+    },
+    {
+      "path": "/api/monday/sync?board=not_relevant_leads",
+      "schedule": "20 23 * * *"
+    },
+    {
+      "path": "/api/monday/sync?board=email_undelivered_leads",
+      "schedule": "30 23 * * *"
     }
   ]
 }

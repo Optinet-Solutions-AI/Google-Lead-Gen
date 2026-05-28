@@ -2,7 +2,7 @@
 // loaded by the Node CLI script (scripts/monday/sync.ts), and the
 // `server-only` package throws unconditionally in plain Node contexts.
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { BOARDS, type BoardConfig } from '@/lib/monday/board-registry'
+import { BOARDS, type BoardConfig, type BoardKey } from '@/lib/monday/board-registry'
 import { mondayGQL, sleep, ITEM_FIELDS, UPDATE_FIELDS } from '@/lib/monday/graphql'
 import {
   mapItemToRow,
@@ -163,16 +163,26 @@ function defaultSupabase(): SupabaseClient {
   })
 }
 
-/** Full re-sync of all 4 Monday boards. Continues past per-board failures
- *  so a single bad board doesn't take down the rest of the run. */
+/** Re-sync one or all Monday boards. Continues past per-board failures
+ *  so a single bad board doesn't take down the rest of the run.
+ *
+ *  Pass `boardKey` to sync a single board — used by Vercel crons that
+ *  split the four boards across separate invocations so each gets its
+ *  own 300s function budget (the combined sync was running out of time
+ *  on the leads board and starving affiliates/not_relevant/email_undelivered).
+ */
 export async function runMondaySync(opts?: {
   supabase?: SupabaseClient
   onProgress?: (msg: string) => void
+  boardKey?: BoardKey
 }): Promise<SyncRunResult> {
   const supabase = opts?.supabase ?? defaultSupabase()
   const startedAt = Date.now()
   const results: SyncBoardResult[] = []
-  for (const board of BOARDS) {
+  const boards = opts?.boardKey
+    ? BOARDS.filter(b => b.key === opts.boardKey)
+    : BOARDS
+  for (const board of boards) {
     const r = await syncBoard(supabase, board, opts?.onProgress)
     results.push(r)
   }
