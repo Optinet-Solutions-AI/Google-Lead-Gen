@@ -169,17 +169,20 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
       )}
 
       {/* Desktop — table */}
-      {/* overflow-x-auto restores the per-table horizontal scrollbar.
-       *  overflow-y-visible (explicit) tells modern browsers not to
-       *  treat the wrapper as a vertical scroll container, so the
-       *  sticky thead pins to the viewport instead of the wrapper. */}
-      <div className="hidden overflow-x-auto overflow-y-visible rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
+      {/* No inner overflow: per CSS spec, overflow-x:auto + overflow-y:visible
+       *  still promotes the y-axis to a scroll container, which traps the
+       *  sticky <th> inside the wrapper. On tall tables (e.g. /scrape/[id]?size=100)
+       *  scrolling the page then lifts the whole wrapper — and the "sticky"
+       *  header — above the viewport. Letting the page own both axes keeps
+       *  per-cell sticky pinned to the viewport top. Wide tables fall back to
+       *  page-level horizontal scroll, which is acceptable for this layout. */}
+      <div className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
           {/* Sticky lives on each <th> below (not on <thead>). HTML
            *  table layout doesn't reliably honour position:sticky on
            *  the row-group element across browsers; per-cell sticky
            *  works everywhere. */}
-          <thead className="bg-[color:var(--color-bg-secondary)]">
+          <thead className="bg-[color:var(--color-border-strong)]">
             <tr>
               {selectMode && (
                 <Th className="w-8 px-2">
@@ -604,7 +607,7 @@ function Th({ children, className }: { children: React.ReactNode; className?: st
       // transparent in the stuck state and body rows would bleed
       // through underneath.
       className={[
-        'sticky top-0 z-20 whitespace-nowrap border-b border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-left align-middle',
+        'sticky top-0 z-20 whitespace-nowrap border-b border-[color:var(--color-border-strong)] bg-[color:var(--color-border-strong)] px-3 py-2 text-left align-middle font-semibold text-[color:var(--color-text-primary)]',
         className ?? '',
       ].join(' ')}
     >

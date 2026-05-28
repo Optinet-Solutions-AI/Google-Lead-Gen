@@ -266,19 +266,21 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
         />
       )}
 
-      {/* overflow-x-auto restores the horizontal scrollbar for wide
-       *  tables. overflow-y-visible (explicit) tells modern browsers
-       *  NOT to treat the wrapper as a vertical scroll container, so
-       *  the sticky thead below pins to the viewport (the page-level
-       *  scroll) instead of getting clipped at the wrapper top. */}
-      <div className="hidden overflow-x-auto overflow-y-visible rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
+      {/* No inner overflow: per CSS spec, overflow-x:auto + overflow-y:visible
+       *  still promotes the y-axis to a scroll container, which traps the
+       *  sticky <th> inside the wrapper. On tall tables (size=100 / size=All)
+       *  scrolling the page lifts the whole wrapper — and the "sticky" header
+       *  — above the viewport. Letting the page own both axes keeps per-cell
+       *  sticky pinned to the viewport. Wide tables fall back to page-level
+       *  horizontal scroll. */}
+      <div className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
           {/* Sticky lives on each <th> below (not on <thead>). HTML
            *  table layout doesn't reliably honour position:sticky on
            *  the row-group element across browsers; per-cell sticky
            *  works everywhere. The bg here keeps the row dark when
            *  the cells transition into stuck state. */}
-          <thead className="bg-[color:var(--color-bg-secondary)]">
+          <thead className="bg-[color:var(--color-border-strong)]">
             <tr>
               {selectMode && (
                 <Th>
@@ -447,7 +449,7 @@ function Th({ children }: { children: React.ReactNode }) {
       // Background colour is non-negotiable here — the cell would be
       // transparent in the stuck state and body rows would bleed
       // through underneath.
-      className="sticky top-0 z-20 whitespace-nowrap border-b border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]"
+      className="sticky top-0 z-20 whitespace-nowrap border-b border-[color:var(--color-border-strong)] bg-[color:var(--color-border-strong)] px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-primary)]"
     >
       {children}
     </th>
