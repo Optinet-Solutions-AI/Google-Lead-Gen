@@ -51,7 +51,11 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
   const canNext = page < totalPages
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[color:var(--color-border)] px-3 py-2 text-[12px] text-[color:var(--color-text-secondary)]">
+    // pr-20: reserve ~80px on the right so the prev/next chevrons stay
+    // clear of the floating QA-feedback widget (fixed bottom-20 right-4,
+    // 48px square) — without it the > button is unclickable when the
+    // pagination row lines up with the widget's viewport band.
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[color:var(--color-border)] px-3 py-2 pr-20 text-[12px] text-[color:var(--color-text-secondary)]">
       <span>
         {total === 0
           ? 'No rows'
