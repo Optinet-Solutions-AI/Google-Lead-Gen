@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server'
 import { CronExpressionParser } from 'cron-parser'
 import { createServiceClient } from '@/lib/supabase/service'
 import { requireBearer } from '@/lib/auth/bearer'
+import { decodeAdUrl } from '@/lib/decode-ad-url'
 
 // Vercel cron sends GET — alias to the same handler as manual POSTs.
 export async function GET(request: NextRequest) {
@@ -205,12 +206,16 @@ export async function POST(request: NextRequest) {
     const alreadyEnqueued = new Set(
       ((existingFetches ?? []) as Array<{ lead_id: number }>).map(r => r.lead_id),
     )
+    // Decode Google aclk / Bing ck/a click-tracker URLs so the
+    // enrichment worker visits the real landing page instead of the
+    // redirector (which often expires and bounces to a Bing/Google
+    // error page — that's the "screenshots of google results" report).
     const toInsert = ppcCandidates
       .filter(r => !alreadyEnqueued.has(r.id))
       .map(r => ({
         lead_id: r.id,
         country_code: r.country_code!,
-        url: r.url!,
+        url: decodeAdUrl(r.url!),
         want_html: true,
         want_screenshot: true,
         process_stages: ['affiliate'],
