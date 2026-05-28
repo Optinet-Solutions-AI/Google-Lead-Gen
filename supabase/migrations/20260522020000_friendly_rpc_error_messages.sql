@@ -7,10 +7,12 @@
 --      retry required." which is opaque to non-technical viewers.
 --
 --   2. mark_scrape_job_captcha_terminal — default p_error of
---      "HITL timed out without operator action". The Python worker
---      always passes an explicit friendly override so new rows from
---      vm/worker.py don't see this; but the default is what shows
---      up if any other caller forgets to pass p_error.
+--      "HITL timed out without operator action" (legacy wording —
+--      kept here for the historical record; later migrations rewrite
+--      the default to "Captcha helper" and then "Captcha solver").
+--      The Python worker always passes an explicit friendly override
+--      so new rows from vm/worker.py don't see this; but the default
+--      is what shows up if any other caller forgets to pass p_error.
 --
 -- Logic is unchanged in both functions — only the error_message
 -- string literals are rewritten. Pre-existing scrape_queue rows

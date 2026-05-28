@@ -14,14 +14,16 @@ const initial: JobActionState = null
 
 // Shown on the scrape detail page when a job ended in status='captcha'.
 // The recovery flow exists in the row kebab menu on /scrape, but nothing
-// on the detail page told operators what to do — so a missed HITL
-// notification stranded the job with no obvious way forward.
+// on the detail page told operators what to do — so a missed Captcha
+// solver notification stranded the job with no obvious way forward.
 export function CaptchaRecoveryBanner({ jobId, errorMessage }: Props) {
   const [state, action, pending] = useActionState(resetCaptchaRetries, initial)
 
   const hint = (errorMessage ?? '').toLowerCase()
-  const hitlTimedOut =
-    hint.includes('hitl timed out') || hint.includes('nobody was around')
+  const captchaSolverTimedOut =
+    hint.includes('captcha solver timed out') ||
+    hint.includes('hitl timed out') ||
+    hint.includes('nobody was around')
 
   return (
     <section className="rounded-md border border-amber-300 bg-amber-50 p-3">
@@ -32,7 +34,7 @@ export function CaptchaRecoveryBanner({ jobId, errorMessage }: Props) {
         </h2>
       </header>
       <p className="mt-1 text-[12px] leading-relaxed text-amber-900">
-        {hitlTimedOut ? (
+        {captchaSolverTimedOut ? (
           <>
             The captcha checkpoint wasn&apos;t solved in time and the worker
             gave up.{' '}

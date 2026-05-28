@@ -28,7 +28,7 @@ async function requireAdmin(): Promise<
   return { ok: true, user_id: user.id }
 }
 
-export async function setHitlEnabledAction(
+export async function setCaptchaSolverEnabledAction(
   _prev: SettingState,
   fd: FormData,
 ): Promise<SettingState> {
@@ -43,24 +43,24 @@ export async function setHitlEnabledAction(
 
   const svc = createServiceClient()
   const { error } = await svc.rpc('set_system_setting', {
-    p_key: 'hitl_enabled',
+    p_key: 'captcha_solver_enabled',
     p_value: next,
   })
   if (error) return { status: 'error', error: error.message }
 
   await logActivity({
-    action: next ? 'system_settings.hitl_enable' : 'system_settings.hitl_disable',
+    action: next ? 'system_settings.captcha_solver_enable' : 'system_settings.captcha_solver_disable',
     entity_type: 'system_setting',
     entity_id: null,
-    details: { key: 'hitl_enabled', value: next },
+    details: { key: 'captcha_solver_enabled', value: next },
   })
 
   revalidatePath('/admin/system')
   return {
     status: 'ok',
     message: next
-      ? 'Captcha helper is now ON — captchas park to /admin/interactive instead of failing the job.'
-      : 'Captcha helper is now OFF — captchas will fail the job (status=captcha) instead of waiting for a human.',
+      ? 'Captcha solver is now ON — captchas park to /admin/interactive instead of failing the job.'
+      : 'Captcha solver is now OFF — captchas will fail the job (status=captcha) instead of waiting for a human.',
   }
 }
 

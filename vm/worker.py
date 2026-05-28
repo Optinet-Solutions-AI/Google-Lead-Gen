@@ -46,21 +46,23 @@ POLL_INTERVAL        = int(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
 SCRAPE_TIMEOUT_S     = int(os.environ.get("SCRAPE_TIMEOUT_SECONDS", "1200"))  # 20 min
 # When interactive mode is on, the scraper may park at a wall and wait
 # for an admin to resolve via noVNC. With the refresh-loop wrapper in
-# scraper.py (CHECKPOINT_MAX_REFRESH_ATTEMPTS=10, hitl_ttl_minutes=5),
-# the worst case is 10 cycles x 5 min = 50 min of HITL waiting plus the
-# regular 20 min scrape budget = 70 min. 65 min gives a small under-cap
-# so a truly stuck captcha doesn't hold a worker hostage for 70+ min.
-# Set INTERACTIVE_MODE=off to disable.
-INTERACTIVE_MODE          = os.environ.get("INTERACTIVE_MODE", "on").strip().lower() != "off"
+# scraper.py (CHECKPOINT_MAX_REFRESH_ATTEMPTS=10, captcha_solver_ttl_minutes=5),
+# the worst case is 10 cycles x 5 min = 50 min of Captcha solver waiting
+# plus the regular 20 min scrape budget = 70 min. 65 min gives a small
+# under-cap so a truly stuck captcha doesn't hold a worker hostage for
+# 70+ min. Set CAPTCHA_SOLVER_MODE=off to disable.
+CAPTCHA_SOLVER_MODE       = os.environ.get("CAPTCHA_SOLVER_MODE", "on").strip().lower() != "off"
 INTERACTIVE_TIMEOUT_S     = int(os.environ.get("INTERACTIVE_SCRAPE_TIMEOUT_SECONDS", "3900"))  # 65 min
 
 
-def _hitl_enabled_per_db() -> bool:
-    """Read the runtime hitl_enabled flag from public.system_settings via
-    the get_system_setting RPC. Cached short-term per process; refreshed
+def _captcha_solver_enabled_per_db() -> bool:
+    """Read the runtime captcha_solver_enabled flag from public.system_settings
+    via the get_system_setting RPC. Cached short-term per process; refreshed
     on each process_job() invocation by the wrapper below."""
     try:
-        result = supabase.rpc("get_system_setting", {"p_key": "hitl_enabled"}).execute()
+        result = supabase.rpc(
+            "get_system_setting", {"p_key": "captcha_solver_enabled"}
+        ).execute()
         val = result.data
         # RPC returns jsonb. Supabase-py decodes to Python bool/dict/etc.
         # Anything other than `false` (case-insensitive) is treated as on.
@@ -72,20 +74,20 @@ def _hitl_enabled_per_db() -> bool:
     except Exception as exc:  # noqa: BLE001
         # Settings table missing or DB unreachable — keep current behaviour
         # (env-var default) instead of hard-failing the worker.
-        log.warning("hitl_enabled lookup failed (%s) — falling back to env default", exc)
-        return INTERACTIVE_MODE
+        log.warning("captcha_solver_enabled lookup failed (%s) — falling back to env default", exc)
+        return CAPTCHA_SOLVER_MODE
 
 
-def hitl_should_run() -> bool:
+def captcha_solver_should_run() -> bool:
     """The two gates the worker honours, joined with AND:
-      - INTERACTIVE_MODE env var (per-worker kill switch on the VM)
-      - system_settings.hitl_enabled (admin toggle via /admin/system)
-    Both must be true for HITL to actually fire. Env-var off = absolute
-    block regardless of DB; DB off = global block until an admin flips
-    it back on."""
-    if not INTERACTIVE_MODE:
+      - CAPTCHA_SOLVER_MODE env var (per-worker kill switch on the VM)
+      - system_settings.captcha_solver_enabled (admin toggle via /admin/system)
+    Both must be true for the Captcha solver to actually fire. Env-var
+    off = absolute block regardless of DB; DB off = global block until
+    an admin flips it back on."""
+    if not CAPTCHA_SOLVER_MODE:
         return False
-    return _hitl_enabled_per_db()
+    return _captcha_solver_enabled_per_db()
 # MOBILE_PASS_ENABLED — controls whether scraper.py runs its mobile PPC
 # pass after the desktop SERP loop. Default on; set to 'off' on a
 # country/worker where captcha pain is high enough that the extra SERP
@@ -178,14 +180,14 @@ def captcha_job(job_id: str) -> None:
 
 
 def captcha_terminal(job_id: str, error: str | None = None) -> None:
-    """HITL-timeout path: mark the job as terminal 'captcha' without
+    """Captcha-solver-timeout path: mark the job as terminal 'captcha' without
     bumping captcha_attempts so the operator can manually re-queue from
     /admin/interactive. Distinct from captcha_job (which auto-retries
-    up to 10 times) — running auto-retry on HITL captchas would just
-    burn proxy quota cycling the same captcha 10x in 20 minutes."""
+    up to 10 times) — running auto-retry on Captcha-solver-parked jobs
+    would just burn proxy quota cycling the same captcha 10x in 20 minutes."""
     supabase.rpc(
         "mark_scrape_job_captcha_terminal",
-        {"p_job_id": job_id, "p_error": (error or "Couldn't continue — a captcha appeared and nobody was around to solve it. Click 'Re-queue with Captcha helper' on the Interactive page to try again.")[:2000]},
+        {"p_job_id": job_id, "p_error": (error or "Couldn't continue — a captcha appeared and nobody was around to solve it. Click 'Re-queue with Captcha solver' on the Interactive page to try again.")[:2000]},
     ).execute()
 
 
@@ -244,7 +246,7 @@ _FAILURE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"Read timed out|HTTPSConnectionPool.*timeout", re.I),
      "The target site took too long to respond — usually a slow proxy."),
 
-    # ---- HITL / captcha (defensive; markers should normally catch these) ----
+    # ---- Captcha solver / captcha (defensive; markers should normally catch these) ----
     (re.compile(r"captcha|cloudflare.*(challenge|turnstile)|recaptcha", re.I),
      "Search engine showed a captcha that wasn't resolved in time."),
 
@@ -470,14 +472,14 @@ def run_scrape(
     # mobile-pass SERP load costs more than it gains.
     effective_view = view_mode if MOBILE_PASS_ENABLED else "desktop"
     cmd += ["--view-mode", effective_view]
-    # HITL is gated on two flags: INTERACTIVE_MODE env var (per-VM kill
-    # switch) AND system_settings.hitl_enabled (admin toggle via
-    # /admin/system). Both must be true. The DB lookup happens once per
-    # job at this point — not per poll-loop iteration — so the runtime
-    # cost is negligible.
-    hitl_active = bool(job_id) and hitl_should_run()
-    if hitl_active:
-        # When interactive mode is on, hand the scraper enough context
+    # Captcha solver is gated on two flags: CAPTCHA_SOLVER_MODE env var
+    # (per-VM kill switch) AND system_settings.captcha_solver_enabled
+    # (admin toggle via /admin/system). Both must be true. The DB lookup
+    # happens once per job at this point — not per poll-loop iteration —
+    # so the runtime cost is negligible.
+    solver_active = bool(job_id) and captcha_solver_should_run()
+    if solver_active:
+        # When the Captcha solver is on, hand the scraper enough context
         # to write interactive_checkpoints rows. Subprocess timeout
         # also bumps so paused jobs don't get TERM'd while a human is
         # clicking through.
@@ -486,7 +488,7 @@ def run_scrape(
             "--job-id", job_id,
             "--worker-id", WORKER_ID,
         ]
-    timeout_s = INTERACTIVE_TIMEOUT_S if hitl_active else SCRAPE_TIMEOUT_S
+    timeout_s = INTERACTIVE_TIMEOUT_S if solver_active else SCRAPE_TIMEOUT_S
 
     # DISPLAY is set per-port in the scrape-worker@<port>.service systemd
     # drop-in so each worker writes to its own Xvfb. Don't override here
@@ -494,7 +496,7 @@ def run_scrape(
     env = os.environ.copy()
     log.info("launching scraper (port=%d profile=%s log=%s timeout=%ds interactive=%s)",
              GOLOGIN_PORT, profile_id[:8], log_path, timeout_s,
-             "yes" if hitl_active else "no")
+             "yes" if solver_active else "no")
 
     with open(log_path, "w", encoding="utf-8") as log_f:
         result = subprocess.run(
@@ -699,7 +701,7 @@ def process_job(job: dict[str, Any]) -> None:
         )
     except subprocess.TimeoutExpired:
         _kill_port()
-        timeout_used = INTERACTIVE_TIMEOUT_S if INTERACTIVE_MODE else SCRAPE_TIMEOUT_S
+        timeout_used = INTERACTIVE_TIMEOUT_S if CAPTCHA_SOLVER_MODE else SCRAPE_TIMEOUT_S
         fail_job(job_id, f"Scrape took too long ({timeout_used // 60} min) and was stopped.")
         return
     except Exception as exc:  # noqa: BLE001
@@ -709,19 +711,20 @@ def process_job(job: dict[str, Any]) -> None:
 
     # Classify the outcome by the [RESULT] marker the scraper prints.
     # SUCCESS wins over any earlier captcha markers: a scrape can emit
-    # CAPTCHA_HITL_TIMEOUT mid-run (e.g. an optional Google-login HITL
-    # window nobody clicked) and still go on to produce results. If the
-    # final [RESULT] SUCCESS line is there, the results are real — don't
-    # throw them away because of a non-blocking earlier checkpoint.
+    # CAPTCHA_SOLVER_TIMEOUT mid-run (e.g. an optional Google-login
+    # Captcha solver window nobody clicked) and still go on to produce
+    # results. If the final [RESULT] SUCCESS line is there, the results
+    # are real — don't throw them away because of a non-blocking earlier
+    # checkpoint.
     if "[RESULT] SUCCESS" in combined_log:
         pass  # fall through to the results-loading path below
-    elif "[RESULT] CAPTCHA_HITL_TIMEOUT" in combined_log:
-        # Operator didn't click Resume within hitl_ttl_minutes and the
-        # scrape couldn't recover. Route to the terminal path (no
-        # auto-retry) so the operator can manually re-queue from
+    elif "[RESULT] CAPTCHA_SOLVER_TIMEOUT" in combined_log:
+        # Operator didn't click Resume within captcha_solver_ttl_minutes
+        # and the scrape couldn't recover. Route to the terminal path
+        # (no auto-retry) so the operator can manually re-queue from
         # /admin/interactive — see mark_scrape_job_captcha_terminal vs
         # captcha_scrape_job.
-        log.warning("job %s HITL timed out (log=%s) — marking terminal captcha", job_id, log_path)
+        log.warning("job %s Captcha solver timed out (log=%s) — marking terminal captcha", job_id, log_path)
         _kill_port()
         captcha_terminal(job_id)
         return

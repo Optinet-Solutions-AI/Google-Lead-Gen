@@ -1,5 +1,8 @@
 -- ============================================================
 -- Lock down requeue_scrape_after_hitl: admin-only, in two layers.
+-- (Legacy function name retained; the 2026-05-28 rename migration
+-- adds requeue_scrape_after_captcha_solver and keeps this name as a
+-- shim.)
 --
 -- The previous migration (20260519030000) granted EXECUTE on this
 -- SECURITY DEFINER function to `authenticated`. That meant any signed-in

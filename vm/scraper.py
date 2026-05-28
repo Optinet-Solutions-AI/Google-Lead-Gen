@@ -507,21 +507,21 @@ class CaptchaDetectedException(Exception):
 
 CHECKPOINT_POLL_SECONDS = 5
 # Hard fallback when system_settings is unreachable. Matches the live
-# seed value (5 min, set by 20260522010000_hitl_5min_with_auto_refresh).
-# The worker reads the live value out of system_settings.hitl_ttl_minutes
+# seed value (5 min, set by an earlier migration in 20260522010000).
+# The worker reads the live value out of system_settings.captcha_solver_ttl_minutes
 # for each checkpoint so an admin can tune it via /admin/system without
 # restarting workers; this constant only kicks in if the DB lookup fails.
 CHECKPOINT_DEFAULT_TTL_MINUTES = 5
 
 # Result markers the worker greps for after the scraper subprocess exits.
 # Distinct from the generic CAPTCHA marker (which triggers auto-retry via
-# captcha_scrape_job) so HITL timeouts can be routed to a terminal-only
+# captcha_scrape_job) so Captcha solver timeouts can be routed to a terminal-only
 # path — operators manually re-queue from /admin/interactive when ready,
 # instead of the worker cycling the same captcha 10 times in 20 minutes.
-RESULT_MARKER_HITL_TIMEOUT = "[RESULT] CAPTCHA_HITL_TIMEOUT"
+RESULT_MARKER_CAPTCHA_SOLVER_TIMEOUT = "[RESULT] CAPTCHA_SOLVER_TIMEOUT"
 
 
-def _fetch_hitl_ttl_minutes() -> int:
+def _fetch_captcha_solver_ttl_minutes() -> int:
     """Pull the live TTL from system_settings via the service-role RPC
     we already use elsewhere. Falls back to CHECKPOINT_DEFAULT_TTL_MINUTES
     if the row is missing or the value isn't a positive int."""
@@ -529,7 +529,7 @@ def _fetch_hitl_ttl_minutes() -> int:
         resp = _supabase_request(
             "POST",
             "/rest/v1/rpc/get_system_setting",
-            json_body={"p_key": "hitl_ttl_minutes"},
+            json_body={"p_key": "captcha_solver_ttl_minutes"},
         )
         if resp.status_code != 200:
             return CHECKPOINT_DEFAULT_TTL_MINUTES
@@ -546,7 +546,7 @@ def _fetch_hitl_ttl_minutes() -> int:
             return CHECKPOINT_DEFAULT_TTL_MINUTES
         return n if n > 0 else CHECKPOINT_DEFAULT_TTL_MINUTES
     except Exception as exc:  # noqa: BLE001
-        print(f"[WARN] hitl_ttl_minutes lookup failed: {exc} — using default {CHECKPOINT_DEFAULT_TTL_MINUTES}m",
+        print(f"[WARN] captcha_solver_ttl_minutes lookup failed: {exc} — using default {CHECKPOINT_DEFAULT_TTL_MINUTES}m",
               file=sys.stderr)
         return CHECKPOINT_DEFAULT_TTL_MINUTES
 
@@ -557,8 +557,8 @@ def _fetch_hitl_ttl_minutes() -> int:
 # country_code + requires_google_login carry the per-country context
 # that ensure_google_login_if_required() needs to look up credentials
 # in the google_login_credentials table and decide whether a missing
-# login should escalate to HITL.
-_HITL_CTX: dict = {
+# login should escalate to the Captcha solver.
+_CAPTCHA_SOLVER_CTX: dict = {
     "job_id": None,
     "worker_id": None,
     "worker_port": 9222,
@@ -649,7 +649,7 @@ def request_interactive_checkpoint(
     when the operator clicked Cancel.
 
     On TTL elapse this function flips the checkpoint row to 'timed_out'
-    via the timeout RPC but does NOT emit RESULT_MARKER_HITL_TIMEOUT —
+    via the timeout RPC but does NOT emit RESULT_MARKER_CAPTCHA_SOLVER_TIMEOUT —
     that's the caller's job, so the refresh-loop wrapper can re-park
     without prematurely routing the worker to the terminal path.
 
@@ -657,7 +657,7 @@ def request_interactive_checkpoint(
     when called without them, returns False immediately so legacy
     callers fall through to their existing fail path.
 
-    TTL: passing None (default) reads system_settings.hitl_ttl_minutes
+    TTL: passing None (default) reads system_settings.captcha_solver_ttl_minutes
     so an admin can tune via /admin/system without restarting workers.
     Pass an explicit int to override per-call (tests etc.).
     """
@@ -666,7 +666,7 @@ def request_interactive_checkpoint(
         return False
 
     if ttl_minutes is None:
-        ttl_minutes = _fetch_hitl_ttl_minutes()
+        ttl_minutes = _fetch_captcha_solver_ttl_minutes()
 
     print(f"[INFO] checkpoint: pausing for human (reason={reason}, ttl={ttl_minutes}m)")
 
@@ -756,7 +756,7 @@ def request_interactive_checkpoint(
     print(f"[WARN] checkpoint timed out without operator action ({ttl_minutes}m elapsed)")
 
     # Flip the checkpoint row to 'timed_out' so /admin/interactive can
-    # render a "Re-queue with HITL" button on it. Idempotent — the RPC
+    # render a "Re-queue with Captcha solver" button on it. Idempotent — the RPC
     # only updates rows still in 'waiting' state.
     if checkpoint_id is not None:
         try:
@@ -771,11 +771,11 @@ def request_interactive_checkpoint(
 
     # Caller (refresh-loop wrapper) decides whether this timeout means
     # "try another cycle" or "all attempts exhausted — emit the
-    # RESULT_MARKER_HITL_TIMEOUT and let worker.py go terminal".
+    # RESULT_MARKER_CAPTCHA_SOLVER_TIMEOUT and let worker.py go terminal".
     return False
 
 
-# Default cap on HITL park cycles before we give up and route the job
+# Default cap on Captcha solver park cycles before we give up and route the job
 # to the terminal path. 10 × 5min = 50 min ceiling per stuck captcha.
 # Matches the existing captcha auto-retry cap for symmetry.
 CHECKPOINT_MAX_REFRESH_ATTEMPTS = 10
@@ -797,7 +797,7 @@ def _request_interactive_checkpoint_with_refresh(
     max_attempts: int = CHECKPOINT_MAX_REFRESH_ATTEMPTS,
     post_refresh_settle_s: float = CHECKPOINT_POST_REFRESH_SETTLE_S,
 ) -> bool:
-    """Park at an HITL checkpoint with auto-refresh + re-park.
+    """Park at a Captcha solver checkpoint with auto-refresh + re-park.
 
     Up to max_attempts park cycles. Between cycles, driver.refresh() is
     called and is_still_blocked() is re-checked — a refresh that happens
@@ -805,7 +805,7 @@ def _request_interactive_checkpoint_with_refresh(
 
     Returns True when the page is clear (operator solved OR a refresh
     cleared it). Returns False after exhausting max_attempts; emits
-    RESULT_MARKER_HITL_TIMEOUT before returning so worker.py routes the
+    RESULT_MARKER_CAPTCHA_SOLVER_TIMEOUT before returning so worker.py routes the
     job to the terminal path.
 
     InteractiveCancelException (operator clicked Cancel) propagates
@@ -853,7 +853,7 @@ def _request_interactive_checkpoint_with_refresh(
                 f"({reason!r}) — giving up",
                 file=sys.stderr,
             )
-            print(RESULT_MARKER_HITL_TIMEOUT)
+            print(RESULT_MARKER_CAPTCHA_SOLVER_TIMEOUT)
             return False
 
         why = "operator resumed but page still blocked" if resumed else "TTL elapsed"
@@ -880,13 +880,13 @@ def _request_interactive_checkpoint_with_refresh(
 
 
 # ---------------------------
-# Google auto-login (per-country credentials from DB + HITL fallback)
+# Google auto-login (per-country credentials from DB + Captcha solver fallback)
 # ---------------------------
 # When a GoLogin profile rotates IPs aggressively, Google server-side
 # invalidates the session. We detect that on startup, fetch encrypted
 # credentials from public.google_login_credentials via service-role RPC,
 # and drive the sign-in form. If Google throws 2FA / verify-it's-you /
-# captcha mid-login, we escalate to a HITL checkpoint with reason
+# captcha mid-login, we escalate to a Captcha solver checkpoint with reason
 # 'google_login_required' so an operator can finish via noVNC.
 
 def fetch_google_login_credential(country_code):
@@ -1046,21 +1046,21 @@ def attempt_google_login(driver, email, password):
 
 
 def _request_login_checkpoint(driver):
-    """Park the scrape at a HITL checkpoint with reason='google_login_required'.
+    """Park the scrape at a Captcha solver checkpoint with reason='google_login_required'.
     Auto-refreshes + re-parks up to CHECKPOINT_MAX_REFRESH_ATTEMPTS times if
     the operator times out or finishes but the profile isn't signed in yet.
     Returns True if the operator finished the login and the profile is now
     signed in, False otherwise. Raises InteractiveCancelException on cancel."""
-    if not _HITL_CTX.get("interactive") or not _HITL_CTX.get("job_id"):
-        print("[WARN] google login: HITL disabled, continuing without login",
+    if not _CAPTCHA_SOLVER_CTX.get("interactive") or not _CAPTCHA_SOLVER_CTX.get("job_id"):
+        print("[WARN] google login: Captcha solver disabled, continuing without login",
               file=sys.stderr)
         return False
-    country_code = _HITL_CTX.get("country_code")
+    country_code = _CAPTCHA_SOLVER_CTX.get("country_code")
     cleared = _request_interactive_checkpoint_with_refresh(
         driver,
-        job_id=_HITL_CTX.get("job_id"),
-        worker_id=_HITL_CTX.get("worker_id"),
-        worker_port=_HITL_CTX.get("worker_port", 9222),
+        job_id=_CAPTCHA_SOLVER_CTX.get("job_id"),
+        worker_id=_CAPTCHA_SOLVER_CTX.get("worker_id"),
+        worker_port=_CAPTCHA_SOLVER_CTX.get("worker_port", 9222),
         reason="google_login_required",
         is_still_blocked=lambda: detect_login_state(driver) is not True,
     )
@@ -1086,14 +1086,14 @@ def ensure_google_login_if_required(driver):
       2. detect_login_state(driver) → True ⇒ already signed in, return.
       3. Logged-out + creds in DB ⇒ run attempt_google_login.
          - 'success'   → stamp + return.
-         - 'challenge' → escalate to HITL.
-         - 'failed'    → stamp; if country requires login, escalate to HITL,
+         - 'challenge' → escalate to the Captcha solver.
+         - 'failed'    → stamp; if country requires login, escalate to the Captcha solver,
                          otherwise continue best-effort.
-      4. Logged-out + NO creds ⇒ if country requires login, escalate to HITL,
+      4. Logged-out + NO creds ⇒ if country requires login, escalate to the Captcha solver,
          otherwise continue without login.
     """
-    country_code = _HITL_CTX.get("country_code")
-    requires_login = bool(_HITL_CTX.get("requires_google_login"))
+    country_code = _CAPTCHA_SOLVER_CTX.get("country_code")
+    requires_login = bool(_CAPTCHA_SOLVER_CTX.get("requires_google_login"))
 
     try:
         cur = driver.current_url or ""
@@ -1150,7 +1150,7 @@ def ensure_google_login_if_required(driver):
 
     # No creds available -----------------------------------------------------
     if requires_login:
-        print(f"[INFO] google login: no creds for {country_code} — escalating to HITL")
+        print(f"[INFO] google login: no creds for {country_code} — escalating to the Captcha solver")
         _request_login_checkpoint(driver)
     else:
         print(f"[INFO] google login: no creds for {country_code} — continuing without login")
@@ -1164,18 +1164,18 @@ def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, 
     to click through via noVNC. After resume, re-check; if still
     captcha'd, fall through to the legacy raise.
 
-    Falls back to module-level _HITL_CTX (set by main()) when
+    Falls back to module-level _CAPTCHA_SOLVER_CTX (set by main()) when
     kwargs aren't passed, so existing call sites don't need to be
     re-threaded.
     """
     if job_id is None:
-        job_id = _HITL_CTX.get("job_id")
+        job_id = _CAPTCHA_SOLVER_CTX.get("job_id")
     if worker_id is None:
-        worker_id = _HITL_CTX.get("worker_id")
+        worker_id = _CAPTCHA_SOLVER_CTX.get("worker_id")
     if worker_port is None:
-        worker_port = _HITL_CTX.get("worker_port", 9222)
+        worker_port = _CAPTCHA_SOLVER_CTX.get("worker_port", 9222)
     if interactive is None:
-        interactive = _HITL_CTX.get("interactive", False)
+        interactive = _CAPTCHA_SOLVER_CTX.get("interactive", False)
     def _is_captcha() -> bool:
         try:
             cur = driver.current_url or ""
@@ -1211,7 +1211,7 @@ def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, 
         if cleared:
             return
         # All refresh attempts exhausted (helper already emitted
-        # RESULT_MARKER_HITL_TIMEOUT). Fall through to fail.
+        # RESULT_MARKER_CAPTCHA_SOLVER_TIMEOUT). Fall through to fail.
 
     raise CaptchaDetectedException("CAPTCHA detected")
 
@@ -1268,11 +1268,11 @@ def _set_mobile_viewport(driver) -> bool:
 
 
 def _is_captcha_silent(driver) -> bool:
-    """Cheap captcha check that does NOT escalate to HITL. Used by the
-    mobile pass — if Google blocks the second request, we prefer to
-    abort the mobile pass silently and preserve the already-saved
-    desktop results, rather than freezing the whole scrape in HITL
-    over an enhancement pass."""
+    """Cheap captcha check that does NOT escalate to the Captcha solver.
+    Used by the mobile pass — if Google blocks the second request, we
+    prefer to abort the mobile pass silently and preserve the
+    already-saved desktop results, rather than freezing the whole scrape
+    in a Captcha solver checkpoint over an enhancement pass."""
     try:
         cur = (driver.current_url or "").lower()
     except Exception:  # noqa: BLE001
@@ -1293,7 +1293,7 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
     """Fetch + parse one Google SERP page.
 
     silent_captcha=False (default): on captcha, escalates via check_for_captcha
-      which honours HITL when enabled. Raises CaptchaDetectedException otherwise.
+      which honours the Captcha solver when enabled. Raises CaptchaDetectedException otherwise.
     silent_captcha=True: on captcha, returns None (the caller should treat
       this as 'abort this pass, preserve other results'). Used by the mobile
       pass in view_mode='both' so a mobile-only captcha can't wipe the
@@ -1484,16 +1484,16 @@ def scrape_google_search(
     """
     Per-job view_mode: 'desktop' (legacy), 'mobile' (iPhone-only), or 'both'.
 
-    In 'both' mode the desktop pass runs first with normal HITL-aware
-    captcha handling. Then the mobile pass switches the tab to iPhone UA +
-    375x812 viewport via CDP and re-fetches every page with silent-captcha
-    behaviour — a mobile-side captcha never wipes the desktop results we
-    already have. URLs seen in both passes get seen_on='both'; URLs only
-    on mobile get seen_on='mobile'.
+    In 'both' mode the desktop pass runs first with normal
+    Captcha-solver-aware captcha handling. Then the mobile pass switches
+    the tab to iPhone UA + 375x812 viewport via CDP and re-fetches every
+    page with silent-captcha behaviour — a mobile-side captcha never
+    wipes the desktop results we already have. URLs seen in both passes
+    get seen_on='both'; URLs only on mobile get seen_on='mobile'.
 
     In 'mobile' mode there's only one pass (mobile) and the captcha
-    handler is the regular HITL-aware one — operator must resolve to
-    continue. All results land seen_on='mobile'.
+    handler is the regular Captcha-solver-aware one — operator must
+    resolve to continue. All results land seen_on='mobile'.
 
     In 'desktop' mode only the legacy desktop pass runs; everything is
     seen_on='desktop'. (We honour MOBILE_PASS_ENABLED=off at the worker
@@ -1543,7 +1543,7 @@ def scrape_google_search(
                     time.sleep(random.uniform(delay_min, delay_max))
 
                 # Captcha behaviour:
-                #  - mobile primary → HITL flow (same as desktop). Operator
+                #  - mobile primary → Captcha solver flow (same as desktop). Operator
                 #    must resolve; otherwise raises CaptchaDetectedException.
                 #  - mobile in 'both' mode → silent abort. Returns None;
                 #    desktop results already in all_results are preserved.
@@ -1553,8 +1553,8 @@ def scrape_google_search(
                         silent_captcha=not mobile_is_primary,
                     )
                 except CaptchaDetectedException:
-                    # Only raised in primary-mobile mode (HITL path) — let
-                    # the worker classify it as CAPTCHA / CAPTCHA_HITL_TIMEOUT
+                    # Only raised in primary-mobile mode (Captcha solver path) — let
+                    # the worker classify it as CAPTCHA / CAPTCHA_SOLVER_TIMEOUT
                     # at exit.
                     raise
 
@@ -1812,27 +1812,28 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     #     → bail loudly; gambling-class queries on flagged proxies hit
     #       this and won't settle no matter how long we wait
     # Up to 35s total. A scroll halfway through nudges lazy hydration.
-    # Wait-loop budget is refreshed after a successful HITL resume so the
-    # post-challenge SERP has a full 35s to hydrate (operator just spent
-    # 1–5 min on the challenge — don't immediately time out on them).
+    # Wait-loop budget is refreshed after a successful Captcha solver
+    # resume so the post-challenge SERP has a full 35s to hydrate
+    # (operator just spent 1–5 min on the challenge — don't immediately
+    # time out on them).
     deadline = time.time() + 35
     scrolled = False
     captcha_detected = False
-    hitl_attempted = False
+    captcha_solver_attempted = False
     while time.time() < deadline:
         state = _bing_serp_state(driver)
         if state == 'captcha':
-            # Route through check_for_captcha so HITL fires the same way
-            # it does on the Google path: if interactive mode + job_id
-            # are set, park at an interactive_checkpoint and wait for an
-            # admin to clear Turnstile via noVNC. Otherwise raises
+            # Route through check_for_captcha so the Captcha solver fires
+            # the same way it does on the Google path: if interactive mode
+            # + job_id are set, park at an interactive_checkpoint and wait
+            # for an admin to clear Turnstile via noVNC. Otherwise raises
             # CaptchaDetectedException, which main() turns into
             # [RESULT] CAPTCHA → worker auto-retry. Only attempt once
             # per page so a stuck challenge doesn't loop forever.
-            if not hitl_attempted:
-                hitl_attempted = True
+            if not captcha_solver_attempted:
+                captcha_solver_attempted = True
                 check_for_captcha(driver)
-                # Operator resumed (or HITL was off and check_for_captcha
+                # Operator resumed (or the Captcha solver was off and check_for_captcha
                 # would have raised). Reset the wait budget and re-poll
                 # — the post-challenge SERP needs time to hydrate.
                 deadline = time.time() + 35
@@ -1864,19 +1865,20 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     _maybe_save_bing_debug(page_source, landed_url)
 
     # Captcha gate. Two ways we get here with captcha still up:
-    #   1. captcha_detected=True from the wait loop — HITL already fired
-    #      once and still didn't clear. Don't loop HITL a second time;
-    #      just return [] and let the worker decide (auto-retry with a
-    #      fresh proxy/fingerprint usually beats another human attempt
-    #      on the same flagged session).
+    #   1. captcha_detected=True from the wait loop — the Captcha solver
+    #      already fired once and still didn't clear. Don't loop it a
+    #      second time; just return [] and let the worker decide
+    #      (auto-retry with a fresh proxy/fingerprint usually beats
+    #      another human attempt on the same flagged session).
     #   2. State only flipped to captcha during the 2s post-loop settle
-    #      → we never went through the in-loop HITL branch. Give it one
-    #      HITL attempt via check_for_captcha. If HITL is off this also
-    #      raises CaptchaDetectedException → main() emits [RESULT]
-    #      CAPTCHA → worker auto-retries.
+    #      → we never went through the in-loop Captcha solver branch.
+    #      Give it one Captcha solver attempt via check_for_captcha. If
+    #      the Captcha solver is off this also raises
+    #      CaptchaDetectedException → main() emits [RESULT] CAPTCHA →
+    #      worker auto-retries.
     if captcha_detected:
         print(
-            "[WARN] Bing Turnstile still up after HITL attempt — "
+            "[WARN] Bing Turnstile still up after Captcha solver attempt — "
             "bailing this page."
         )
         return []
@@ -1894,7 +1896,7 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
         # challenge HTML we captured at line 1670.
         page_source = driver.page_source
         landed_url = driver.current_url
-        print(f"[INFO] Bing post-HITL landed URL: {landed_url}")
+        print(f"[INFO] Bing post-Captcha-solver landed URL: {landed_url}")
 
     # SERP ad-card screenshots — Selenium pass first because element
     # screenshots need WebElement references (BeautifulSoup tags can't
@@ -2171,7 +2173,7 @@ def main():
     parser.add_argument("-k", "--keyword", required=True, help="Search keyword")
     parser.add_argument("-c", "--country", required=True, help="Country display name (e.g. 'Germany')")
     parser.add_argument("--country-code", default=None, help="2-letter ISO country code (e.g. 'DE'). Used to look up Google login credentials.")
-    parser.add_argument("--requires-google-login", action="store_true", help="Treat this country as requires_google_login=true. When set, a logged-out profile escalates to HITL if no creds are configured.")
+    parser.add_argument("--requires-google-login", action="store_true", help="Treat this country as requires_google_login=true. When set, a logged-out profile escalates to the Captcha solver if no creds are configured.")
     parser.add_argument("--pages", type=int, default=10, help="Number of pages to scrape")
     parser.add_argument("--port", type=int, default=9222, help="Chrome debugger port (must be unique per concurrent worker)")
     parser.add_argument("--output", default="/tmp/google_results.json", help="Path to write the results JSON")
@@ -2204,14 +2206,14 @@ def main():
     # Stash the human-in-the-loop context where check_for_captcha and
     # ensure_google_login_if_required can find it without us threading
     # kwargs through every scrape helper.
-    _HITL_CTX["job_id"] = args.job_id
-    _HITL_CTX["worker_id"] = args.worker_id
-    _HITL_CTX["worker_port"] = args.port
-    _HITL_CTX["interactive"] = bool(args.interactive)
-    _HITL_CTX["country_code"] = (args.country_code or "").strip().upper() or None
-    _HITL_CTX["requires_google_login"] = bool(args.requires_google_login)
+    _CAPTCHA_SOLVER_CTX["job_id"] = args.job_id
+    _CAPTCHA_SOLVER_CTX["worker_id"] = args.worker_id
+    _CAPTCHA_SOLVER_CTX["worker_port"] = args.port
+    _CAPTCHA_SOLVER_CTX["interactive"] = bool(args.interactive)
+    _CAPTCHA_SOLVER_CTX["country_code"] = (args.country_code or "").strip().upper() or None
+    _CAPTCHA_SOLVER_CTX["requires_google_login"] = bool(args.requires_google_login)
     if args.interactive and not args.job_id:
-        print("[WARN] --interactive set without --job-id; HITL checkpoints disabled",
+        print("[WARN] --interactive set without --job-id; Captcha solver checkpoints disabled",
               file=sys.stderr)
 
     # GoLogin API token — required, read from env to support multi-worker
@@ -2258,14 +2260,14 @@ def main():
             # (rotating IPs invalidate Google sessions) and we have
             # credentials in DB for this country, drive the sign-in
             # form. If Google throws 2FA / verify-it's-you / captcha,
-            # escalate to a HITL checkpoint with reason
+            # escalate to a Captcha solver checkpoint with reason
             # 'google_login_required'. See ensure_google_login_if_required
             # for the full decision tree.
             #
             # Skip for Bing: Bing SERPs don't depend on a Google session.
             # Running this for Bing scrapes burned operator-attention on
-            # an irrelevant HITL, and when nobody clicked Resume the
-            # CAPTCHA_HITL_TIMEOUT marker leaked into stdout and caused
+            # an irrelevant Captcha solver session, and when nobody clicked Resume the
+            # CAPTCHA_SOLVER_TIMEOUT marker leaked into stdout and caused
             # the worker to discard the otherwise-successful Bing scrape.
             if args.engine == "google":
                 try:
@@ -2273,7 +2275,7 @@ def main():
                 except InteractiveCancelException:
                     # Operator cancelled at the checkpoint — surface as a clean
                     # failure so the worker doesn't retry.
-                    print("[INFO] google login: operator cancelled at HITL checkpoint")
+                    print("[INFO] google login: operator cancelled at Captcha solver checkpoint")
                     raise
                 except Exception as exc:  # noqa: BLE001
                     # Login plumbing must never block scraping. If it crashes,

@@ -69,7 +69,7 @@ export default async function AdminGoogleLoginPage() {
         <p className="mt-0.5 max-w-3xl text-[12px] text-[color:var(--color-text-secondary)]">
           Per-country Google account credentials. The scraper auto-logs in
           when a profile is detected as logged-out (rotating IPs invalidate
-          Google sessions), and falls back to the Captcha helper
+          Google sessions), and falls back to the Captcha solver
           if Google throws 2FA / verify-it&apos;s-you. Passwords are encrypted
           via Supabase Vault — only the scraper&apos;s service role can
           decrypt them, and admins never see them after save.

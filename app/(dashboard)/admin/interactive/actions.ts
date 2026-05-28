@@ -14,10 +14,10 @@ export type CheckpointMutationState =
 /**
  * Any signed-in user can resolve / cancel / re-queue a checkpoint.
  * Captcha resolution is a routine ops task — bottlenecking it on a
- * single admin defeats the point of HITL when the team is more than
- * one person. The DB layer still enforces admin-only for re-queue via
- * defense-in-depth (see migration 20260519050000), but server actions
- * here call via service-role so that gate passes through.
+ * single admin defeats the point of the Captcha solver flow when the
+ * team is more than one person. The DB layer still enforces admin-only
+ * for re-queue via defense-in-depth (see migration 20260519050000), but
+ * server actions here call via service-role so that gate passes through.
  */
 async function requireSignedIn(): Promise<
   | { ok: true; user_id: string; display: string | null }
@@ -86,7 +86,7 @@ export async function requeueCheckpointAction(
   if (!jobId) return { status: 'error', error: 'Missing job id.' }
 
   const svc = createServiceClient()
-  const { data, error } = await svc.rpc('requeue_scrape_after_hitl', {
+  const { data, error } = await svc.rpc('requeue_scrape_after_captcha_solver', {
     p_job_id: jobId,
   })
   if (error) return { status: 'error', error: error.message }

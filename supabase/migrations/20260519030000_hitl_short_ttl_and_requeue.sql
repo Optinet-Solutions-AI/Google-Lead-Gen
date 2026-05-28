@@ -1,30 +1,32 @@
 -- ============================================================
--- Short-TTL HITL + manual re-queue workflow.
+-- Short-TTL Captcha solver + manual re-queue workflow.
 --
--- Previously, when a scrape hit a captcha and HITL was enabled, the
--- worker blocked in a 15-minute polling loop. With 3 workers and 3
--- simultaneous captchas, the whole fleet sat idle for 15 minutes
--- waiting for a human to click Resume. captcha_scrape_job's existing
--- auto-retry path (up to 10 attempts) didn't help — it would just
--- cycle through the same captcha 10 times burning proxy quota with
--- no human in the loop.
+-- Previously, when a scrape hit a captcha and the Captcha solver was
+-- enabled, the worker blocked in a 15-minute polling loop. With 3
+-- workers and 3 simultaneous captchas, the whole fleet sat idle for
+-- 15 minutes waiting for a human to click Resume.
+-- captcha_scrape_job's existing auto-retry path (up to 10 attempts)
+-- didn't help — it would just cycle through the same captcha 10 times
+-- burning proxy quota with no human in the loop.
 --
 -- New model:
 --   1. Worker hits captcha → creates interactive checkpoint with a
 --      SHORT TTL (default 2 min, configurable via
---      system_settings.hitl_ttl_minutes).
+--      system_settings.hitl_ttl_minutes -- legacy name; the
+--      2026-05-28 rename migration adds a captcha_solver_ttl_minutes
+--      mirror).
 --   2. If the operator clicks Resume in those 2 min → unchanged: job
 --      continues, status flips back to 'running'.
 --   3. If 2 min elapses → checkpoint flips to 'timed_out', job goes
 --      to terminal 'captcha' status WITHOUT bumping captcha_attempts
---      (so the auto-retry counter never runs HITL jobs to death).
---      Worker releases the lock and immediately picks up the next
---      job.
---   4. When the operator is ready, they click "Re-queue with HITL" on
---      the timed-out checkpoint card. That flips the original job
---      back to 'pending' with fresh counters; a worker re-claims it,
---      re-fetches the page, hits the captcha again, fresh 2-min HITL
---      window.
+--      (so the auto-retry counter never runs Captcha-solver jobs to
+--      death). Worker releases the lock and immediately picks up the
+--      next job.
+--   4. When the operator is ready, they click "Re-queue with Captcha
+--      solver" on the timed-out checkpoint card. That flips the
+--      original job back to 'pending' with fresh counters; a worker
+--      re-claims it, re-fetches the page, hits the captcha again,
+--      fresh 2-min Captcha solver window.
 --
 -- This way each captcha costs at most 2 minutes of one worker's
 -- time, and human reaction time is fully decoupled from worker
@@ -66,9 +68,9 @@ grant execute on function public.timeout_interactive_checkpoint(bigint) to servi
 -- ------------------------------------------------------------
 -- 3. mark_scrape_job_captcha_terminal — sets a scrape_queue job to
 --    terminal 'captcha' WITHOUT bumping captcha_attempts and WITHOUT
---    flipping back to 'pending'. Used by the worker when an HITL
---    checkpoint times out, so operators can manually re-queue when
---    they're ready instead of the system auto-cycling.
+--    flipping back to 'pending'. Used by the worker when a Captcha
+--    solver checkpoint times out, so operators can manually re-queue
+--    when they're ready instead of the system auto-cycling.
 -- ------------------------------------------------------------
 create or replace function public.mark_scrape_job_captcha_terminal(
   p_job_id uuid,
@@ -98,11 +100,14 @@ grant execute on function public.mark_scrape_job_captcha_terminal(uuid, text) to
 
 -- ------------------------------------------------------------
 -- 4. requeue_scrape_after_hitl — operator-triggered manual re-queue
---    of an HITL-timed-out (or any captcha/failed/cancelled) job.
---    Clears every "this attempt is finished" field so the row looks
---    fresh to the next worker that claims it. Resets captcha_attempts
---    so the auto-retry counter doesn't immediately terminate the job
---    again on the next captcha.
+--    of a Captcha-solver-timed-out (or any captcha/failed/cancelled)
+--    job. Clears every "this attempt is finished" field so the row
+--    looks fresh to the next worker that claims it. Resets
+--    captcha_attempts so the auto-retry counter doesn't immediately
+--    terminate the job again on the next captcha. (Legacy function
+--    name kept; the 2026-05-28 rename migration adds
+--    requeue_scrape_after_captcha_solver as the canonical entry point
+--    and keeps this name as a thin shim.)
 -- ------------------------------------------------------------
 create or replace function public.requeue_scrape_after_hitl(p_job_id uuid)
 returns text

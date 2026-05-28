@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration: Human-in-the-loop interactive checkpoints
+-- Migration: Captcha solver interactive checkpoints
 --
 -- When the scraper hits a wall it can't get past on its own
 -- (Google captcha, age-verification dialog, cookie consent banner

@@ -427,7 +427,7 @@ export function CheckpointCard({
                 onSubmit={e => {
                   if (
                     !confirm(
-                      'Re-queue this scrape with a fresh Captcha helper window? The worker will re-claim the job, navigate to the same SERP again, and you\'ll get up to 10 chances (5 min each) to solve the captcha — the browser auto-refreshes between attempts. Resets attempts + captcha_attempts counters.',
+                      'Re-queue this scrape with a fresh Captcha solver window? The worker will re-claim the job, navigate to the same SERP again, and you\'ll get up to 10 chances (5 min each) to solve the captcha — the browser auto-refreshes between attempts. Resets attempts + captcha_attempts counters.',
                     )
                   ) {
                     e.preventDefault()
@@ -439,7 +439,7 @@ export function CheckpointCard({
                 <button
                   type="submit"
                   disabled={requeuePending || requeueState?.status === 'ok'}
-                  title="Re-queue this scrape with a fresh Captcha helper window"
+                  title="Re-queue this scrape with a fresh Captcha solver window"
                   className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/15 px-2.5 py-1 text-[11px] font-semibold text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent)]/30 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {requeuePending ? (
@@ -447,7 +447,7 @@ export function CheckpointCard({
                   ) : (
                     <RotateCcw className="h-3 w-3" />
                   )}
-                  {requeueState?.status === 'ok' ? 'Re-queued' : 'Re-queue with Captcha helper'}
+                  {requeueState?.status === 'ok' ? 'Re-queued' : 'Re-queue with Captcha solver'}
                 </button>
               </form>
             )}

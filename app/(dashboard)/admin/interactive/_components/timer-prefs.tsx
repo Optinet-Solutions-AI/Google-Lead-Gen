@@ -3,6 +3,10 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
 
+// Storage key keeps the legacy 'hitl-hide-expiry-timers' value so users
+// who already opted out of timers don't have their preference reset by
+// the Captcha solver rename. Don't rename without a migration path for
+// existing localStorage values.
 const STORAGE_KEY = 'hitl-hide-expiry-timers'
 
 type TimerPrefs = { hide: boolean; toggle: () => void }

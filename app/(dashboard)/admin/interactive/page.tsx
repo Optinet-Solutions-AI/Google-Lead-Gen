@@ -57,9 +57,9 @@ export default async function InteractiveCheckpointsPage({
 
   const svc = createServiceClient()
   // No admin gate — any signed-in user can resolve captchas. Bottlenecking
-  // HITL on a single admin defeats the point. The URL keeps the /admin/
-  // prefix for backwards-compatibility; rename to /interactive in a future
-  // cleanup if it bothers anyone.
+  // the Captcha solver on a single admin defeats the point. The URL keeps
+  // the /admin/ prefix for backwards-compatibility; rename to /interactive
+  // in a future cleanup if it bothers anyone.
 
   const sp = await searchParams
   const filter =
@@ -88,10 +88,11 @@ export default async function InteractiveCheckpointsPage({
   }
   const totalAll = counts?.length ?? 0
 
-  // Pull the requester per job — operators on the HITL page need to know
-  // whose scrape they're solving, especially when multiple users have
-  // queued work at the same time. `created_by_*` is denormalized on
-  // scrape_queue at enqueue time, so this is a single id-list lookup.
+  // Pull the requester per job — operators on the Captcha solver page
+  // need to know whose scrape they're solving, especially when multiple
+  // users have queued work at the same time. `created_by_*` is
+  // denormalized on scrape_queue at enqueue time, so this is a single
+  // id-list lookup.
   const jobIds = Array.from(new Set(rows.map(r => r.job_id)))
   const requesterByJobId = new Map<
     string,

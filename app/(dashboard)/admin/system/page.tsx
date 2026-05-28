@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { HitlToggle } from './_components/hitl-toggle'
+import { CaptchaSolverToggle } from './_components/captcha-solver-toggle'
 import { MaintenanceToggle } from './_components/maintenance-toggle'
 
 export const dynamic = 'force-dynamic'
@@ -20,11 +20,11 @@ export default async function AdminSystemPage() {
   // Fetch the current value. The RPC returns jsonb; we coerce to a strict
   // boolean defaulting to true (the schema seeded that, but be defensive
   // against missing/legacy rows).
-  const [{ data: hitlRaw }, { data: maintRaw }] = await Promise.all([
-    svc.rpc('get_system_setting', { p_key: 'hitl_enabled' }),
+  const [{ data: solverRaw }, { data: maintRaw }] = await Promise.all([
+    svc.rpc('get_system_setting', { p_key: 'captcha_solver_enabled' }),
     svc.rpc('get_system_setting', { p_key: 'maintenance_mode' }),
   ])
-  const hitlEnabled = hitlRaw === false ? false : true
+  const captchaSolverEnabled = solverRaw === false ? false : true
   const maintenanceEnabled = maintRaw === true
 
   return (
@@ -42,7 +42,7 @@ export default async function AdminSystemPage() {
       <section className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-4">
         <header className="mb-3">
           <h2 className="text-[13px] font-semibold text-[color:var(--color-text-primary)]">
-            Captcha helper
+            Captcha solver
           </h2>
           <p className="mt-1 max-w-3xl text-[11px] text-[color:var(--color-text-secondary)]">
             When ON, scrapes that hit a captcha / age gate / cookie banner
@@ -55,7 +55,7 @@ export default async function AdminSystemPage() {
           </p>
         </header>
 
-        <HitlToggle enabled={hitlEnabled} />
+        <CaptchaSolverToggle enabled={captchaSolverEnabled} />
       </section>
 
       <section className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-4">

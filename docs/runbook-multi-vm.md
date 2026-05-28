@@ -2,10 +2,10 @@
 
 This runbook covers cloning the current EC2 worker VM into a fleet of
 N (you'll usually want 2 or 3) so the dashboard can dispatch scrapes
-in parallel and route HITL captchas to whichever VM parked the job.
+in parallel and route Captcha-solver captchas to whichever VM parked the job.
 
 Assumes the existing single VM is already running and reachable —
-HITL works, scrapes complete, etc. If not, finish
+the Captcha solver works, scrapes complete, etc. If not, finish
 [runbook-novnc.md](./runbook-novnc.md) first.
 
 ## What changes per VM (and what doesn't)
@@ -171,7 +171,7 @@ you'd already attached an Elastic IP). If so:
   tracking, the activity log, and `release_stale_locks` will still
   *work*, but you'll lose the ability to tell which VM owned a job.
 - **HMAC secret rotation requires touching every VM.** Plan it as a
-  brief HITL outage: rotate Vercel + all VMs in one window.
+  brief Captcha solver outage: rotate Vercel + all VMs in one window.
 - **Old checkpoint rows** (created before this migration) have
   `vnc_host = NULL`. The dashboard falls back to
   `NEXT_PUBLIC_VNC_BASE_URL`, so set that to VM 1's host. New rows

@@ -2,10 +2,10 @@
 -- Allow up to N concurrent jobs per country (default N=3, matching
 -- the VM fleet count). Before this migration, active_profile_locks
 -- used country_code as its primary key, so only ONE worker could
--- hold a given country at a time — which meant a 5-min HITL pause
--- on a DE job would idle every other DE job in the queue, even
--- though we have 18 workers across 3 VMs that could chew through
--- them.
+-- hold a given country at a time — which meant a 5-min Captcha
+-- solver pause on a DE job would idle every other DE job in the
+-- queue, even though we have 18 workers across 3 VMs that could
+-- chew through them.
 --
 -- After this migration:
 --   - active_profile_locks PK = job_id (each running job has its own

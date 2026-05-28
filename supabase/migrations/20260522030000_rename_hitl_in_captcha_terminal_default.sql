@@ -2,7 +2,8 @@
 -- Rename the "HITL" label inside the default error_message of
 -- mark_scrape_job_captcha_terminal to match the user-facing
 -- "Captcha helper" name used across the admin UI (Phase 1 of the
--- 2026-05-21 wording pass).
+-- 2026-05-21 wording pass). The 2026-05-28 rename migration
+-- supersedes this again with "Captcha solver".
 --
 -- Body is otherwise identical to
 -- 20260522020000_friendly_rpc_error_messages.sql — only the

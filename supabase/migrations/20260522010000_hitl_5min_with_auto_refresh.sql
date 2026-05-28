@@ -1,15 +1,17 @@
 -- ============================================================
 -- 20260522010000_hitl_5min_with_auto_refresh.sql
 --
--- Aligns HITL and soft-claim TTLs to 5 minutes for the new
+-- Aligns Captcha solver and soft-claim TTLs to 5 minutes for the new
 -- auto-refresh flow in scraper.py:
 --
 --   1. system_settings.hitl_ttl_minutes: 2 -> 5
---      Worker reads this per checkpoint to decide how long to
---      wait for an operator. The refresh-loop wrapper in
---      scraper.py runs up to CHECKPOINT_MAX_REFRESH_ATTEMPTS (10)
---      cycles of this TTL before emitting RESULT_MARKER_HITL_TIMEOUT
---      and going terminal.
+--      (legacy key name; the 2026-05-28 rename migration adds a
+--      captcha_solver_ttl_minutes mirror.) Worker reads this per
+--      checkpoint to decide how long to wait for an operator. The
+--      refresh-loop wrapper in scraper.py runs up to
+--      CHECKPOINT_MAX_REFRESH_ATTEMPTS (10) cycles of this TTL before
+--      emitting the [RESULT] CAPTCHA_SOLVER_TIMEOUT marker and going
+--      terminal.
 --
 --   2. claim_interactive_checkpoint default p_ttl_minutes: 8 -> 5
 --      Soft-claim TTL must not outlast a checkpoint cycle. If the
@@ -18,7 +20,7 @@
 --      would block the next solver for ~3 min on the new row.
 -- ============================================================
 
--- 1) Bump the live HITL TTL. The seed row exists since
+-- 1) Bump the live Captcha solver TTL. The seed row exists since
 -- 20260519030000_hitl_short_ttl_and_requeue.sql, but use upsert
 -- for safety if it ever got deleted.
 insert into public.system_settings (key, value, updated_at)

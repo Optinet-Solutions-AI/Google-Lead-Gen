@@ -1,19 +1,20 @@
 -- ============================================================
 -- system_settings — runtime-toggleable feature flags.
 --
--- Operators need to flip behaviour like "human-in-the-loop captcha
--- resolver enabled" without SSH'ing into the worker VM and editing
--- .env. This generic key/value table backs an /admin/system page;
--- workers query the relevant key when they need it (per job, not
--- per poll — cheap).
+-- Operators need to flip behaviour like "Captcha solver enabled"
+-- without SSH'ing into the worker VM and editing .env. This generic
+-- key/value table backs an /admin/system page; workers query the
+-- relevant key when they need it (per job, not per poll — cheap).
 --
--- First key:
+-- First key (legacy name retained for the SQL identifier; the
+-- 2026-05-28 rename migration adds a captcha_solver_enabled mirror):
 --   hitl_enabled — when false, captcha / age-gate / cookie-banner
 --                  walls fail the job (status='captcha') instead of
 --                  parking it in 'needs_human' for an admin to
 --                  resolve via noVNC. Useful when the noVNC viewer
 --                  isn't wired up yet, or when an EU-market batch
---                  keeps tripping HITL faster than humans can clear.
+--                  keeps tripping the Captcha solver faster than
+--                  humans can clear.
 -- ============================================================
 
 create table if not exists public.system_settings (
@@ -33,8 +34,8 @@ create policy "system_settings_admin_read"
   to authenticated
   using (public.is_admin(auth.uid()));
 
--- Seed the HITL flag default-on so existing behaviour is preserved
--- until an admin explicitly turns it off.
+-- Seed the Captcha solver flag default-on so existing behaviour is
+-- preserved until an admin explicitly turns it off.
 insert into public.system_settings (key, value)
 values ('hitl_enabled', 'true'::jsonb)
 on conflict (key) do nothing;
