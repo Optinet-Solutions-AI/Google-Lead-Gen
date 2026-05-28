@@ -34,18 +34,19 @@ export function DataTable({ config, rows, selectedItemId }: Props) {
 
   return (
     <>
-      {/* overflow-x-auto for the per-table horizontal scrollbar (wide
-       *  Monday boards have many columns); overflow-y-visible
-       *  explicitly tells modern browsers NOT to treat this as a
-       *  vertical scroll container, so the sticky thead pins to the
-       *  viewport's scroll rather than the wrapper's. */}
-      <div className="hidden overflow-x-auto overflow-y-visible rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
+      {/* No inner overflow: overflow-x:auto + overflow-y:visible still
+       *  promotes the y-axis to a scroll container per the CSS spec,
+       *  which traps the sticky <th> inside the wrapper. Letting the
+       *  page own both axes keeps the per-cell sticky pinned to the
+       *  viewport top regardless of row count. Wide tables fall back
+       *  to page-level horizontal scroll. */}
+      <div className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
         <table className="w-full border-collapse text-[11px]">
           {/* Sticky lives on each <th> below (not on <thead>). HTML
            *  table layout doesn't reliably honour position:sticky on
            *  the row-group element across browsers; per-cell sticky
            *  works everywhere. */}
-          <thead className="bg-[color:var(--color-bg-secondary)]">
+          <thead className="bg-[color:var(--color-border-strong)]">
             <tr>
               {config.columns.map(col => (
                 <th
@@ -56,7 +57,7 @@ export function DataTable({ config, rows, selectedItemId }: Props) {
                   // without it the cell would be transparent in the
                   // stuck state and body rows would bleed through.
                   className={[
-                    'sticky top-0 z-20 whitespace-nowrap border-b border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-left align-middle',
+                    'sticky top-0 z-20 whitespace-nowrap border-b border-[color:var(--color-border-strong)] bg-[color:var(--color-border-strong)] px-3 py-2 text-left align-middle font-semibold text-[color:var(--color-text-primary)]',
                     col.className ?? '',
                   ].join(' ')}
                 >

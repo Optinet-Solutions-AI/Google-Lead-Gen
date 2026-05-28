@@ -909,15 +909,15 @@ function ReferenceTable({
   rows: string[][]
 }) {
   return (
-    <div className="overflow-x-auto rounded-md border border-[color:var(--color-border)]">
+    <div className="rounded-md border border-[color:var(--color-border)]">
       <table className="w-full border-collapse text-[12px]">
-        <thead className="bg-[color:var(--color-bg-secondary)]">
+        <thead className="bg-[color:var(--color-border-strong)]">
           <tr>
             {headers.map(h => (
               <th
                 key={h}
                 scope="col"
-                className="border-b border-[color:var(--color-border)] px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]"
+                className="sticky top-0 z-20 border-b border-[color:var(--color-border-strong)] bg-[color:var(--color-border-strong)] px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-primary)]"
               >
                 {h}
               </th>

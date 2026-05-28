@@ -43,9 +43,9 @@ export default async function ProfilesPage() {
         </div>
       </header>
 
-      <div className="overflow-x-auto rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
+      <div className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
         <table className="w-full border-collapse text-[12px]">
-          <thead className="bg-[color:var(--color-bg-secondary)]">
+          <thead className="bg-[color:var(--color-border-strong)]">
             <tr>
               <Th>Country</Th>
               <Th>GoLogin profile</Th>
@@ -78,7 +78,7 @@ function Th({ children }: { children: React.ReactNode }) {
   return (
     <th
       scope="col"
-      className="whitespace-nowrap border-b border-[color:var(--color-border)] px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]"
+      className="sticky top-0 z-20 whitespace-nowrap border-b border-[color:var(--color-border-strong)] bg-[color:var(--color-border-strong)] px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-primary)]"
     >
       {children}
     </th>
