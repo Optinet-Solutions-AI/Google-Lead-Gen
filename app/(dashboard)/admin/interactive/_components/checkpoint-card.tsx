@@ -472,6 +472,8 @@ export function CheckpointCard({
               </>
             ) : openVncError.reason === 'no_vnc_config' ? (
               <>noVNC isn&apos;t configured on this deploy. See <code>docs/runbook-novnc.md</code>.</>
+            ) : openVncError.reason === 'not_waiting' || openVncError.reason === 'not_found' ? (
+              <>This captcha already expired — refresh the page, then use <strong>Re-queue with Captcha solver</strong> on the timed-out card if you still need it.</>
             ) : (
               openVncError.error ?? "Couldn't open the VNC session. Try again, or check that the scraper is still running on the VM."
             )}
