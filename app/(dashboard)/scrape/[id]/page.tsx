@@ -265,7 +265,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         <AdvancedFilters columns={columns} preserve={['show_hidden']} />
       </div>
 
-      <LeadsTable rows={rows} jobContext />
+      <LeadsTable rows={rows} jobContext pageInfo={{ page, size, total }} />
 
       <Pagination page={page} size={size} total={total} pageSizeOptions={LEAD_PAGE_SIZES} />
 

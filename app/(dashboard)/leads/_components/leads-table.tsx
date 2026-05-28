@@ -105,6 +105,11 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowIdSig])
 
+  // Absolute rank for the row-number column. Uses pageInfo so the second
+  // page picks up where the first left off (size 50 → page 2 starts at 51).
+  // Falls back to local index when pageInfo isn't provided.
+  const rowNumberOffset = pageInfo ? (pageInfo.page - 1) * pageInfo.size : 0
+
   const visibleIds = useMemo(() => rows.map(r => r.id), [rows])
   const allChecked = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
   const toggleAll = () => {
@@ -195,6 +200,7 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
                   />
                 </Th>
               )}
+              <Th className="w-10 text-right tabular-nums text-[color:var(--color-text-secondary)]">#</Th>
               {jobContext ? (
                 <>
                   <Th><SortHeader columnKey="domain" label="Clean domain" sortable /></Th>
@@ -227,7 +233,7 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
             </tr>
           </thead>
           <tbody>
-            {rows.map(row => (
+            {rows.map((row, index) => (
               <tr
                 key={row.id}
                 className={[
@@ -248,6 +254,9 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
                     />
                   </Td>
                 )}
+                <Td className="w-10 text-right tabular-nums text-[color:var(--color-text-secondary)]">
+                  {rowNumberOffset + index + 1}
+                </Td>
                 {jobContext ? (
                   <>
                     <Td className="max-w-[220px] truncate p-0" title={row.domain ?? ''}>
@@ -371,7 +380,7 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
 
       {/* Mobile — card list */}
       <div className="flex flex-col gap-2 md:hidden">
-        {rows.map(row => (
+        {rows.map((row, index) => (
           <div
             key={row.id}
             className={[
@@ -392,6 +401,9 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
                     className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[color:var(--color-accent)]"
                   />
                 )}
+                <span className="shrink-0 tabular-nums text-[11px] text-[color:var(--color-text-secondary)]">
+                  {rowNumberOffset + index + 1}.
+                </span>
                 <button
                   type="button"
                   onClick={() => setOpenLeadId(row.id)}
