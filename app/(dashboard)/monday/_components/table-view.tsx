@@ -81,7 +81,10 @@ export async function TableView({ boardSlug, kind, searchParams }: Props) {
         <SearchBar />
       </div>
 
-      <div className="min-w-0 overflow-hidden rounded-md md:rounded-md">
+      {/* No overflow-hidden here: it would establish a sticky-containing
+       *  block and trap the DataTable's per-cell sticky <th> inside this
+       *  wrapper instead of letting it pin to the viewport. */}
+      <div className="min-w-0 rounded-md md:rounded-md">
         <DataTable
           config={config}
           rows={rows}
