@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
 import { parseFilters, parseSorts } from '@/lib/filters/serialize'
+import { getShadowContext } from '@/lib/shadow-filter'
 import { createServiceClient } from '@/lib/supabase/service'
 import { translateKeywordsToEnglish } from '@/lib/translate'
 import { AdvancedFilters } from '../../_components/advanced-filters'
@@ -78,7 +79,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const { data: jobRaw, error: jobError } = await svc
     .from('scrape_queue')
     .select(
-      'id, keyword, keyword_en, country_code, pages, status, attempts, batch_id, claimed_by, started_at, completed_at, error_message, result_summary, search_engine, view_mode, language, created_at',
+      'id, keyword, keyword_en, country_code, pages, status, attempts, batch_id, claimed_by, started_at, completed_at, error_message, result_summary, search_engine, view_mode, language, created_at, created_by_is_shadow, created_by_email',
     )
     .eq('id', id)
     .maybeSingle()
@@ -94,6 +95,19 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
     throw new Error(`Failed to load job: ${jobError.message}`)
   }
   if (!jobRaw) notFound()
+
+  // Shadow-isolation gate. Direct URL access to a job belonging to a
+  // shadow user (or vice versa) is treated as not-found so we never
+  // leak even an existence signal.
+  const gate = jobRaw as { created_by_is_shadow?: boolean | null; created_by_email?: string | null }
+  const shadowCtx = await getShadowContext()
+  const targetIsShadow = gate.created_by_is_shadow === true
+  const targetEmail = (gate.created_by_email ?? '').toLowerCase()
+  const allowed = shadowCtx.isShadow
+    ? targetEmail === (shadowCtx.email ?? '')
+    : !targetIsShadow
+  if (!allowed) notFound()
+
   const job = jobRaw as Job
 
   // Lazy backfill: jobs queued before the translation feature shipped

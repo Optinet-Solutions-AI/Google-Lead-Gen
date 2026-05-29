@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { buildSignedVncUrl } from '@/lib/interactive/signed-vnc-url'
+import { getShadowContext } from '@/lib/shadow-filter'
 import { CheckpointCard } from './_components/checkpoint-card'
 import { HideTimersToggle, TimerPrefsProvider } from './_components/timer-prefs'
 
@@ -67,6 +68,10 @@ export default async function InteractiveCheckpointsPage({
       ? (sp.status as (typeof STATUS_TABS)[number]['key'])
       : 'waiting'
 
+  // Shadow isolation. job_is_shadow is denormalised onto each
+  // checkpoint at create time (create_interactive_checkpoint RPC),
+  // so the per-row filter is a plain boolean check.
+  const shadowCtx = await getShadowContext()
   let q = svc
     .from('interactive_checkpoints')
     .select(
@@ -75,13 +80,32 @@ export default async function InteractiveCheckpointsPage({
     .order('created_at', { ascending: false })
     .limit(200)
   if (filter !== 'all') q = q.eq('status', filter)
+  let countsQ = svc.from('interactive_checkpoints').select('status')
+  if (shadowCtx.isShadow) {
+    q = q.eq('job_is_shadow', true)
+    countsQ = countsQ.eq('job_is_shadow', true)
+  } else {
+    q = q.eq('job_is_shadow', false)
+    countsQ = countsQ.eq('job_is_shadow', false)
+  }
 
-  const [{ data: rowsData, error }, { data: counts }] = await Promise.all([
-    q,
-    svc.from('interactive_checkpoints').select('status'),
-  ])
+  const [{ data: rowsData, error }, { data: counts }] = await Promise.all([q, countsQ])
   if (error) throw error
-  const rows = (rowsData ?? []) as CheckpointRow[]
+  let rows = (rowsData ?? []) as CheckpointRow[]
+  // Extra hop for shadow viewers — even though job_is_shadow=true
+  // matches all shadow rows, multi-shadow tenants would see each
+  // other's HITL events. Filter to current viewer's own jobs by
+  // joining email through scrape_queue.
+  if (shadowCtx.isShadow && rows.length > 0) {
+    const jobIds = rows.map(r => r.job_id)
+    const { data: ownJobs } = await svc
+      .from('scrape_queue')
+      .select('id')
+      .in('id', jobIds)
+      .eq('created_by_email', shadowCtx.email ?? '__shadow_no_email__')
+    const ownSet = new Set(((ownJobs ?? []) as Array<{ id: string }>).map(j => j.id))
+    rows = rows.filter(r => ownSet.has(r.job_id))
+  }
   const countByStatus = new Map<string, number>()
   for (const r of (counts ?? []) as Array<{ status: string }>) {
     countByStatus.set(r.status, (countByStatus.get(r.status) ?? 0) + 1)

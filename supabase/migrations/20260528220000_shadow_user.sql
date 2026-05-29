@@ -32,6 +32,40 @@
 alter table public.user_profiles
   add column if not exists is_shadow boolean not null default false;
 
+-- Stamped at write-time by lib/activity-log.ts so the activity page
+-- can filter without an extra join.
+alter table public.activity_log
+  add column if not exists user_is_shadow boolean not null default false;
+
+create index if not exists idx_activity_log_user_is_shadow
+  on public.activity_log (user_is_shadow)
+  where user_is_shadow = true;
+
+-- Backfill existing activity_log entries from user_profiles so
+-- pre-migration shadow-user entries (if any) are properly flagged.
+update public.activity_log a
+set user_is_shadow = true
+from public.user_profiles p
+where a.user_id = p.id
+  and p.is_shadow = true
+  and a.user_is_shadow = false;
+
+alter table public.interactive_checkpoints
+  add column if not exists job_is_shadow boolean not null default false;
+
+create index if not exists idx_interactive_checkpoints_job_is_shadow
+  on public.interactive_checkpoints (job_is_shadow)
+  where job_is_shadow = true;
+
+-- Backfill existing checkpoints from their parent scrape jobs so
+-- pre-migration shadow-user captchas are filtered correctly.
+update public.interactive_checkpoints c
+set job_is_shadow = true
+from public.scrape_queue q
+where c.job_id = q.id
+  and q.created_by_is_shadow = true
+  and c.job_is_shadow = false;
+
 alter table public.scrape_queue
   add column if not exists created_by_is_shadow boolean not null default false;
 
@@ -262,3 +296,62 @@ $$;
 
 grant execute on function public.find_lead_cohort(bigint, text, boolean) to service_role, authenticated;
 revoke execute on function public.find_lead_cohort(bigint, text, boolean) from anon;
+
+-- ------------------------------------------------------------
+-- Patch create_interactive_checkpoint (from 20260526000000_interactive
+-- _checkpoint_vnc_host) to cascade the parent job's shadow flag onto
+-- the new checkpoint row. Same shape, same params — only one extra
+-- INSERT column.
+-- ------------------------------------------------------------
+drop function if exists public.create_interactive_checkpoint(
+  uuid, text, integer, text, text, text, text, integer, text
+);
+
+create or replace function public.create_interactive_checkpoint(
+  p_job_id          uuid,
+  p_worker_id       text,
+  p_worker_port     integer,
+  p_reason          text,
+  p_current_url     text default null,
+  p_page_title      text default null,
+  p_screenshot_path text default null,
+  p_ttl_minutes     integer default 15,
+  p_vnc_host        text default null
+)
+returns bigint
+language plpgsql
+volatile
+security definer
+set search_path = public
+as $$
+declare
+  v_id            bigint;
+  v_is_shadow     boolean;
+begin
+  select coalesce(created_by_is_shadow, false) into v_is_shadow
+  from public.scrape_queue where id = p_job_id;
+
+  insert into public.interactive_checkpoints
+    (job_id, worker_id, worker_port, reason, current_url, page_title,
+     screenshot_path, expires_at, vnc_host, job_is_shadow)
+  values
+    (p_job_id, p_worker_id, p_worker_port, p_reason, p_current_url, p_page_title,
+     p_screenshot_path, now() + make_interval(mins => p_ttl_minutes),
+     p_vnc_host, coalesce(v_is_shadow, false))
+  returning id into v_id;
+
+  update public.scrape_queue
+  set status = 'needs_human',
+      updated_at = now()
+  where id = p_job_id;
+
+  return v_id;
+end;
+$$;
+
+grant execute on function public.create_interactive_checkpoint(
+  uuid, text, integer, text, text, text, text, integer, text
+) to service_role;
+revoke execute on function public.create_interactive_checkpoint(
+  uuid, text, integer, text, text, text, text, integer, text
+) from anon, authenticated;

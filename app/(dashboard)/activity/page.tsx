@@ -1,3 +1,4 @@
+import { getShadowContext } from '@/lib/shadow-filter'
 import { createServiceClient } from '@/lib/supabase/service'
 
 export const dynamic = 'force-dynamic'
@@ -27,9 +28,24 @@ export default async function ActivityPage({ searchParams }: Props) {
   const actionFilter = typeof sp.action === 'string' ? sp.action.trim() : ''
 
   const svc = createServiceClient()
+  const shadowCtx = await getShadowContext()
   let query = svc
     .from('activity_log')
     .select('id, user_email, action, entity_type, entity_id, details, created_at', { count: 'exact' })
+
+  // Shadow isolation. lib/activity-log.ts stamps user_is_shadow at
+  // write time so the filter is a simple boolean check; shadow viewer
+  // only sees their own user_email.
+  if (shadowCtx.isShadow) {
+    if (shadowCtx.email) {
+      query = query.eq('user_email', shadowCtx.email)
+    } else {
+      // Defensive: no email → guaranteed-empty result rather than leak.
+      query = query.eq('user_email', '__shadow_no_email__')
+    }
+  } else {
+    query = query.eq('user_is_shadow', false)
+  }
 
   if (actionFilter) {
     query = query.like('action', `${actionFilter}%`)

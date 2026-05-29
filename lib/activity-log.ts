@@ -23,9 +23,21 @@ export async function logActivity(input: {
     } = await auth.auth.getUser()
 
     const svc = createServiceClient()
+
+    // Stamp the shadow flag so /activity can filter without an extra
+    // join per query. Missing-profile rows default to false, which is
+    // safe — non-shadow viewers see them, shadow viewer wouldn't have
+    // generated one without a profile in the first place.
+    let userIsShadow = false
+    if (user?.id) {
+      const { data } = await svc.rpc('is_shadow_user', { p_user_id: user.id })
+      userIsShadow = data === true
+    }
+
     await svc.from('activity_log').insert({
       user_id: user?.id ?? null,
       user_email: user?.email ?? null,
+      user_is_shadow: userIsShadow,
       action: input.action,
       entity_type: input.entity_type ?? null,
       entity_id: input.entity_id != null ? String(input.entity_id) : null,
