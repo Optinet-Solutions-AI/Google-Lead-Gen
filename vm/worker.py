@@ -107,6 +107,13 @@ YOUTUBE_SEARCH_PATH  = os.environ.get(
 # in seconds. Cap at 5 min so a hung connection fails fast instead of
 # holding the worker for the full 20-min scrape budget.
 YOUTUBE_SEARCH_TIMEOUT_S = int(os.environ.get("YOUTUBE_SEARCH_TIMEOUT_SECONDS", "300"))
+KICK_SEARCH_PATH     = os.environ.get(
+    "KICK_SEARCH_PATH",
+    str(Path.home() / "kick_search.py"),
+)
+# Kick search is also pure HTTP (App Access Token + 3 API endpoints).
+# Same 5-min cap as YouTube — typical run is a few seconds.
+KICK_SEARCH_TIMEOUT_S = int(os.environ.get("KICK_SEARCH_TIMEOUT_SECONDS", "300"))
 KILL_SCRIPT_PATH     = os.environ.get(
     "KILL_SCRIPT_PATH",
     str(Path.home() / "kill_gologin.py"),
@@ -647,6 +654,132 @@ def process_youtube_job(job: dict[str, Any]) -> None:
     log.info("youtube job %s completed | %d channels", job_id, summary.get("total_results") or 0)
 
 
+def run_kick_search(
+    keyword: str,
+    country_name: str,
+    country_code: str,
+    language: str,
+    job_id: str,
+    max_results: int = 100,
+) -> tuple[int, str, Path, Path]:
+    """Invoke kick_search.py as a subprocess.
+
+    Mirrors run_youtube_search()'s contract exactly — combined
+    stdout/stderr to a log file, summary JSON written by the child
+    to output_path. No GoLogin, no port, no view_mode: Kick is
+    plain HTTP against api.kick.com + an OAuth token call.
+
+    Returns: (exit_code, combined_log_text, json_output_path, log_path)
+    """
+    output_path = Path(RESULTS_DIR) / f"kick_{WORKER_ID}_{GOLOGIN_PORT}.json"
+    log_path    = Path(RESULTS_DIR) / f"kick_{WORKER_ID}_{GOLOGIN_PORT}.log"
+    output_path.unlink(missing_ok=True)
+    log_path.unlink(missing_ok=True)
+
+    cmd = [
+        "python3",
+        "-u",   # unbuffered: [INFO] lines show in tail -f in real time
+        KICK_SEARCH_PATH,
+        "-k", keyword,
+        "-c", country_name,
+        "--country-code", country_code,
+        "--language", language,
+        "--max-results", str(max_results),
+        "--job-id", job_id,
+        "--worker-id", WORKER_ID,
+        "--output", str(output_path),
+    ]
+
+    env = os.environ.copy()
+    log.info("launching kick_search (keyword=%r lang=%s log=%s timeout=%ds)",
+             keyword, language, log_path, KICK_SEARCH_TIMEOUT_S)
+
+    with open(log_path, "w", encoding="utf-8") as log_f:
+        result = subprocess.run(
+            cmd,
+            env=env,
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+            timeout=KICK_SEARCH_TIMEOUT_S,
+        )
+
+    try:
+        combined = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        combined = ""
+    return result.returncode, combined, output_path, log_path
+
+
+def process_kick_job(job: dict[str, Any]) -> None:
+    """Handle a scrape_queue row where search_engine='kick'.
+
+    Pure-API path like YouTube — no Chromium, no GoLogin profile,
+    no port-kill cycle. The active_profile_lock on country_code is
+    still set at claim time and released by complete_scrape_job;
+    for Kick (where country is unused) that just serializes per
+    country-row, which is harmless given the few-second runtime.
+    """
+    job_id = job["id"]
+    country_code = job["country_code"]
+    keyword = job["keyword"]
+    language = (job.get("language") or "en").strip().lower() or "en"
+
+    log.info("claimed kick job %s | country=%s keyword=%r lang=%s",
+             job_id, country_code, keyword, language)
+
+    profile = fetch_profile(country_code) or {}
+    country_name = profile.get("country_name") or country_code
+
+    try:
+        exit_code, combined_log, output_path, log_path = run_kick_search(
+            keyword=keyword,
+            country_name=country_name,
+            country_code=country_code,
+            language=language,
+            job_id=job_id,
+        )
+    except subprocess.TimeoutExpired:
+        fail_job(job_id, f"Kick search took too long ({KICK_SEARCH_TIMEOUT_S}s) and was stopped.")
+        return
+    except Exception as exc:  # noqa: BLE001
+        fail_job(job_id, classify_failure(exit_code=None, error_text=str(exc), source="kick_search"))
+        return
+
+    if "[RESULT] SUCCESS" not in combined_log:
+        fail_job(job_id, classify_failure(exit_code=exit_code, error_text=combined_log, source="kick_search"))
+        return
+
+    if not output_path.exists():
+        fail_job(job_id, "Kick search finished but the results file is missing on disk — likely a file-system or permissions issue.")
+        return
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        fail_job(job_id, "Kick search finished but the results file is corrupted — re-run usually fixes this.")
+        return
+
+    # Streamers are already in public.kick_streamers (the child wrote
+    # them directly via Supabase). Passing [] to complete_scrape_job
+    # makes the leads-insert a no-op, while the summary + status
+    # update still fire and the active_profile_lock is released.
+    summary = {
+        "total_results": payload.get("total_results"),
+        "organic_results": payload.get("organic_results"),
+        "ppc_results": payload.get("ppc_results"),
+        "pages_scraped": payload.get("pages_scraped"),
+        "scraped_at": payload.get("timestamp"),
+        "is_logged_in": None,
+        "view_mode": "desktop",   # Kick has no mobile/desktop split
+    }
+    try:
+        complete_job(job_id, [], summary)
+    except Exception as exc:  # noqa: BLE001
+        log.error("complete_scrape_job RPC failed for kick job %s: %s", job_id, exc)
+        return
+
+    log.info("kick job %s completed | %d streamers", job_id, summary.get("total_results") or 0)
+
+
 def process_job(job: dict[str, Any]) -> None:
     job_id = job["id"]
     country_code = job["country_code"]
@@ -656,14 +789,18 @@ def process_job(job: dict[str, Any]) -> None:
     # that pre-date the migration that added the column.
     language = (job.get("language") or "en").strip().lower() or "en"
     engine = (job.get("search_engine") or "google").strip().lower() or "google"
-    if engine not in ("google", "bing", "youtube"):
+    if engine not in ("google", "bing", "youtube", "kick"):
         engine = "google"
 
-    # YouTube jobs take a completely different path — HTTP API, no
-    # GoLogin / Selenium / port management. Branch out before the
-    # profile lookup and never reach the scrape pipeline below.
+    # YouTube and Kick jobs take a completely different path — pure
+    # HTTP API calls, no GoLogin / Selenium / port management. Branch
+    # out before the profile lookup and never reach the scrape pipeline
+    # below.
     if engine == "youtube":
         process_youtube_job(job)
+        return
+    if engine == "kick":
+        process_kick_job(job)
         return
 
     # view_mode controls whether scraper.py runs the desktop pass, the

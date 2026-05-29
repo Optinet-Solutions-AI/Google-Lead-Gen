@@ -113,14 +113,18 @@ export async function enqueueScrape(
   // 'youtube' is a separate path (Data API, channel results into
   // youtube_channels) and intentionally NOT included in "both" — the
   // output shape is too different to bundle into a SERP comparison.
-  const enginesToRun: Array<'google' | 'bing' | 'youtube'> =
+  const enginesToRun: Array<'google' | 'bing' | 'youtube' | 'twitch' | 'kick'> =
     engineRaw === 'both'
       ? ['google', 'bing']
       : engineRaw === 'bing'
         ? ['bing']
         : engineRaw === 'youtube'
           ? ['youtube']
-          : ['google']
+          : engineRaw === 'twitch'
+            ? ['twitch']
+            : engineRaw === 'kick'
+              ? ['kick']
+              : ['google']
   // view_mode controls whether the scraper runs desktop, mobile (iPhone
   // UA + 375x812 viewport via CDP), or both passes. 'both' is the
   // default — catches mobile-only PPC ads + mobile-ranked organic that
@@ -1041,7 +1045,7 @@ export async function rerunScrapeFiltered(
     priority: number
     with_enrichment: boolean
     language: string | null
-    search_engine: 'google' | 'bing' | 'youtube' | null
+    search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | null
     view_mode: 'desktop' | 'mobile' | 'both' | null
     created_by_email: string | null
     created_by_username: string | null
@@ -1116,7 +1120,7 @@ export async function rerunMobileOnly(
     priority: number
     with_enrichment: boolean
     language: string | null
-    search_engine: 'google' | 'bing' | 'youtube' | null
+    search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | null
     view_mode: 'desktop' | 'mobile' | 'both' | null
     result_type_filter: 'PPC' | 'Organic' | null
     result_summary: Record<string, unknown> | null
@@ -1428,7 +1432,7 @@ export async function bulkRerunScrapeJobs(
     priority: number
     with_enrichment: boolean
     language: string | null
-    search_engine: 'google' | 'bing' | 'youtube' | null
+    search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | null
     view_mode: 'desktop' | 'mobile' | 'both' | null
     result_type_filter: 'PPC' | 'Organic' | null
     created_by_email: string | null
