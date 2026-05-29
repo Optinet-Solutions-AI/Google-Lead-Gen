@@ -1194,6 +1194,18 @@ def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, 
     if not _is_captcha():
         return
 
+    # Google's /sorry/ page renders 'IP-Adresse: A ≠ B' (the U+2260 glyph)
+    # when the IP that originated the search differs from the IP solving the
+    # challenge — typically because the residential proxy rotated egress
+    # mid-session. Google rejects any solution in that state, so parking at
+    # a Captcha solver checkpoint just burns operator time. Skip straight to
+    # the retry path so worker.py re-runs with a fresh GoLogin session.
+    if _is_ip_mismatch_sorry_page(driver):
+        print("[WARN] CAPTCHA detected with IP mismatch (proxy rotated mid-session) — "
+              "unsolvable, skipping Captcha solver and failing fast for retry",
+              file=sys.stderr)
+        raise CaptchaDetectedException("CAPTCHA detected (IP mismatch)")
+
     if interactive and job_id:
         try:
             cleared = _request_interactive_checkpoint_with_refresh(
@@ -1265,6 +1277,29 @@ def _set_mobile_viewport(driver) -> bool:
     except Exception as exc:  # noqa: BLE001
         print(f"[WARN] mobile viewport CDP override failed: {exc}", file=sys.stderr)
         return False
+
+
+def _is_ip_mismatch_sorry_page(driver) -> bool:
+    """Detect Google's unsolvable IP-mismatch captcha.
+
+    Google's /sorry/ page includes a line like 'IP-Adresse: A ≠ B' (U+2260)
+    when the egress IP at solve time differs from the IP that originated
+    the search — i.e. the residential proxy rotated mid-session. Google
+    refuses to accept any solution in that state, so the only sane response
+    is to fail fast and let worker.py retry on a fresh GoLogin session.
+    The '≠' glyph is Google-specific to this error and a reliable marker.
+    """
+    try:
+        cur = driver.current_url or ""
+    except Exception:  # noqa: BLE001
+        cur = ""
+    if "/sorry/" not in cur:
+        return False
+    try:
+        page = driver.page_source or ""
+    except Exception:  # noqa: BLE001
+        page = ""
+    return "≠" in page or "&#8800;" in page or "&#x2260;" in page
 
 
 def _is_captcha_silent(driver) -> bool:
