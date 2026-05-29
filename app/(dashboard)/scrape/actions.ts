@@ -199,18 +199,19 @@ export async function enqueueScrape(
   //   - created_by_display   → friendly label, falls back to username
   // Username + display come from user_profiles. If the row doesn't
   // exist for some reason, we fall back to email's local-part.
-  const createdByEmail = user.email ?? null
+  const createdByEmail = (user.email ?? null)?.toLowerCase() ?? null
   const { data: userProfileRow } = await svc
     .from('user_profiles')
-    .select('username, display_name')
+    .select('username, display_name, is_shadow')
     .eq('id', user.id)
     .maybeSingle()
   const userProfile = userProfileRow as
-    | { username: string | null; display_name: string | null }
+    | { username: string | null; display_name: string | null; is_shadow: boolean | null }
     | null
   const fallbackUser = createdByEmail ? createdByEmail.split('@')[0] ?? null : null
   const createdByUsername = userProfile?.username ?? fallbackUser
   const createdByDisplay = userProfile?.display_name ?? createdByUsername
+  const createdByIsShadow = userProfile?.is_shadow === true
 
   // Translate non-English keywords to English so the detail-page
   // header and QA reviewers can read what's being scraped. Best-effort:
@@ -236,6 +237,7 @@ export async function enqueueScrape(
       created_by_email: createdByEmail,
       created_by_username: createdByUsername,
       created_by_display: createdByDisplay,
+      created_by_is_shadow: createdByIsShadow,
     })),
   )
   const { error: insertError } = await svc.from('scrape_queue').insert(rows)
@@ -1027,7 +1029,7 @@ export async function rerunScrapeFiltered(
   // their own re-run (BUGS.md R2-14).
   const { data: job, error: readErr } = await svc
     .from('scrape_queue')
-    .select('keyword, country_code, pages, priority, with_enrichment, language, search_engine, view_mode, created_by_email, created_by_username, created_by_display')
+    .select('keyword, country_code, pages, priority, with_enrichment, language, search_engine, view_mode, created_by_email, created_by_username, created_by_display, created_by_is_shadow')
     .eq('id', jobId)
     .maybeSingle()
   if (readErr) return { status: 'error', error: safeError(readErr, 'Failed to load the source job.') }
@@ -1044,6 +1046,7 @@ export async function rerunScrapeFiltered(
     created_by_email: string | null
     created_by_username: string | null
     created_by_display: string | null
+    created_by_is_shadow: boolean | null
   }
 
   const { error: insertError } = await svc.from('scrape_queue').insert({
@@ -1059,6 +1062,7 @@ export async function rerunScrapeFiltered(
     created_by_email: j.created_by_email,
     created_by_username: j.created_by_username,
     created_by_display: j.created_by_display,
+    created_by_is_shadow: j.created_by_is_shadow ?? false,
   })
   if (insertError) return { status: 'error', error: safeError(insertError, 'Failed to queue the scrape.') }
 
@@ -1100,7 +1104,7 @@ export async function rerunMobileOnly(
   const svc = createServiceClient()
   const { data: job, error: readErr } = await svc
     .from('scrape_queue')
-    .select('keyword, country_code, pages, priority, with_enrichment, language, search_engine, view_mode, result_type_filter, result_summary, created_by_email, created_by_username, created_by_display')
+    .select('keyword, country_code, pages, priority, with_enrichment, language, search_engine, view_mode, result_type_filter, result_summary, created_by_email, created_by_username, created_by_display, created_by_is_shadow')
     .eq('id', jobId)
     .maybeSingle()
   if (readErr) return { status: 'error', error: safeError(readErr, 'Failed to load the source job.') }
@@ -1119,6 +1123,7 @@ export async function rerunMobileOnly(
     created_by_email: string | null
     created_by_username: string | null
     created_by_display: string | null
+    created_by_is_shadow: boolean | null
   }
 
   // Guardrail: only meaningful when the source actually had its mobile
@@ -1149,6 +1154,7 @@ export async function rerunMobileOnly(
       created_by_email: j.created_by_email,
       created_by_username: j.created_by_username,
       created_by_display: j.created_by_display,
+      created_by_is_shadow: j.created_by_is_shadow ?? false,
     })
     .select('id')
     .single()
@@ -1410,7 +1416,7 @@ export async function bulkRerunScrapeJobs(
   // audit log shows continuous attribution.
   const { data: jobs, error: readErr } = await svc
     .from('scrape_queue')
-    .select('id, keyword, country_code, pages, priority, with_enrichment, language, search_engine, view_mode, result_type_filter, created_by_email, created_by_username, created_by_display')
+    .select('id, keyword, country_code, pages, priority, with_enrichment, language, search_engine, view_mode, result_type_filter, created_by_email, created_by_username, created_by_display, created_by_is_shadow')
     .in('id', jobIds)
   if (readErr) return { status: 'error', error: safeError(readErr, 'Failed to load the source job.') }
 
@@ -1428,6 +1434,7 @@ export async function bulkRerunScrapeJobs(
     created_by_email: string | null
     created_by_username: string | null
     created_by_display: string | null
+    created_by_is_shadow: boolean | null
   }
   const rows = (jobs ?? []) as Row[]
   if (rows.length === 0) return { status: 'error', error: 'No matching jobs found.' }
@@ -1448,6 +1455,7 @@ export async function bulkRerunScrapeJobs(
     created_by_email: r.created_by_email,
     created_by_username: r.created_by_username,
     created_by_display: r.created_by_display,
+    created_by_is_shadow: r.created_by_is_shadow ?? false,
   }))
   const { error: insertErr } = await svc.from('scrape_queue').insert(inserts)
   if (insertErr) return { status: 'error', error: safeError(insertErr, 'Failed to queue the bulk re-run.') }

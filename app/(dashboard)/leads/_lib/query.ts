@@ -2,6 +2,7 @@ import 'server-only'
 import { applyFilters, applySorts } from '@/lib/filters/apply'
 import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
 import type { Filter, Sort } from '@/lib/filters/types'
+import { applyShadowFilter, getShadowContext } from '@/lib/shadow-filter'
 import { createServiceClient } from '@/lib/supabase/service'
 
 // 0 is the sentinel for "All rows" — substituted with a soft cap
@@ -92,6 +93,10 @@ function sanitize(q: string): string {
 
 export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryResult> {
   const svc = createServiceClient()
+  // Shadow isolation — see lib/shadow-filter.ts. google_lead_gen_table
+  // carries created_by_is_shadow cascaded from scrape_queue at
+  // insert time (complete_scrape_job RPC).
+  const shadowCtx = await getShadowContext()
 
   let query = svc
     .from('google_lead_gen_table')
@@ -114,6 +119,10 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
       ].join(', '),
       { count: 'exact' },
     )
+
+  // Shadow isolation kicks in before any other filter so a non-shadow
+  // viewer never even sees a count of shadow rows.
+  query = applyShadowFilter(query, shadowCtx) as typeof query
 
   // Default: hide not-relevant rows (Monday not_relevant board match
   // OR user-flagged). `?show_hidden=1` flips includeNotRelevant=true.

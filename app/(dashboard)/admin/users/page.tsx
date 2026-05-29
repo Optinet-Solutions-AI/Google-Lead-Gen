@@ -19,6 +19,7 @@ type ProfileRow = {
   username: string | null
   display_name: string | null
   is_admin: boolean
+  is_shadow: boolean
   monday_user_id: number | null
 }
 
@@ -33,29 +34,40 @@ export default async function AdminUsersPage() {
   const svc = createServiceClient()
   const { data: callerIsAdmin } = await svc.rpc('is_admin', { p_user_id: user.id })
   if (!callerIsAdmin) redirect('/')
+  const { data: callerIsShadow } = await svc.rpc('is_shadow_user', { p_user_id: user.id })
+  const viewerIsShadow = callerIsShadow === true
 
   // Pull every profile + every auth.users row, then merge by id. We
   // don't surface the synthetic email anywhere — the UI is purely
   // username + display_name driven.
   const [{ data: usersPage }, { data: profiles }] = await Promise.all([
     svc.auth.admin.listUsers({ page: 1, perPage: 200 }),
-    svc.from('user_profiles').select('id, username, display_name, is_admin, monday_user_id'),
+    svc.from('user_profiles').select('id, username, display_name, is_admin, is_shadow, monday_user_id'),
   ])
 
   const profileById = new Map<string, ProfileRow>(
     ((profiles ?? []) as ProfileRow[]).map(p => [p.id, p]),
   )
 
-  const users: AuthUser[] = (usersPage?.users ?? []).map(u => {
-    const p = profileById.get(u.id) ?? null
-    return {
-      id: u.id,
-      username: p?.username ?? null,
-      display_name: p?.display_name ?? null,
-      created_at: u.created_at,
-      last_sign_in_at: u.last_sign_in_at ?? null,
-    }
-  })
+  // Shadow accounts are invisible to non-shadow viewers and shadow
+  // viewers only see themselves (siloed across multiple shadows).
+  const users: AuthUser[] = (usersPage?.users ?? [])
+    .filter(u => {
+      const p = profileById.get(u.id)
+      const targetIsShadow = p?.is_shadow === true
+      if (viewerIsShadow) return u.id === user.id
+      return !targetIsShadow
+    })
+    .map(u => {
+      const p = profileById.get(u.id) ?? null
+      return {
+        id: u.id,
+        username: p?.username ?? null,
+        display_name: p?.display_name ?? null,
+        created_at: u.created_at,
+        last_sign_in_at: u.last_sign_in_at ?? null,
+      }
+    })
   users.sort((a, b) =>
     (a.display_name || a.username || '').localeCompare(b.display_name || b.username || ''),
   )

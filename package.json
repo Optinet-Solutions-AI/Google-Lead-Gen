@@ -18,6 +18,7 @@
     "monday:unregister-webhooks": "tsx scripts/monday/unregister-webhooks.ts",
     "qa:test-push": "tsx --conditions=react-server scripts/qa/test-push-payload.ts",
     "auth:seed-admin": "tsx scripts/auth/seed-admin.ts",
+    "auth:seed-shadow-user": "tsx scripts/auth/seed-shadow-user.ts",
     "gologin:sync-profiles": "tsx scripts/gologin/sync-profiles.ts"
   },
   "dependencies": {

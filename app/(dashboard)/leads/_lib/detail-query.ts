@@ -1,4 +1,5 @@
 import 'server-only'
+import { getShadowContext } from '@/lib/shadow-filter'
 import { createServiceClient } from '@/lib/supabase/service'
 
 export type ContactDetail = {
@@ -132,6 +133,9 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
           'screenshot_content_link, serp_screenshot_path',
           'pushed_to_monday_at, monday_pushed_item_id, monday_pushed_by',
           'is_not_relevant, not_relevant_marked_at, not_relevant_marked_by',
+          // Shadow-isolation columns — used below to gate access before
+          // any data is returned to the client.
+          'created_by_is_shadow, created_by_email',
           // FK join — pull the queueing user's display + username so the
           // drawer can show "Queued by …" without a second round-trip.
           'scrape_queue:scrape_queue!scrape_job_id(created_by_username, created_by_display)',
@@ -163,6 +167,25 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
   if (leadRes.error) throw new Error(leadRes.error.message)
   if (contactRes.error) throw new Error(contactRes.error.message)
   if (stagsRes.error) throw new Error(stagsRes.error.message)
+
+  // Shadow access gate. Non-shadow viewers can't peek at a shadow
+  // user's lead even via a direct id URL; shadow viewers can't see
+  // other people's leads. Reporting "not found" matches what we'd
+  // surface for a genuinely-deleted lead — no information leakage.
+  const rawForGate = leadRes.data as
+    | { created_by_is_shadow?: boolean | null; created_by_email?: string | null }
+    | null
+  if (rawForGate) {
+    const shadowCtx = await getShadowContext()
+    const targetIsShadow = rawForGate.created_by_is_shadow === true
+    const targetEmail = (rawForGate.created_by_email ?? '').toLowerCase()
+    const allowed = shadowCtx.isShadow
+      ? targetEmail === (shadowCtx.email ?? '')
+      : !targetIsShadow
+    if (!allowed) {
+      throw new Error('Lead not found.')
+    }
+  }
 
   // Flatten the joined scrape_queue object into top-level queued_by_* fields
   // before handing the row off to the typed LeadDetail['lead'] shape.
@@ -210,11 +233,16 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
 
   // Owner-network cohort: every other lead in the DB that shares at
   // least one s-tag value with this one. Best-effort — the RPC itself
-  // is harmless to fail and shouldn't block drawer load.
+  // is harmless to fail and shouldn't block drawer load. Shadow
+  // isolation: pass the viewer context so non-shadow viewers never
+  // see shadow siblings (and vice versa).
   let cohort: CohortSibling[] = []
   if (stags.length > 0) {
+    const shadowCtx = await getShadowContext()
     const { data: cohortRows, error: cohortErr } = await svc.rpc('find_lead_cohort', {
       p_lead_id: leadId,
+      p_viewer_email: shadowCtx.email,
+      p_viewer_shadow: shadowCtx.isShadow,
     })
     if (cohortErr) {
       console.error(`[loadLeadDetail/cohort/${leadId}]`, cohortErr)

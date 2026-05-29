@@ -2,6 +2,7 @@ import 'server-only'
 import { applyFilters, applySorts } from '@/lib/filters/apply'
 import { JOBS_COLUMNS } from '@/lib/filters/columns-jobs'
 import type { Filter, Sort } from '@/lib/filters/types'
+import { applyShadowFilter, getShadowContext } from '@/lib/shadow-filter'
 import { createServiceClient } from '@/lib/supabase/service'
 import {
   PIPELINE_STAGES,
@@ -254,6 +255,9 @@ async function selectInChunks<V>(
 
 export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult> {
   const svc = createServiceClient()
+  // Shadow isolation: non-shadow viewers never see shadow rows; shadow
+  // viewers only ever see their own.
+  const shadowCtx = await getShadowContext()
   let query = svc
     .from('scrape_queue')
     .select(
@@ -266,6 +270,7 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
       ].join(', '),
       { count: 'exact' },
     )
+  query = applyShadowFilter(query, shadowCtx) as typeof query
 
   // Free-text search across a small set of columns.
   if (opts.q && opts.q.trim().length > 0) {
