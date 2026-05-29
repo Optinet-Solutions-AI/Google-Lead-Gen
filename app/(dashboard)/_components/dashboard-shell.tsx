@@ -94,6 +94,15 @@ const NAV_ITEMS = [
     match: (p: string) => p.startsWith('/help'),
   },
   {
+    // URL keeps the /admin/ prefix for backwards-compat (sidebar
+    // entries, deep links). Page is now open to all signed-in users
+    // for reveal; admin-only for add/replace/remove.
+    label: 'Google Login',
+    href: '/admin/google-login',
+    icon: KeyRound,
+    match: (p: string) => p.startsWith('/admin/google-login'),
+  },
+  {
     label: 'Change Password',
     href: '/account/password',
     icon: KeyRound,
@@ -119,12 +128,6 @@ const ADMIN_NAV_ITEMS = [
     href: '/admin/feedback',
     icon: MessageCircle,
     match: (p: string) => p.startsWith('/admin/feedback'),
-  },
-  {
-    label: 'Google Login (Admin)',
-    href: '/admin/google-login',
-    icon: KeyRound,
-    match: (p: string) => p.startsWith('/admin/google-login'),
   },
   {
     label: 'System (Admin)',

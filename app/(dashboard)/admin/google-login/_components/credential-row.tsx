@@ -42,6 +42,7 @@ type Props = {
     notes: string | null
     updated_at: string
   } | null
+  isAdmin: boolean
 }
 
 function statusTone(status: string | null): string {
@@ -52,7 +53,7 @@ function statusTone(status: string | null): string {
   return 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]'
 }
 
-export function CredentialRow({ country, credential }: Props) {
+export function CredentialRow({ country, credential, isAdmin }: Props) {
   const [editing, setEditing] = useState(false)
   const [showPwd, setShowPwd] = useState(false)
   const [setState, setAction, setPending] = useActionState(setCredentialAction, initialSet)
@@ -207,7 +208,7 @@ export function CredentialRow({ country, credential }: Props) {
             onClick={handleReveal}
             disabled={revealPending}
             className="inline-flex items-center gap-1 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2 py-1 text-[11px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
-            title={revealedPwd ? 'Hide the password' : 'Reveal the stored password (admin only)'}
+            title={revealedPwd ? 'Hide the password' : 'Reveal the stored password'}
           >
             {revealPending ? (
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -220,7 +221,7 @@ export function CredentialRow({ country, credential }: Props) {
           </button>
         )}
 
-        {!editing && (
+        {!editing && isAdmin && (
           <button
             type="button"
             onClick={() => setEditing(true)}
@@ -231,7 +232,7 @@ export function CredentialRow({ country, credential }: Props) {
           </button>
         )}
 
-        {!editing && hasCreds && (
+        {!editing && isAdmin && hasCreds && (
           <form
             action={deleteAction}
             onSubmit={e => {
@@ -261,7 +262,7 @@ export function CredentialRow({ country, credential }: Props) {
         )}
       </div>
 
-      {editing && (
+      {editing && isAdmin && (
         <form
           action={setAction}
           className="grid gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)]/30 p-3 md:grid-cols-[1fr_1fr_1fr_auto]"

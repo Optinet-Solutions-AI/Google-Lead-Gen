@@ -32,7 +32,7 @@ export default async function AdminGoogleLoginPage() {
 
   const svc = createServiceClient()
   const { data: callerIsAdmin } = await svc.rpc('is_admin', { p_user_id: user.id })
-  if (!callerIsAdmin) redirect('/')
+  const isAdmin = Boolean(callerIsAdmin)
 
   const [{ data: profilesRows }, { data: credsRows }] = await Promise.all([
     svc
@@ -71,8 +71,9 @@ export default async function AdminGoogleLoginPage() {
           when a profile is detected as logged-out (rotating IPs invalidate
           Google sessions), and falls back to the Captcha solver
           if Google throws 2FA / verify-it&apos;s-you. Passwords are encrypted
-          via Supabase Vault — only the scraper&apos;s service role can
-          decrypt them, and admins never see them after save.
+          via Supabase Vault. Any signed-in operator can reveal the
+          stored password from the row below (each reveal is logged);
+          only admins can add, replace, or remove a credential.
         </p>
         <p className="mt-2 max-w-3xl text-[11px] text-amber-700">
           ⚠ Use throwaway Google accounts dedicated to scraping, never personal
@@ -100,6 +101,7 @@ export default async function AdminGoogleLoginPage() {
               key={p.country_code}
               country={p}
               credential={credsByCountry.get(p.country_code) ?? null}
+              isAdmin={isAdmin}
             />
           ))}
         </div>
@@ -118,6 +120,7 @@ export default async function AdminGoogleLoginPage() {
               key={p.country_code}
               country={p}
               credential={credsByCountry.get(p.country_code) ?? null}
+              isAdmin={isAdmin}
             />
           ))}
         </div>

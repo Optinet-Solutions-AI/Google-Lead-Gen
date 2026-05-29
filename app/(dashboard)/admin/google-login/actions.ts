@@ -12,7 +12,7 @@ export type CredentialFormState =
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-async function requireAdmin(): Promise<
+async function requireSignedIn(): Promise<
   | { ok: true; user_id: string; user_email: string | null; display: string | null }
   | { ok: false; error: string }
 > {
@@ -23,10 +23,6 @@ async function requireAdmin(): Promise<
   if (!user) return { ok: false, error: 'Not signed in.' }
 
   const svc = createServiceClient()
-  const { data: adminFlag, error: adminErr } = await svc.rpc('is_admin', { p_user_id: user.id })
-  if (adminErr) return { ok: false, error: adminErr.message }
-  if (!adminFlag) return { ok: false, error: 'Admin access required.' }
-
   const { data: profileRow } = await svc
     .from('user_profiles')
     .select('username, display_name')
@@ -36,6 +32,21 @@ async function requireAdmin(): Promise<
   const display = profile?.display_name ?? profile?.username ?? user.email ?? null
 
   return { ok: true, user_id: user.id, user_email: user.email ?? null, display }
+}
+
+async function requireAdmin(): Promise<
+  | { ok: true; user_id: string; user_email: string | null; display: string | null }
+  | { ok: false; error: string }
+> {
+  const auth = await requireSignedIn()
+  if (!auth.ok) return auth
+
+  const svc = createServiceClient()
+  const { data: adminFlag, error: adminErr } = await svc.rpc('is_admin', { p_user_id: auth.user_id })
+  if (adminErr) return { ok: false, error: adminErr.message }
+  if (!adminFlag) return { ok: false, error: 'Admin access required.' }
+
+  return auth
 }
 
 export async function setCredentialAction(
@@ -87,15 +98,14 @@ export type DeactivateState =
 
 /**
  * Reveal the decrypted password for a country's stored credential.
- * Admin-only — the RPC re-checks is_admin() so a hand-crafted POST
- * can't bypass the UI's same gating. Called from the row's Show
- * button; the value lives in client state only until the operator
- * hides it again.
+ * Open to any signed-in operator (broadened from admin-only on
+ * 2026-05-29 so the QA team can self-serve Captcha-solver flows).
+ * Every reveal is audit-logged below.
  */
 export async function revealCredentialPasswordAction(
   countryCode: string,
 ): Promise<{ ok: true; email: string; password: string } | { ok: false; error: string }> {
-  const auth = await requireAdmin()
+  const auth = await requireSignedIn()
   if (!auth.ok) return { ok: false, error: auth.error }
 
   const code = countryCode.trim().toUpperCase()
