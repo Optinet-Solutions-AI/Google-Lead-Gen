@@ -1,5 +1,33 @@
 import 'server-only'
+import { getShadowContext, type ShadowContext } from '@/lib/shadow-filter'
 import { createServiceClient } from '@/lib/supabase/service'
+
+/**
+ * Apply the shadow visibility rule to a head-only count query.
+ *
+ * Used for every aggregation on the Overview page so a non-shadow
+ * viewer never sees the shadow user's leads/jobs counted in their
+ * KPIs, and the shadow viewer sees only their own.
+ *
+ * All four tables this touches (google_lead_gen_table, scrape_queue,
+ * enrichment_fetch_queue, activity_log) carry the same denormalised
+ * columns by this migration set, so the filter shape is uniform.
+ */
+ 
+function shadowFilter(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  q: any,
+  ctx: ShadowContext,
+  opts?: { emailColumn?: string; shadowColumn?: string },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): any {
+  const emailColumn = opts?.emailColumn ?? 'created_by_email'
+  const shadowColumn = opts?.shadowColumn ?? 'created_by_is_shadow'
+  if (ctx.isShadow) {
+    return q.eq(emailColumn, ctx.email ?? '__shadow_no_email__')
+  }
+  return q.eq(shadowColumn, false)
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const WEEK_MS = 7 * DAY_MS
@@ -99,6 +127,12 @@ export type DashboardData = {
 
 export async function loadDashboardData(): Promise<DashboardData> {
   const svc = createServiceClient()
+  // Shadow isolation: every query below is wrapped in shadowFilter so
+  // the Overview KPIs, queue counts, recent lists and live worker grid
+  // each show only the rows the viewer is supposed to see. Cohort
+  // separation is bidirectional — non-shadow viewers don't see shadow
+  // numbers; shadow viewers don't see anyone else's.
+  const shadowCtx = await getShadowContext()
   const now = Date.now()
   const last24h = new Date(now - DAY_MS).toISOString()
   const last7d = new Date(now - WEEK_MS).toISOString()
@@ -117,52 +151,76 @@ export async function loadDashboardData(): Promise<DashboardData> {
     affTotal, affCur, affPrev,
     roosterTotal, roosterCur, roosterPrev,
   ] = await Promise.all([
-    safe(svc.from('google_lead_gen_table').select('*', headOpts)),
+    safe(shadowFilter(svc.from('google_lead_gen_table').select('*', headOpts), shadowCtx)),
     safe(
-      svc.from('google_lead_gen_table').select('*', headOpts).gte('created_at', last7d),
+      shadowFilter(
+        svc.from('google_lead_gen_table').select('*', headOpts).gte('created_at', last7d),
+        shadowCtx,
+      ),
     ),
     safe(
-      svc
-        .from('google_lead_gen_table')
-        .select('*', headOpts)
-        .gte('created_at', prev14d)
-        .lt('created_at', last7d),
+      shadowFilter(
+        svc
+          .from('google_lead_gen_table')
+          .select('*', headOpts)
+          .gte('created_at', prev14d)
+          .lt('created_at', last7d),
+        shadowCtx,
+      ),
     ),
     safe(
-      svc.from('google_lead_gen_table').select('*', headOpts).eq('is_affiliate', true),
+      shadowFilter(
+        svc.from('google_lead_gen_table').select('*', headOpts).eq('is_affiliate', true),
+        shadowCtx,
+      ),
     ),
     safe(
-      svc
-        .from('google_lead_gen_table')
-        .select('*', headOpts)
-        .eq('is_affiliate', true)
-        .gte('affiliate_checked_at', last7d),
+      shadowFilter(
+        svc
+          .from('google_lead_gen_table')
+          .select('*', headOpts)
+          .eq('is_affiliate', true)
+          .gte('affiliate_checked_at', last7d),
+        shadowCtx,
+      ),
     ),
     safe(
-      svc
-        .from('google_lead_gen_table')
-        .select('*', headOpts)
-        .eq('is_affiliate', true)
-        .gte('affiliate_checked_at', prev14d)
-        .lt('affiliate_checked_at', last7d),
+      shadowFilter(
+        svc
+          .from('google_lead_gen_table')
+          .select('*', headOpts)
+          .eq('is_affiliate', true)
+          .gte('affiliate_checked_at', prev14d)
+          .lt('affiliate_checked_at', last7d),
+        shadowCtx,
+      ),
     ),
     safe(
-      svc.from('google_lead_gen_table').select('*', headOpts).eq('is_rooster_partner', true),
+      shadowFilter(
+        svc.from('google_lead_gen_table').select('*', headOpts).eq('is_rooster_partner', true),
+        shadowCtx,
+      ),
     ),
     safe(
-      svc
-        .from('google_lead_gen_table')
-        .select('*', headOpts)
-        .eq('is_rooster_partner', true)
-        .gte('rooster_checked_at', last7d),
+      shadowFilter(
+        svc
+          .from('google_lead_gen_table')
+          .select('*', headOpts)
+          .eq('is_rooster_partner', true)
+          .gte('rooster_checked_at', last7d),
+        shadowCtx,
+      ),
     ),
     safe(
-      svc
-        .from('google_lead_gen_table')
-        .select('*', headOpts)
-        .eq('is_rooster_partner', true)
-        .gte('rooster_checked_at', prev14d)
-        .lt('rooster_checked_at', last7d),
+      shadowFilter(
+        svc
+          .from('google_lead_gen_table')
+          .select('*', headOpts)
+          .eq('is_rooster_partner', true)
+          .gte('rooster_checked_at', prev14d)
+          .lt('rooster_checked_at', last7d),
+        shadowCtx,
+      ),
     ),
   ])
 
@@ -170,46 +228,76 @@ export async function loadDashboardData(): Promise<DashboardData> {
   const [scrapePending, scrapeRunning, scrapeFailed24, scrapeCaptcha24, scrapeScheduled] =
     await Promise.all([
       safe(
-        svc
-          .from('scrape_queue')
-          .select('*', headOpts)
-          .eq('status', 'pending')
-          .or(`scheduled_at.is.null,scheduled_at.lte.${nowIso}`),
-      ),
-      safe(svc.from('scrape_queue').select('*', headOpts).eq('status', 'running')),
-      safe(
-        svc
-          .from('scrape_queue')
-          .select('*', headOpts)
-          .eq('status', 'failed')
-          .gte('updated_at', last24h),
+        shadowFilter(
+          svc
+            .from('scrape_queue')
+            .select('*', headOpts)
+            .eq('status', 'pending')
+            .or(`scheduled_at.is.null,scheduled_at.lte.${nowIso}`),
+          shadowCtx,
+        ),
       ),
       safe(
-        svc
-          .from('scrape_queue')
-          .select('*', headOpts)
-          .eq('status', 'captcha')
-          .gte('updated_at', last24h),
+        shadowFilter(
+          svc.from('scrape_queue').select('*', headOpts).eq('status', 'running'),
+          shadowCtx,
+        ),
       ),
       safe(
-        svc
-          .from('scrape_queue')
-          .select('*', headOpts)
-          .eq('status', 'pending')
-          .gt('scheduled_at', nowIso),
+        shadowFilter(
+          svc
+            .from('scrape_queue')
+            .select('*', headOpts)
+            .eq('status', 'failed')
+            .gte('updated_at', last24h),
+          shadowCtx,
+        ),
+      ),
+      safe(
+        shadowFilter(
+          svc
+            .from('scrape_queue')
+            .select('*', headOpts)
+            .eq('status', 'captcha')
+            .gte('updated_at', last24h),
+          shadowCtx,
+        ),
+      ),
+      safe(
+        shadowFilter(
+          svc
+            .from('scrape_queue')
+            .select('*', headOpts)
+            .eq('status', 'pending')
+            .gt('scheduled_at', nowIso),
+          shadowCtx,
+        ),
       ),
     ])
 
   // ----- Enrichment stats -----
   const [enrichPending, enrichRunning, enrichFailed24] = await Promise.all([
-    safe(svc.from('enrichment_fetch_queue').select('*', headOpts).eq('status', 'pending')),
-    safe(svc.from('enrichment_fetch_queue').select('*', headOpts).eq('status', 'running')),
     safe(
-      svc
-        .from('enrichment_fetch_queue')
-        .select('*', headOpts)
-        .eq('status', 'failed')
-        .gte('updated_at', last24h),
+      shadowFilter(
+        svc.from('enrichment_fetch_queue').select('*', headOpts).eq('status', 'pending'),
+        shadowCtx,
+      ),
+    ),
+    safe(
+      shadowFilter(
+        svc.from('enrichment_fetch_queue').select('*', headOpts).eq('status', 'running'),
+        shadowCtx,
+      ),
+    ),
+    safe(
+      shadowFilter(
+        svc
+          .from('enrichment_fetch_queue')
+          .select('*', headOpts)
+          .eq('status', 'failed')
+          .gte('updated_at', last24h),
+        shadowCtx,
+      ),
     ),
   ])
 
@@ -222,31 +310,51 @@ export async function loadDashboardData(): Promise<DashboardData> {
     .order('country_name', { ascending: true })
 
   // ----- Recent batches -----
-  const { data: batchRows } = await svc
-    .from('scrape_queue')
-    .select(
-      'id, keyword, country_code, status, enrichment_status, with_enrichment, scheduled_at, completed_at, created_at, result_summary',
-    )
+  const { data: batchRows } = await shadowFilter(
+    svc
+      .from('scrape_queue')
+      .select(
+        'id, keyword, country_code, status, enrichment_status, with_enrichment, scheduled_at, completed_at, created_at, result_summary',
+      ),
+    shadowCtx,
+  )
     .order('created_at', { ascending: false })
     .limit(10)
 
   // ----- Recent activity -----
-  const { data: actRows } = await svc
+  // activity_log uses user_is_shadow (write-time stamped by
+  // lib/activity-log.ts); shadow viewer filters by their own
+  // user_email.
+  let actQ = svc
     .from('activity_log')
     .select('id, user_email, action, entity_type, entity_id, details, created_at')
+  actQ = shadowCtx.isShadow
+    ? actQ.eq('user_email', shadowCtx.email ?? '__shadow_no_email__')
+    : actQ.eq('user_is_shadow', false)
+  const { data: actRows } = await actQ
     .order('created_at', { ascending: false })
     .limit(10)
 
   // ----- Worker activity -----
+  // Workers themselves are shared infrastructure, but we hide the
+  // *contents* of a wrong-cohort job: a non-shadow viewer never sees
+  // what country/keyword the shadow user is running, and vice versa.
+  // The worker simply shows as idle from the other cohort's POV.
   const [scrapeBusy, enrichBusy] = await Promise.all([
-    svc
-      .from('scrape_queue')
-      .select('id, claimed_by, keyword, country_code, started_at')
-      .eq('status', 'running'),
-    svc
-      .from('enrichment_fetch_queue')
-      .select('id, claimed_by, country_code, url, started_at, process_stages')
-      .eq('status', 'running'),
+    shadowFilter(
+      svc
+        .from('scrape_queue')
+        .select('id, claimed_by, keyword, country_code, started_at')
+        .eq('status', 'running'),
+      shadowCtx,
+    ),
+    shadowFilter(
+      svc
+        .from('enrichment_fetch_queue')
+        .select('id, claimed_by, country_code, url, started_at, process_stages')
+        .eq('status', 'running'),
+      shadowCtx,
+    ),
   ])
 
   const scrapeByWorker = new Map<string, {
