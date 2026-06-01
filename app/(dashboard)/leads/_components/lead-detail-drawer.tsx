@@ -31,6 +31,7 @@ import {
   type MarkNotRelevantState,
   type PushToMondayState,
 } from '../actions'
+import { MAX_OPERATOR_NOTE_LEN } from '@/lib/monday/push-constants'
 
 type Detail = LeadDetail
 
@@ -1048,28 +1049,43 @@ function PushToMondayPanel({
         present) attaches the screenshot + posts s-tags as an item update.
       </p>
       {confirming && (
-        <form action={action} className="flex items-center gap-2">
+        <form action={action} className="flex flex-col gap-2">
           <input type="hidden" name="lead_id" value={leadId} />
-          <button
-            type="submit"
-            disabled={pending}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/30 px-2.5 py-1 text-[11px] font-semibold hover:bg-[color:var(--color-accent)]/50 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {pending ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Send className="h-3 w-3" />
-            )}
-            Confirm push
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfirming(false)}
-            disabled={pending}
-            className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] hover:bg-[color:var(--color-bg-secondary)]"
-          >
-            Cancel
-          </button>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium text-[color:var(--color-text-secondary)]">
+              Comment (optional) — posted to the item&apos;s Updates box on Monday
+            </span>
+            <textarea
+              name="note"
+              rows={3}
+              maxLength={MAX_OPERATOR_NOTE_LEN}
+              disabled={pending}
+              placeholder="Add any context for the team — left blank, nothing extra is posted."
+              className="w-full resize-y rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2 py-1.5 text-[11px] text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-secondary)]/60 focus:border-[color:var(--color-accent)] focus:outline-none disabled:opacity-50"
+            />
+          </label>
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              disabled={pending}
+              className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/30 px-2.5 py-1 text-[11px] font-semibold hover:bg-[color:var(--color-accent)]/50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {pending ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Send className="h-3 w-3" />
+              )}
+              Confirm push
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              disabled={pending}
+              className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] hover:bg-[color:var(--color-bg-secondary)]"
+            >
+              Cancel
+            </button>
+          </div>
         </form>
       )}
       {state?.status === 'error' && (

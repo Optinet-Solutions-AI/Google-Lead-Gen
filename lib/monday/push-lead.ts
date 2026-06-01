@@ -1,6 +1,9 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase/service'
 import { MondayApiError, mondayGQL } from '@/lib/monday/graphql'
+import { MAX_OPERATOR_NOTE_LEN } from '@/lib/monday/push-constants'
+
+export { MAX_OPERATOR_NOTE_LEN }
 
 export const LEADS_BOARD_ID = '1236073873'
 const FILE_UPLOAD_URL = 'https://api.monday.com/v2/file'
@@ -11,6 +14,9 @@ export type PushResult = {
   monday_item_id: string
   attached_file: boolean
   s_tag_update_posted: boolean
+  /** True when the operator typed a note and it was posted as an item
+   *  update. False when no note was provided or the post failed. */
+  note_update_posted: boolean
   /** Non-null when the Monday item was created successfully but the local
    *  "already pushed" stamp update failed. The push is still ok — the
    *  caller should surface this so the user doesn't click Push again
@@ -37,6 +43,11 @@ export type PreparedPushPayload = {
    *  null when the board has no groups, top group is empty, or the API
    *  call failed — in that case we fall back to a plain create_item. */
   anchor: { groupId: string; itemId: string } | null
+  /** Optional free-text note the operator typed in the Push dialog.
+   *  Posted as its own item update (Monday's "Updates"/comment box) after
+   *  the s-tags update. Empty string when no note was provided. Trimmed
+   *  and capped at MAX_OPERATOR_NOTE_LEN. */
+  operatorNote: string
   /** Resolved metadata, surfaced for the dry-run printout + logging. */
   meta: {
     leadId: number
@@ -67,7 +78,7 @@ export type PreparedPushPayload = {
  */
 export async function prepareLeadPushPayload(
   leadId: number,
-  opts: { pushedBy: string; pushedByMondayId: number },
+  opts: { pushedBy: string; pushedByMondayId: number; note?: string },
 ): Promise<{ ok: true; data: PreparedPushPayload } | PushError> {
   if (!opts.pushedByMondayId || !Number.isFinite(opts.pushedByMondayId)) {
     return {
@@ -136,6 +147,7 @@ export async function prepareLeadPushPayload(
   const cleanDomain = stripDomain(l.domain ?? l.url ?? '')
   const source: 'PPC' | 'SEO' = l.result_type === 'PPC' ? 'PPC' : 'SEO'
   const todayIso = new Date().toISOString().slice(0, 10)
+  const operatorNote = (opts.note ?? '').trim().slice(0, MAX_OPERATOR_NOTE_LEN)
 
   const columnValues: Record<string, unknown> = {
     text86: sanitize(l.brand ?? ''),
@@ -165,6 +177,7 @@ export async function prepareLeadPushPayload(
       columnValues,
       itemName: cleanDomain || `lead-${leadId}`,
       anchor,
+      operatorNote,
       meta: {
         leadId,
         domain: cleanDomain,
@@ -199,6 +212,8 @@ export async function prepareLeadPushPayload(
  *      multipart add_file_to_column request to attach it.
  *   3. If s-tags exist, build a multi-line "<brand> <s_tag>" body and
  *      post create_update on the new item.
+ *   4. If the operator typed a note in the Push dialog, post it as a
+ *      second create_update so it lands in the item's Updates/comment box.
  *
  * Stamps pushed_to_monday_at + monday_pushed_item_id back on the lead
  * row so the UI can show "already pushed" and prevent double-pushing.
@@ -213,11 +228,14 @@ export async function pushLeadToMonday(
      *  Monday account" error when `user_profiles.monday_user_id` is
      *  null, instead of silently impersonating a default owner. */
     pushedByMondayId: number
+    /** Optional free-text note typed by the operator. Posted as an item
+     *  update (Monday's Updates/comment box) on the newly created item. */
+    note?: string
   },
 ): Promise<PushResult | PushError> {
   const prepared = await prepareLeadPushPayload(leadId, opts)
   if (!prepared.ok) return prepared
-  const { columnValues, itemName, anchor, lead, stags } = prepared.data
+  const { columnValues, itemName, anchor, lead, stags, operatorNote } = prepared.data
 
   const svc = createServiceClient()
 
@@ -318,6 +336,26 @@ export async function pushLeadToMonday(
     }
   }
 
+  // ----- Step 4: optional operator note as an item update -----
+  // Posted AFTER the s-tags update so it's the newest entry and lands
+  // at the top of the item's Updates feed — that's the human comment the
+  // operator deliberately wrote, so it should be the first thing seen.
+  // Best-effort, same as the s-tags update: the item already exists.
+  let noteUpdatePosted = false
+  if (operatorNote.length > 0) {
+    try {
+      await mondayGQL(
+        `mutation ($item_id: ID!, $body: String!) {
+          create_update(item_id: $item_id, body: $body) { id }
+        }`,
+        { item_id: createdItemId, body: operatorNote },
+      )
+      noteUpdatePosted = true
+    } catch {
+      // Ignore — item exists, note posting is best-effort.
+    }
+  }
+
   // ----- Stamp the lead row so the UI shows "already pushed" -----
   // The Monday item is already created at this point — we cannot fail
   // the push on a stamp error. Retry on transient failures (rate-limit,
@@ -356,6 +394,7 @@ export async function pushLeadToMonday(
     monday_item_id: createdItemId,
     attached_file: attachedFile,
     s_tag_update_posted: sTagUpdatePosted,
+    note_update_posted: noteUpdatePosted,
     stamp_warning: stampErr
       ? `${stampErr.message} (after ${stampAttempts} attempt${stampAttempts === 1 ? '' : 's'})`
       : null,

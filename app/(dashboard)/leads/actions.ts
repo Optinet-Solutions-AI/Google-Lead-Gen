@@ -5,7 +5,7 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { logActivity } from '@/lib/activity-log'
-import { pushLeadToMonday } from '@/lib/monday/push-lead'
+import { pushLeadToMonday, MAX_OPERATOR_NOTE_LEN } from '@/lib/monday/push-lead'
 import { requireLeadAccess, requireLeadsAccess } from '@/lib/auth/require-lead-access'
 
 /** Log the raw Supabase/Postgrest error server-side for debugging but
@@ -265,6 +265,11 @@ export async function pushLeadToMondayAction(
   const leadId = Number(formData.get('lead_id'))
   if (!Number.isInteger(leadId) || leadId <= 0) return { status: 'error', error: 'Missing lead id.' }
 
+  // Optional free-text note the operator typed in the Push dialog. Posted
+  // to the new Monday item's Updates/comment box. Trim + cap here too so
+  // an oversized body never reaches Monday (the lib re-caps defensively).
+  const note = String(formData.get('note') ?? '').trim().slice(0, MAX_OPERATOR_NOTE_LEN)
+
   const access = await requireLeadAccess(leadId)
   if (!access.ok) return { status: 'error', error: access.error }
 
@@ -302,6 +307,7 @@ export async function pushLeadToMondayAction(
   const result = await pushLeadToMonday(leadId, {
     pushedBy: pushedByDisplay,
     pushedByMondayId,
+    note,
   })
   if (!result.ok) {
     return { status: 'error', error: result.error }
@@ -315,6 +321,7 @@ export async function pushLeadToMondayAction(
       monday_item_id: result.monday_item_id,
       attached_file: result.attached_file,
       s_tag_update_posted: result.s_tag_update_posted,
+      note_update_posted: result.note_update_posted,
       monday_owner_id: pushedByMondayId,
       stamp_warning: result.stamp_warning,
     },
@@ -334,7 +341,9 @@ export async function pushLeadToMondayAction(
     status: 'ok',
     message: `Pushed to Monday (item ${result.monday_item_id}).${
       result.attached_file ? ' Screenshot attached.' : ''
-    }${result.s_tag_update_posted ? ' S-tags posted as update.' : ''}${warning}`,
+    }${result.s_tag_update_posted ? ' S-tags posted as update.' : ''}${
+      result.note_update_posted ? ' Comment posted.' : ''
+    }${warning}`,
     monday_item_id: result.monday_item_id,
   }
 }
