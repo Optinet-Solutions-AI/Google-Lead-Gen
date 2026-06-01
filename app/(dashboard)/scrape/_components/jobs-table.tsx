@@ -122,7 +122,11 @@ function CaptchaSolveMarker({ job }: { job: ScrapeJob }) {
       </span>
     )
   }
-  // Got past the captcha — show who solved it.
+  // "Solved by" icons only make sense on jobs that actually got their
+  // results. On a job that failed/cancelled for some OTHER reason (e.g.
+  // timeout, worker restart), a stray "solved by a bot" next to "failed"
+  // is confusing — let the red status badge + error speak for those.
+  if (job.status !== 'completed' && job.status !== 'running') return null
   if (!job.captcha_solved_by) return null
   const isBot = job.captcha_solved_by === 'auto_2captcha'
   return (
