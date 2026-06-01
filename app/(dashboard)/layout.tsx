@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { DashboardShell } from './_components/dashboard-shell'
 import { InteractiveBanner } from './_components/interactive-banner'
+import { loadProxyBandwidth } from './_lib/dashboard-queries'
 
 export default async function DashboardLayout({
   children,
@@ -40,8 +41,14 @@ export default async function DashboardLayout({
     if (maintRaw === true) redirect('/maintenance')
   }
 
+  // Proxy bandwidth for the sidebar footer — shows the remaining
+  // balance on every page so operators don't have to return to the
+  // Dashboard to check it. Shared infra, so safe for all signed-in
+  // users (not shadow-filtered).
+  const proxyBandwidth = await loadProxyBandwidth()
+
   return (
-    <DashboardShell username={username} isAdmin={isAdmin}>
+    <DashboardShell username={username} isAdmin={isAdmin} proxyBandwidth={proxyBandwidth}>
       <InteractiveBanner />
       {children}
     </DashboardShell>

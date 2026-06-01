@@ -141,6 +141,49 @@ export type DashboardData = {
 
 const BANDWIDTH_STALE_MS = 2 * 60 * 60 * 1000
 
+/**
+ * Load the latest proxy bandwidth snapshot plus the configured low
+ * threshold. Shared infrastructure (one metered proxy plan), so NOT
+ * shadow-filtered — every operator sees the same remaining balance.
+ *
+ * Pulled out of loadDashboardData so the sidebar (rendered in the
+ * dashboard layout, on every page) can surface the balance without
+ * loading the whole dashboard payload. Accepts an optional service
+ * client / timestamp so loadDashboardData can reuse its own.
+ */
+export async function loadProxyBandwidth(
+  svc = createServiceClient(),
+  now = Date.now(),
+): Promise<ProxyBandwidth | null> {
+  const [{ data: bwRow }, { data: bwThresholdRaw }] = await Promise.all([
+    svc
+      .from('proxy_bandwidth_snapshots')
+      .select('used_bytes, limit_bytes, remaining_bytes, is_low, captured_at')
+      .order('captured_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    svc.rpc('get_system_setting', { p_key: 'proxy_bandwidth_low_threshold_bytes' }),
+  ])
+  return bwRow
+    ? {
+        usedBytes: (bwRow as { used_bytes: number }).used_bytes,
+        limitBytes: (bwRow as { limit_bytes: number }).limit_bytes,
+        remainingBytes: (bwRow as { remaining_bytes: number }).remaining_bytes,
+        isLow: (bwRow as { is_low: boolean }).is_low,
+        lowThresholdBytes:
+          typeof bwThresholdRaw === 'number'
+            ? bwThresholdRaw
+            : typeof bwThresholdRaw === 'string'
+              ? Number(bwThresholdRaw) || 0
+              : 0,
+        capturedAt: (bwRow as { captured_at: string }).captured_at,
+        stale:
+          now - new Date((bwRow as { captured_at: string }).captured_at).getTime() >
+          BANDWIDTH_STALE_MS,
+      }
+    : null
+}
+
 export async function loadDashboardData(): Promise<DashboardData> {
   const svc = createServiceClient()
   // Shadow isolation: every query below is wrapped in shadowFilter so
@@ -326,37 +369,10 @@ export async function loadDashboardData(): Promise<DashboardData> {
     .order('country_name', { ascending: true })
 
   // ----- Proxy bandwidth -----
-  // Shared infrastructure (one metered proxy plan), so NOT shadow-
-  // filtered — every operator sees the same remaining balance. Read the
-  // latest snapshot written by /api/proxy/bandwidth/refresh plus the
-  // configured low threshold (for the "warns below X" label).
-  const [{ data: bwRow }, { data: bwThresholdRaw }] = await Promise.all([
-    svc
-      .from('proxy_bandwidth_snapshots')
-      .select('used_bytes, limit_bytes, remaining_bytes, is_low, captured_at')
-      .order('captured_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    svc.rpc('get_system_setting', { p_key: 'proxy_bandwidth_low_threshold_bytes' }),
-  ])
-  const proxyBandwidth: ProxyBandwidth | null = bwRow
-    ? {
-        usedBytes: (bwRow as { used_bytes: number }).used_bytes,
-        limitBytes: (bwRow as { limit_bytes: number }).limit_bytes,
-        remainingBytes: (bwRow as { remaining_bytes: number }).remaining_bytes,
-        isLow: (bwRow as { is_low: boolean }).is_low,
-        lowThresholdBytes:
-          typeof bwThresholdRaw === 'number'
-            ? bwThresholdRaw
-            : typeof bwThresholdRaw === 'string'
-              ? Number(bwThresholdRaw) || 0
-              : 0,
-        capturedAt: (bwRow as { captured_at: string }).captured_at,
-        stale:
-          now - new Date((bwRow as { captured_at: string }).captured_at).getTime() >
-          BANDWIDTH_STALE_MS,
-      }
-    : null
+  // Read the latest snapshot written by /api/proxy/bandwidth/refresh
+  // plus the configured low threshold. Reuses this query's service
+  // client / timestamp. See loadProxyBandwidth for the shadow note.
+  const proxyBandwidth = await loadProxyBandwidth(svc, now)
 
   // ----- Recent batches -----
   const { data: batchRows } = await shadowFilter(

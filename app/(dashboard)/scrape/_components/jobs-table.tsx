@@ -110,6 +110,11 @@ function StatusBadge({ job }: { job: ScrapeJob }) {
  *  an operator did. Renders nothing when no captcha was recorded. */
 function CaptchaSolveMarker({ job }: { job: ScrapeJob }) {
   if (!job.captcha_solved_by) return null
+  // A scrape can hit several captchas across its pages. If it ultimately
+  // stalled/failed ON a captcha, showing "solved by a person" next to a
+  // "nobody solved the captcha" error reads as a contradiction — so only
+  // show the marker when the solve actually let the scrape proceed.
+  if (job.status === 'captcha' || job.status === 'failed') return null
   const isBot = job.captcha_solved_by === 'auto_2captcha'
   return (
     <span

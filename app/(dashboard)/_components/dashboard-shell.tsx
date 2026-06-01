@@ -4,11 +4,13 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import {
+  AlertTriangle,
   Bell,
   BookOpen,
   ChevronLeft,
   Clock,
   Database,
+  Gauge,
   Globe,
   Hand,
   HelpCircle,
@@ -25,6 +27,7 @@ import {
   X,
 } from 'lucide-react'
 import { signOutAction } from '../_actions/auth'
+import { type ProxyBandwidth } from '../_lib/dashboard-queries'
 import { FeedbackWidget } from './feedback-widget'
 
 const NAV_ITEMS = [
@@ -141,9 +144,15 @@ type Props = {
   children: React.ReactNode
   username: string
   isAdmin?: boolean
+  proxyBandwidth?: ProxyBandwidth | null
 }
 
-export function DashboardShell({ children, username, isAdmin = false }: Props) {
+export function DashboardShell({
+  children,
+  username,
+  isAdmin = false,
+  proxyBandwidth = null,
+}: Props) {
   const pathname = usePathname()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [expanded, setExpanded] = useState(true)
@@ -235,8 +244,9 @@ export function DashboardShell({ children, username, isAdmin = false }: Props) {
           })}
         </nav>
 
-        {/* Footer: user + logout */}
+        {/* Footer: proxy bandwidth + user + logout */}
         <div className="border-t border-[color:var(--color-border)] px-2 py-2">
+          <SidebarBandwidth bw={proxyBandwidth} showLabels={showLabels} />
           {showLabels && (
             <p className="px-2 pb-1 text-[11px] text-[color:var(--color-text-secondary)]">
               Signed in as <span className="text-[color:var(--color-text-primary)]">{username}</span>
@@ -282,5 +292,89 @@ export function DashboardShell({ children, username, isAdmin = false }: Props) {
        *  admins triage at /admin/feedback. */}
       <FeedbackWidget />
     </div>
+  )
+}
+
+// Client-side GB formatter — mirrors lib/proxy-bandwidth.ts's formatGb,
+// duplicated here because that module is server-only and this is a
+// client component.
+const BYTES_PER_GB = 1024 ** 3
+function formatGb(bytes: number): string {
+  const gb = bytes / BYTES_PER_GB
+  return `${gb >= 100 ? Math.round(gb) : gb.toFixed(1)} GB`
+}
+
+/**
+ * Compact proxy-bandwidth readout for the sidebar footer. Mirrors the
+ * dashboard's BandwidthMeter so the remaining balance is visible on
+ * every page. Links to the Dashboard for the full card. Renders an
+ * icon-only indicator when the sidebar is collapsed.
+ */
+function SidebarBandwidth({
+  bw,
+  showLabels,
+}: {
+  bw: ProxyBandwidth | null
+  showLabels: boolean
+}) {
+  if (!bw) return null
+
+  const limit = bw.limitBytes > 0 ? bw.limitBytes : 1
+  const usedPct = Math.min(100, Math.max(0, (bw.usedBytes / limit) * 100))
+  const barCls = bw.isLow
+    ? 'bg-rose-500'
+    : usedPct >= 80
+      ? 'bg-amber-500'
+      : 'bg-emerald-500'
+  const remaining = formatGb(bw.remainingBytes)
+
+  if (!showLabels) {
+    // Collapsed sidebar: gauge icon + thin bar, full readout in tooltip.
+    return (
+      <Link
+        href="/"
+        title={`Proxy bandwidth: ${remaining} of ${formatGb(bw.limitBytes)} remaining`}
+        className="mb-1 flex flex-col items-center gap-1 rounded-md px-2 py-2 text-[color:var(--color-text-secondary)] transition-colors hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]"
+      >
+        {bw.isLow ? (
+          <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
+        ) : (
+          <Gauge className="h-4 w-4 shrink-0" />
+        )}
+        <span className="h-1 w-6 overflow-hidden rounded-full bg-[color:var(--color-bg-secondary)]">
+          <span className={['block h-full rounded-full', barCls].join(' ')} style={{ width: `${usedPct}%` }} />
+        </span>
+      </Link>
+    )
+  }
+
+  return (
+    <Link
+      href="/"
+      title={bw.stale ? 'Reading is stale — the bandwidth poller may not be running' : 'View on Dashboard'}
+      className="mb-2 block rounded-md px-2 py-1.5 transition-colors hover:bg-[color:var(--color-bg-secondary)]"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+          <Gauge className="h-3 w-3" />
+          Proxy bandwidth
+        </span>
+        {bw.isLow && (
+          <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-100 px-1.5 py-0.5 text-[9px] font-semibold text-rose-800">
+            <AlertTriangle className="h-2.5 w-2.5" />
+            Low
+          </span>
+        )}
+      </div>
+      <p className="mt-0.5 text-[13px] font-semibold leading-none text-[color:var(--color-text-primary)]">
+        {remaining}{' '}
+        <span className="text-[11px] font-normal text-[color:var(--color-text-secondary)]">
+          of {formatGb(bw.limitBytes)}
+        </span>
+      </p>
+      <span className="mt-1 block h-1.5 w-full overflow-hidden rounded-full bg-[color:var(--color-bg-secondary)]">
+        <span className={['block h-full rounded-full transition-all', barCls].join(' ')} style={{ width: `${usedPct}%` }} />
+      </span>
+    </Link>
   )
 }
