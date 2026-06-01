@@ -82,6 +82,18 @@ export type ActivityRow = {
   created_at: string
 }
 
+export type ProxyBandwidth = {
+  usedBytes: number
+  limitBytes: number
+  remainingBytes: number
+  isLow: boolean
+  lowThresholdBytes: number
+  capturedAt: string
+  /** True when the latest snapshot is old enough that the poller is
+   *  probably not running / failing — the UI flags it as such. */
+  stale: boolean
+}
+
 export type WorkerKind = 'scrape' | 'enrichment'
 
 export type WorkerSlot = {
@@ -123,7 +135,11 @@ export type DashboardData = {
   recentActivity: ActivityRow[]
   workers: WorkerSlot[]
   hasActiveWork: boolean
+  /** Latest proxy bandwidth snapshot, or null if none recorded yet. */
+  proxyBandwidth: ProxyBandwidth | null
 }
+
+const BANDWIDTH_STALE_MS = 2 * 60 * 60 * 1000
 
 export async function loadDashboardData(): Promise<DashboardData> {
   const svc = createServiceClient()
@@ -309,6 +325,39 @@ export async function loadDashboardData(): Promise<DashboardData> {
     .eq('is_google_logged_in', false)
     .order('country_name', { ascending: true })
 
+  // ----- Proxy bandwidth -----
+  // Shared infrastructure (one metered proxy plan), so NOT shadow-
+  // filtered — every operator sees the same remaining balance. Read the
+  // latest snapshot written by /api/proxy/bandwidth/refresh plus the
+  // configured low threshold (for the "warns below X" label).
+  const [{ data: bwRow }, { data: bwThresholdRaw }] = await Promise.all([
+    svc
+      .from('proxy_bandwidth_snapshots')
+      .select('used_bytes, limit_bytes, remaining_bytes, is_low, captured_at')
+      .order('captured_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    svc.rpc('get_system_setting', { p_key: 'proxy_bandwidth_low_threshold_bytes' }),
+  ])
+  const proxyBandwidth: ProxyBandwidth | null = bwRow
+    ? {
+        usedBytes: (bwRow as { used_bytes: number }).used_bytes,
+        limitBytes: (bwRow as { limit_bytes: number }).limit_bytes,
+        remainingBytes: (bwRow as { remaining_bytes: number }).remaining_bytes,
+        isLow: (bwRow as { is_low: boolean }).is_low,
+        lowThresholdBytes:
+          typeof bwThresholdRaw === 'number'
+            ? bwThresholdRaw
+            : typeof bwThresholdRaw === 'string'
+              ? Number(bwThresholdRaw) || 0
+              : 0,
+        capturedAt: (bwRow as { captured_at: string }).captured_at,
+        stale:
+          now - new Date((bwRow as { captured_at: string }).captured_at).getTime() >
+          BANDWIDTH_STALE_MS,
+      }
+    : null
+
   // ----- Recent batches -----
   const { data: batchRows } = await shadowFilter(
     svc
@@ -440,6 +489,7 @@ export async function loadDashboardData(): Promise<DashboardData> {
     recentActivity: (actRows ?? []) as unknown as ActivityRow[],
     workers,
     hasActiveWork,
+    proxyBandwidth,
   }
 }
 

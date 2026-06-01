@@ -7,12 +7,14 @@ import {
   CheckCircle2,
   Cpu,
   Database,
+  Gauge,
   ListChecks,
   Loader2,
   Search,
   TrendingUp,
 } from 'lucide-react'
 import { AutoRefresh } from './scrape/_components/auto-refresh'
+import { formatGb } from '@/lib/proxy-bandwidth'
 import {
   loadDashboardData,
   type DashboardData,
@@ -20,6 +22,7 @@ import {
   type ScrapeStats,
   type EnrichStats,
   type ProfileWarning,
+  type ProxyBandwidth,
   type RecentBatch,
   type ActivityRow,
   type WorkerSlot,
@@ -41,7 +44,12 @@ export default async function DashboardPage() {
         </p>
       </header>
 
+      {data.proxyBandwidth?.isLow && !data.proxyBandwidth.stale && (
+        <ProxyBandwidthLowBanner bw={data.proxyBandwidth} />
+      )}
+
       <KpiStrip data={data} />
+      <ProxyBandwidthCard bw={data.proxyBandwidth} />
       <PipelineHealth data={data} />
       <Workers workers={data.workers} />
 
@@ -151,6 +159,104 @@ function fmtElapsed(iso: string | null): string {
   const mins = Math.floor(secs / 60)
   const rem = secs % 60
   return `${mins}m ${rem}s elapsed`
+}
+
+// ---------------------------------------------------------------------------
+// Proxy bandwidth
+// ---------------------------------------------------------------------------
+
+function ProxyBandwidthLowBanner({ bw }: { bw: ProxyBandwidth }) {
+  return (
+    <div className="flex items-start gap-2 rounded-md bg-rose-50 px-3 py-2 text-[12px] text-rose-900">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-700" />
+      <div className="flex-1">
+        <p>
+          <strong>Proxy bandwidth is low — {formatGb(bw.remainingBytes)} left</strong> of the{' '}
+          {formatGb(bw.limitBytes)} plan.
+        </p>
+        <p className="mt-0.5 text-[11px] text-rose-800">
+          Top up the proxy plan soon — scrapes start failing with
+          &ldquo;proxy ran out of bandwidth&rdquo; once it hits zero.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function ProxyBandwidthCard({ bw }: { bw: ProxyBandwidth | null }) {
+  return (
+    <section className="flex flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3">
+      <div className="flex items-center justify-between">
+        <h2 className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+          <Gauge className="h-3 w-3" />
+          Proxy bandwidth
+        </h2>
+        {bw && (
+          <span className="text-[10px] text-[color:var(--color-text-secondary)]">
+            {bw.stale ? 'last reading ' : 'updated '}
+            {fmtRelative(bw.capturedAt)}
+          </span>
+        )}
+      </div>
+
+      {!bw ? (
+        <p className="py-3 text-[12px] text-[color:var(--color-text-secondary)]">
+          Not measured yet — usage is read from GoLogin every 30 minutes.
+          The first reading will appear shortly after deploy.
+        </p>
+      ) : (
+        <BandwidthMeter bw={bw} />
+      )}
+    </section>
+  )
+}
+
+function BandwidthMeter({ bw }: { bw: ProxyBandwidth }) {
+  const limit = bw.limitBytes > 0 ? bw.limitBytes : 1
+  const usedPct = Math.min(100, Math.max(0, (bw.usedBytes / limit) * 100))
+  const barCls = bw.isLow
+    ? 'bg-rose-500'
+    : usedPct >= 80
+      ? 'bg-amber-500'
+      : 'bg-emerald-500'
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-[20px] font-semibold leading-none text-[color:var(--color-text-primary)]">
+          {formatGb(bw.remainingBytes)}{' '}
+          <span className="text-[12px] font-normal text-[color:var(--color-text-secondary)]">
+            of {formatGb(bw.limitBytes)} remaining
+          </span>
+        </p>
+        {bw.isLow && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-800">
+            <AlertTriangle className="h-3 w-3" />
+            Low
+          </span>
+        )}
+      </div>
+
+      <div className="h-2 w-full overflow-hidden rounded-full bg-[color:var(--color-bg-secondary)]">
+        <div
+          className={['h-full rounded-full transition-all', barCls].join(' ')}
+          style={{ width: `${usedPct}%` }}
+        />
+      </div>
+
+      <p className="text-[11px] text-[color:var(--color-text-secondary)]">
+        {formatGb(bw.usedBytes)} used ({Math.round(usedPct)}%)
+        {bw.lowThresholdBytes > 0 && (
+          <> · warns below {formatGb(bw.lowThresholdBytes)}</>
+        )}
+        {bw.stale && (
+          <span className="text-amber-700">
+            {' '}· reading is stale — the bandwidth poller may not be running
+          </span>
+        )}
+      </p>
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
