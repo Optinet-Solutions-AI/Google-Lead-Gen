@@ -18,7 +18,8 @@ import { AutoRefresh } from '../_components/auto-refresh'
 import { CaptchaRecoveryBanner } from '../_components/captcha-recovery-banner'
 import { MobileSkippedRetryBanner } from '../_components/mobile-skipped-retry-banner'
 import { EnrichmentStages } from '../_components/enrichment-stages'
-import { fetchStageSummary } from '../_lib/queries'
+import { KickStreamersPanel } from '../_components/kick-streamers-panel'
+import { fetchKickStreamerSummary, fetchStageSummary } from '../_lib/queries'
 
 type SearchParams = Record<string, string | string[] | undefined>
 
@@ -150,28 +151,33 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
     job.view_mode === 'both' &&
     job.result_summary?.['mobile_pass_skipped'] === 'captcha'
 
-  const [{ rows, total }, hiddenCount, stageSummary, captchaSolverEnabled] = await Promise.all([
-    queryLeads({
-      page,
-      size,
-      sort,
-      order,
-      q,
-      countryCode,
-      resultType,
-      scrapeJobId: id,
-      filters,
-      sorts,
-      includeNotRelevant: showHidden,
-    }),
-    countNotRelevantInJob(svc, id),
-    fetchStageSummary(id),
-    mobileCaptchaAborted
-      ? svc
-          .rpc('get_system_setting', { p_key: 'captcha_solver_enabled' })
-          .then(({ data }) => data !== false)
-      : Promise.resolve(true),
-  ])
+  const isKick = job.search_engine === 'kick'
+
+  const [{ rows, total }, hiddenCount, stageSummary, captchaSolverEnabled, kickSummary] =
+    await Promise.all([
+      queryLeads({
+        page,
+        size,
+        sort,
+        order,
+        q,
+        countryCode,
+        resultType,
+        scrapeJobId: id,
+        filters,
+        sorts,
+        includeNotRelevant: showHidden,
+      }),
+      countNotRelevantInJob(svc, id),
+      // Kick jobs have no leads, so the lead-enrichment stages don't apply.
+      isKick ? Promise.resolve(null) : fetchStageSummary(id),
+      mobileCaptchaAborted
+        ? svc
+            .rpc('get_system_setting', { p_key: 'captcha_solver_enabled' })
+            .then(({ data }) => data !== false)
+        : Promise.resolve(true),
+      isKick ? fetchKickStreamerSummary(id) : Promise.resolve(null),
+    ])
 
   const toggleHref = (() => {
     const next = new URLSearchParams()
@@ -273,7 +279,9 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         />
       )}
 
-      <EnrichmentStages jobId={job.id} summary={stageSummary} />
+      {isKick
+        ? kickSummary && <KickStreamersPanel jobId={job.id} summary={kickSummary} />
+        : stageSummary && <EnrichmentStages jobId={job.id} summary={stageSummary} />}
 
       <div className="pt-2">
         <AdvancedFilters columns={columns} preserve={['show_hidden']} />
@@ -287,10 +295,14 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         enabled={
           job.status === 'pending' ||
           job.status === 'running' ||
-          stageSummary.affiliate.inflight_pending + stageSummary.affiliate.inflight_running > 0 ||
-          stageSummary.rooster.inflight_pending + stageSummary.rooster.inflight_running > 0 ||
-          stageSummary.contact.inflight_pending + stageSummary.contact.inflight_running > 0 ||
-          stageSummary.stag.inflight_pending + stageSummary.stag.inflight_running > 0
+          // Kick Phase-2 enrichment runs as its own scrape_queue job — keep
+          // refreshing while it's queued/running so counts update live.
+          kickSummary?.inflight === true ||
+          (stageSummary != null &&
+            (stageSummary.affiliate.inflight_pending + stageSummary.affiliate.inflight_running > 0 ||
+              stageSummary.rooster.inflight_pending + stageSummary.rooster.inflight_running > 0 ||
+              stageSummary.contact.inflight_pending + stageSummary.contact.inflight_running > 0 ||
+              stageSummary.stag.inflight_pending + stageSummary.stag.inflight_running > 0))
         }
       />
     </div>

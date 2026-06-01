@@ -197,6 +197,57 @@ function bump(target: StageStatus, ts: string | null, positive: boolean, errored
   if (!Number.isFinite(curMs) || tsMs > curMs) target.lastRunAt = ts
 }
 
+/** Kick Phase-2 panel summary for one Kick scrape job: how many streamers
+ *  Phase 1 discovered, how many have had their kick.com/{slug} about page
+ *  scraped (Phase 2), how many failed, and whether a Phase-2 enrichment
+ *  job is currently queued/running for this parent. Drives the ▶ button's
+ *  enabled/loading state. Counts only — cheap head requests. */
+export type KickStreamerSummary = {
+  discovered: number
+  enriched: number
+  failed: number
+  pending: number
+  inflight: boolean
+  inflightStatus: 'pending' | 'running' | null
+}
+
+export async function fetchKickStreamerSummary(jobId: string): Promise<KickStreamerSummary> {
+  const svc = createServiceClient()
+  const [discoveredRes, enrichedRes, failedRes, inflightRes] = await Promise.all([
+    svc.from('kick_streamers').select('id', { count: 'exact', head: true }).eq('scrape_queue_id', jobId),
+    svc
+      .from('kick_streamers')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .not('about_scraped_at', 'is', null),
+    svc
+      .from('kick_streamers')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .eq('about_fetch_failed', true),
+    svc
+      .from('scrape_queue')
+      .select('status')
+      .eq('parent_scrape_job_id', jobId)
+      .in('status', ['pending', 'running']),
+  ])
+
+  const discovered = discoveredRes.count ?? 0
+  const enriched = enrichedRes.count ?? 0
+  const failed = failedRes.count ?? 0
+  const inflightRows = (inflightRes.data ?? []) as Array<{ status: string }>
+  const inflight = inflightRows.length > 0
+  const running = inflightRows.some(r => r.status === 'running')
+  return {
+    discovered,
+    enriched,
+    failed,
+    pending: Math.max(0, discovered - enriched),
+    inflight,
+    inflightStatus: inflight ? (running ? 'running' : 'pending') : null,
+  }
+}
+
 export async function listRecentJobs(limit = 30): Promise<ScrapeJob[]> {
   return queryJobs({ limit, page: 1, size: limit }).then(r => r.rows)
 }

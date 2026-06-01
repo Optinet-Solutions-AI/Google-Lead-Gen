@@ -114,6 +114,14 @@ KICK_SEARCH_PATH     = os.environ.get(
 # Kick search is also pure HTTP (App Access Token + 3 API endpoints).
 # Same 5-min cap as YouTube — typical run is a few seconds.
 KICK_SEARCH_TIMEOUT_S = int(os.environ.get("KICK_SEARCH_TIMEOUT_SECONDS", "300"))
+# Kick Phase 2 (profile enrichment) is the opposite: a real GoLogin/Chromium
+# session navigating up to KICK_PHASE2_TOP_N kick.com/{slug} pages behind
+# Cloudflare. Budget like a full scrape, not like the pure-HTTP Phase 1.
+KICK_PROFILE_SCRAPE_PATH = os.environ.get(
+    "KICK_PROFILE_SCRAPE_PATH",
+    str(Path.home() / "kick_profile_scrape.py"),
+)
+KICK_PHASE2_TOP_N = int(os.environ.get("KICK_PHASE2_TOP_N", "25"))
 KILL_SCRIPT_PATH     = os.environ.get(
     "KILL_SCRIPT_PATH",
     str(Path.home() / "kill_gologin.py"),
@@ -718,7 +726,15 @@ def process_kick_job(job: dict[str, Any]) -> None:
     still set at claim time and released by complete_scrape_job;
     for Kick (where country is unused) that just serializes per
     country-row, which is harmless given the few-second runtime.
+
+    Phase 2 jobs (operator-triggered ▶ profile enrichment) carry a
+    parent_scrape_job_id and take the *browser* path instead — they
+    need a real GoLogin session to clear Cloudflare on kick.com/{slug}.
     """
+    if job.get("parent_scrape_job_id"):
+        process_kick_phase2_job(job)
+        return
+
     job_id = job["id"]
     country_code = job["country_code"]
     keyword = job["keyword"]
@@ -778,6 +794,141 @@ def process_kick_job(job: dict[str, Any]) -> None:
         return
 
     log.info("kick job %s completed | %d streamers", job_id, summary.get("total_results") or 0)
+
+
+def run_kick_profile_scrape(
+    profile_id: str,
+    parent_job_id: str,
+    job_id: str,
+    top_n: int,
+) -> tuple[int, str, Path, Path]:
+    """Invoke kick_profile_scrape.py (Phase 2) as a subprocess.
+
+    Unlike run_kick_search (pure HTTP), this is the *browser* path — it
+    needs the GoLogin profile + port exactly like run_scrape, because
+    kick.com/{slug} sits behind Cloudflare. Captcha-solver gating mirrors
+    run_scrape: when active, hand the child --interactive/--job-id and use
+    the longer interactive timeout so a paused job isn't TERM'd while a
+    human clicks through noVNC.
+
+    Returns: (exit_code, combined_log_text, json_output_path, log_path)
+    """
+    output_path = Path(RESULTS_DIR) / f"kick_phase2_{WORKER_ID}_{GOLOGIN_PORT}.json"
+    log_path    = Path(RESULTS_DIR) / f"kick_phase2_{WORKER_ID}_{GOLOGIN_PORT}.log"
+    output_path.unlink(missing_ok=True)
+    log_path.unlink(missing_ok=True)
+
+    cmd = [
+        "python3",
+        "-u",
+        KICK_PROFILE_SCRAPE_PATH,
+        profile_id,
+        "--port", str(GOLOGIN_PORT),
+        "--parent-job-id", parent_job_id,
+        "--top-n", str(top_n),
+        "--job-id", job_id,
+        "--worker-id", WORKER_ID,
+        "--output", str(output_path),
+    ]
+    if captcha_solver_should_run():
+        cmd += ["--interactive"]
+
+    env = os.environ.copy()
+    log.info("launching kick_profile_scrape (port=%d profile=%s parent=%s top_n=%d log=%s)",
+             GOLOGIN_PORT, profile_id[:8], parent_job_id[:8], top_n, log_path)
+
+    timeout_s = INTERACTIVE_TIMEOUT_S if captcha_solver_should_run() else SCRAPE_TIMEOUT_S
+    with open(log_path, "w", encoding="utf-8") as log_f:
+        result = subprocess.run(
+            cmd,
+            env=env,
+            stdout=log_f,
+            stderr=subprocess.STDOUT,
+            timeout=timeout_s,
+        )
+
+    try:
+        combined = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        combined = ""
+    return result.returncode, combined, output_path, log_path
+
+
+def process_kick_phase2_job(job: dict[str, Any]) -> None:
+    """Handle a Kick Phase-2 enrichment job (search_engine='kick' with a
+    parent_scrape_job_id). Browser path: look up the country's GoLogin
+    profile, run kick_profile_scrape.py over the parent job's top-N
+    un-enriched streamers, then complete (streamers are written directly
+    to kick_streamers / kick_links by the child)."""
+    job_id = job["id"]
+    country_code = job["country_code"]
+    parent_job_id = job["parent_scrape_job_id"]
+
+    log.info("claimed kick PHASE 2 job %s | parent=%s country=%s",
+             job_id, parent_job_id, country_code)
+
+    profile = fetch_profile(country_code)
+    if not profile or not profile.get("gologin_profile_id"):
+        fail_job(job_id, f"No gologin_profile_id configured for country_code={country_code}")
+        return
+    profile_id = profile["gologin_profile_id"]
+
+    _kill_port()
+
+    try:
+        exit_code, combined_log, output_path, log_path = run_kick_profile_scrape(
+            profile_id=profile_id,
+            parent_job_id=parent_job_id,
+            job_id=job_id,
+            top_n=KICK_PHASE2_TOP_N,
+        )
+    except subprocess.TimeoutExpired:
+        _kill_port()
+        timeout_used = INTERACTIVE_TIMEOUT_S if CAPTCHA_SOLVER_MODE else SCRAPE_TIMEOUT_S
+        fail_job(job_id, f"Kick profile enrichment took too long ({timeout_used // 60} min) and was stopped.")
+        return
+    except Exception as exc:  # noqa: BLE001
+        _kill_port()
+        fail_job(job_id, classify_failure(exit_code=None, error_text=str(exc), source="scraper"))
+        return
+
+    if "[RESULT] SUCCESS" not in combined_log:
+        _kill_port()
+        fail_job(job_id, classify_failure(exit_code=exit_code, error_text=combined_log, source="scraper"))
+        return
+
+    _kill_port()
+
+    if not output_path.exists():
+        fail_job(job_id, "Kick profile enrichment finished but the results file is missing on disk.")
+        return
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        fail_job(job_id, "Kick profile enrichment finished but the results file is corrupted — re-run usually fixes this.")
+        return
+
+    # Streamers are already updated in kick_streamers; pass [] so the
+    # leads-insert is a no-op while status + summary update and the
+    # active_profile_lock is released.
+    summary = {
+        "total_results": payload.get("total_results"),
+        "organic_results": payload.get("organic_results"),
+        "ppc_results": payload.get("ppc_results"),
+        "pages_scraped": payload.get("pages_scraped"),
+        "scraped_at": payload.get("timestamp"),
+        "is_logged_in": None,
+        "view_mode": "desktop",
+    }
+    try:
+        complete_job(job_id, [], summary)
+    except Exception as exc:  # noqa: BLE001
+        log.error("complete_scrape_job RPC failed for kick phase 2 job %s: %s", job_id, exc)
+        return
+
+    log.info("kick phase 2 job %s completed | %d streamers enriched (%d attempted, %d failed)",
+             job_id, payload.get("total_results") or 0,
+             payload.get("attempted") or 0, payload.get("failed") or 0)
 
 
 def process_job(job: dict[str, Any]) -> None:

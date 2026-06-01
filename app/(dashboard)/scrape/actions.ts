@@ -721,6 +721,112 @@ export async function runStagExtraction(
 }
 
 // ============================================================
+// Kick Phase 2 — operator-triggered profile enrichment
+//
+// Unlike the affiliate/contact/s-tag stages (which enqueue into
+// enrichment_fetch_queue and run on the enrichment workers), Phase 2 is
+// a real browser scrape of kick.com/{slug} behind Cloudflare — so it
+// enqueues a *new scrape_queue row* that the GoLogin scrape workers
+// claim. The row is tagged parent_scrape_job_id=<this Kick job>; the
+// worker selects that parent's top-N un-enriched streamers and backfills
+// socials, follower_count, and promo_card / pinned_chat links straight
+// into kick_streamers / kick_links. N is a VM-side cap (KICK_PHASE2_TOP_N).
+// ============================================================
+export async function runKickProfileEnrichment(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const jobId = jobIdFrom(fd) // the parent Phase-1 Kick job
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+
+  // Load the parent job + verify it's a Kick job, and carry over the
+  // created_by_* lineage so the enrichment row isn't orphaned (otherwise
+  // requireJobAccess would later refuse the original owner — same reason
+  // as the re-run clone, BUGS.md R2-14).
+  const { data: job, error: readErr } = await svc
+    .from('scrape_queue')
+    .select(
+      'keyword, country_code, language, search_engine, created_by_email, created_by_username, created_by_display, created_by_is_shadow',
+    )
+    .eq('id', jobId)
+    .maybeSingle()
+  if (readErr) return { status: 'error', error: safeError(readErr, 'Failed to load the source job.') }
+  if (!job) return { status: 'error', error: 'Job not found.' }
+  const j = job as {
+    keyword: string
+    country_code: string
+    language: string | null
+    search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | null
+    created_by_email: string | null
+    created_by_username: string | null
+    created_by_display: string | null
+    created_by_is_shadow: boolean | null
+  }
+  if ((j.search_engine ?? '') !== 'kick') {
+    return { status: 'error', error: 'Profile enrichment only applies to Kick scrape jobs.' }
+  }
+
+  // Need streamers that haven't had their about page scraped yet.
+  const { count: pending, error: cntErr } = await svc
+    .from('kick_streamers')
+    .select('id', { count: 'exact', head: true })
+    .eq('scrape_queue_id', jobId)
+    .is('about_scraped_at', null)
+  if (cntErr) return { status: 'error', error: safeError(cntErr, 'Failed to count discovered streamers.') }
+  if (!pending || pending === 0) {
+    revalidatePath(`/scrape/${jobId}`)
+    return {
+      status: 'ok',
+      message: 'No streamers left to enrich — every discovered profile already has its about page scraped.',
+    }
+  }
+
+  // Don't stack Phase 2 jobs: bail if one is already queued/running for
+  // this parent so a double-click doesn't burn two GoLogin sessions.
+  const { count: inflight, error: ifErr } = await svc
+    .from('scrape_queue')
+    .select('id', { count: 'exact', head: true })
+    .eq('parent_scrape_job_id', jobId)
+    .in('status', ['pending', 'running'])
+  if (ifErr) return { status: 'error', error: safeError(ifErr, 'Failed to check for an in-flight enrichment job.') }
+  if (inflight && inflight > 0) {
+    return { status: 'error', error: 'A profile-enrichment run is already queued or running for this job.' }
+  }
+
+  const { error: insertError } = await svc.from('scrape_queue').insert({
+    keyword: j.keyword,
+    country_code: j.country_code,
+    search_engine: 'kick',
+    parent_scrape_job_id: jobId,
+    language: j.language,
+    priority: 0,
+    with_enrichment: false,
+    created_by_email: j.created_by_email,
+    created_by_username: j.created_by_username,
+    created_by_display: j.created_by_display,
+    created_by_is_shadow: j.created_by_is_shadow ?? false,
+  })
+  if (insertError) return { status: 'error', error: safeError(insertError, 'Failed to queue profile enrichment.') }
+
+  await logActivity({
+    action: 'enrichment.kick_profile',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { pending_streamers: pending },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: `Queued profile enrichment. A VM worker will open the top streamers (by live viewers) through GoLogin and backfill socials, follower count, and promo / pinned-chat links. ${pending} streamer${pending === 1 ? '' : 's'} still pending.`,
+  }
+}
+
+// ============================================================
 // Cancel an in-flight enrichment stage for one scrape job.
 //
 // Pending rows for that (scrape_job, stage) flip to status='cancelled' so
