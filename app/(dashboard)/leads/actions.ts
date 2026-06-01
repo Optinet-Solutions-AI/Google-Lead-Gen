@@ -321,7 +321,7 @@ export async function pushLeadToMondayAction(
       monday_item_id: result.monday_item_id,
       attached_file: result.attached_file,
       s_tag_update_posted: result.s_tag_update_posted,
-      note_update_posted: result.note_update_posted,
+      comment_set: result.comment_set,
       monday_owner_id: pushedByMondayId,
       stamp_warning: result.stamp_warning,
     },
@@ -342,7 +342,7 @@ export async function pushLeadToMondayAction(
     message: `Pushed to Monday (item ${result.monday_item_id}).${
       result.attached_file ? ' Screenshot attached.' : ''
     }${result.s_tag_update_posted ? ' S-tags posted as update.' : ''}${
-      result.note_update_posted ? ' Comment posted.' : ''
+      result.comment_set ? ' Comment added.' : ''
     }${warning}`,
     monday_item_id: result.monday_item_id,
   }

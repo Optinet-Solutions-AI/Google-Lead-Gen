@@ -1053,7 +1053,7 @@ function PushToMondayPanel({
           <input type="hidden" name="lead_id" value={leadId} />
           <label className="flex flex-col gap-1">
             <span className="text-[10px] font-medium text-[color:var(--color-text-secondary)]">
-              Comment (optional) — posted to the item&apos;s Updates box on Monday
+              Comment (optional) — fills the item&apos;s Comments column on Monday
             </span>
             <textarea
               name="note"

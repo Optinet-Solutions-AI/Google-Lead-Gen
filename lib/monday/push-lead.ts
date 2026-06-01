@@ -14,9 +14,9 @@ export type PushResult = {
   monday_item_id: string
   attached_file: boolean
   s_tag_update_posted: boolean
-  /** True when the operator typed a note and it was posted as an item
-   *  update. False when no note was provided or the post failed. */
-  note_update_posted: boolean
+  /** True when the operator typed a comment and it was written into the
+   *  board's "Comments" column (text82) on the new item. */
+  comment_set: boolean
   /** Non-null when the Monday item was created successfully but the local
    *  "already pushed" stamp update failed. The push is still ok — the
    *  caller should surface this so the user doesn't click Push again
@@ -43,10 +43,11 @@ export type PreparedPushPayload = {
    *  null when the board has no groups, top group is empty, or the API
    *  call failed — in that case we fall back to a plain create_item. */
   anchor: { groupId: string; itemId: string } | null
-  /** Optional free-text note the operator typed in the Push dialog.
-   *  Posted as its own item update (Monday's "Updates"/comment box) after
-   *  the s-tags update. Empty string when no note was provided. Trimmed
-   *  and capped at MAX_OPERATOR_NOTE_LEN. */
+  /** Optional free-text comment the operator typed in the Push dialog.
+   *  Written into the board's "Comments" column (text82) on the new item
+   *  — NOT the item Updates feed (those are different things on Monday).
+   *  Empty string when none provided. Already flattened to a single line
+   *  (Comments is a short-text column) and capped at MAX_OPERATOR_NOTE_LEN. */
   operatorNote: string
   /** Resolved metadata, surfaced for the dry-run printout + logging. */
   meta: {
@@ -147,7 +148,15 @@ export async function prepareLeadPushPayload(
   const cleanDomain = stripDomain(l.domain ?? l.url ?? '')
   const source: 'PPC' | 'SEO' = l.result_type === 'PPC' ? 'PPC' : 'SEO'
   const todayIso = new Date().toISOString().slice(0, 10)
-  const operatorNote = (opts.note ?? '').trim().slice(0, MAX_OPERATOR_NOTE_LEN)
+  // "Comments" (text82) is a single-line short-text column, so flatten any
+  // newlines/tabs the operator typed into spaces. Quotes/apostrophes are
+  // preserved (JSON.stringify escapes them) — unlike sanitize(), which
+  // strips them; for a freeform human comment we want the text intact.
+  const operatorNote = (opts.note ?? '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_OPERATOR_NOTE_LEN)
 
   const columnValues: Record<string, unknown> = {
     text86: sanitize(l.brand ?? ''),
@@ -161,6 +170,9 @@ export async function prepareLeadPushPayload(
     text0: sanitize(l.country_code ?? ''),
     date: { date: todayIso },
     text1: sanitize(l.url ?? ''),
+    // Comments column — only set when the operator actually typed something,
+    // so a blank push doesn't overwrite the column with an empty string.
+    ...(operatorNote ? { text82: operatorNote } : {}),
     project_owner: {
       personsAndTeams: [{
         id: opts.pushedByMondayId,
@@ -208,12 +220,12 @@ export async function prepareLeadPushPayload(
  * Three steps:
  *   1. create_item with the column_values from the legacy spec, positioned
  *      `before_at` the current top item so it lands above existing rows.
+ *      An optional operator comment is included in column_values as the
+ *      "Comments" column (text82) — see prepareLeadPushPayload.
  *   2. If a screenshot exists in Storage, download it and POST a
  *      multipart add_file_to_column request to attach it.
  *   3. If s-tags exist, build a multi-line "<brand> <s_tag>" body and
  *      post create_update on the new item.
- *   4. If the operator typed a note in the Push dialog, post it as a
- *      second create_update so it lands in the item's Updates/comment box.
  *
  * Stamps pushed_to_monday_at + monday_pushed_item_id back on the lead
  * row so the UI can show "already pushed" and prevent double-pushing.
@@ -228,8 +240,8 @@ export async function pushLeadToMonday(
      *  Monday account" error when `user_profiles.monday_user_id` is
      *  null, instead of silently impersonating a default owner. */
     pushedByMondayId: number
-    /** Optional free-text note typed by the operator. Posted as an item
-     *  update (Monday's Updates/comment box) on the newly created item. */
+    /** Optional free-text comment typed by the operator. Written into the
+     *  board's "Comments" column (text82) on the newly created item. */
     note?: string
   },
 ): Promise<PushResult | PushError> {
@@ -336,25 +348,9 @@ export async function pushLeadToMonday(
     }
   }
 
-  // ----- Step 4: optional operator note as an item update -----
-  // Posted AFTER the s-tags update so it's the newest entry and lands
-  // at the top of the item's Updates feed — that's the human comment the
-  // operator deliberately wrote, so it should be the first thing seen.
-  // Best-effort, same as the s-tags update: the item already exists.
-  let noteUpdatePosted = false
-  if (operatorNote.length > 0) {
-    try {
-      await mondayGQL(
-        `mutation ($item_id: ID!, $body: String!) {
-          create_update(item_id: $item_id, body: $body) { id }
-        }`,
-        { item_id: createdItemId, body: operatorNote },
-      )
-      noteUpdatePosted = true
-    } catch {
-      // Ignore — item exists, note posting is best-effort.
-    }
-  }
+  // The operator comment is NOT a post-create step — it rides along in
+  // the create_item column_values as the "Comments" column (text82),
+  // built in prepareLeadPushPayload. So there's nothing to do here.
 
   // ----- Stamp the lead row so the UI shows "already pushed" -----
   // The Monday item is already created at this point — we cannot fail
@@ -394,7 +390,7 @@ export async function pushLeadToMonday(
     monday_item_id: createdItemId,
     attached_file: attachedFile,
     s_tag_update_posted: sTagUpdatePosted,
-    note_update_posted: noteUpdatePosted,
+    comment_set: operatorNote.length > 0,
     stamp_warning: stampErr
       ? `${stampErr.message} (after ${stampAttempts} attempt${stampAttempts === 1 ? '' : 's'})`
       : null,
