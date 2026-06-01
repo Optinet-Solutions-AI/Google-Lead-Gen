@@ -1218,6 +1218,58 @@ TWOCAPTCHA_SOLVE_TIMEOUT_SECONDS = 130
 TWOCAPTCHA_POST_INJECT_SETTLE_S = 6.0
 
 
+# Hooks window.turnstile.render BEFORE Cloudflare's challenge script runs,
+# so we can capture the params a Cloudflare *Challenge page* only exposes
+# inside the render() call (sitekey, cData, chlPageData, action) — they are
+# never in the static DOM, which is why DOM scraping found nothing. Params
+# land in window.__cf_ts_params; the success callback in window.tsCallback.
+# We STILL call the original render(), so this is inert/harmless when
+# auto-solve is off — the manual noVNC widget renders exactly as before.
+# Pattern per 2Captcha's Cloudflare-Turnstile docs (Challenge page case).
+_TURNSTILE_INTERCEPTOR_JS = r"""
+(function () {
+  if (window.__cf_ts_hooked) return;
+  window.__cf_ts_hooked = true;
+  var iv = setInterval(function () {
+    if (window.turnstile && typeof window.turnstile.render === 'function') {
+      clearInterval(iv);
+      var orig = window.turnstile.render.bind(window.turnstile);
+      window.turnstile.render = function (a, b) {
+        try {
+          window.__cf_ts_params = {
+            sitekey: b && b.sitekey,
+            data: (b && b.cData) || null,
+            pagedata: (b && b.chlPageData) || null,
+            action: (b && b.action) || null,
+            userAgent: navigator.userAgent,
+            pageurl: window.location.href
+          };
+          if (b && typeof b.callback === 'function') window.tsCallback = b.callback;
+        } catch (e) {}
+        try { return orig(a, b); } catch (e) { return 'cf'; }
+      };
+    }
+  }, 10);
+})();
+"""
+
+
+def _install_turnstile_interceptor(driver) -> None:
+    """Register the render-interceptor to run at document-start on every
+    navigation (CDP Page.addScriptToEvaluateOnNewDocument). Best-effort —
+    a failure just means Cloudflare Challenge pages won't auto-solve (they
+    fall through to the existing path), so we log and continue."""
+    try:
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": _TURNSTILE_INTERCEPTOR_JS},
+        )
+        print("[INFO] 2captcha: Turnstile render-interceptor installed")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] 2captcha: could not install Turnstile interceptor: {exc}",
+              file=sys.stderr)
+
+
 def _extract_captcha_challenge(driver) -> dict | None:
     """Inspect the live DOM and classify the captcha + pull its sitekey.
 
@@ -1254,7 +1306,15 @@ def _extract_captcha_challenge(driver) -> dict | None:
             }
             if (reKey) return { kind: 'recaptcha', sitekey: reKey, iframes: iframes };
 
-            // --- Cloudflare Turnstile ---
+            // --- Cloudflare Turnstile via intercepted render() (Challenge page) ---
+            // The interceptor captured the params Cloudflare only exposes
+            // inside turnstile.render — this is the reliable path for Bing.
+            if (window.__cf_ts_params && window.__cf_ts_params.sitekey) {
+              var pp = window.__cf_ts_params;
+              return { kind: 'turnstile', sitekey: pp.sitekey, action: pp.action || null,
+                       cdata: pp.data || null, pagedata: pp.pagedata || null, iframes: iframes };
+            }
+            // --- Cloudflare Turnstile (standalone widget, sitekey in DOM) ---
             var tKey = attr('.cf-turnstile[data-sitekey]', 'data-sitekey')
                     || attr('[data-sitekey][id*="turnstile"]', 'data-sitekey');
             var tAction = attr('.cf-turnstile[data-sitekey]', 'data-action') || null;
@@ -1348,10 +1408,14 @@ def _2captcha_submit(challenge: dict, page_url: str) -> str | None:
     else:  # turnstile
         params["method"] = "turnstile"
         params["sitekey"] = challenge["sitekey"]
+        # action/data/pagedata are required for Cloudflare *Challenge pages*
+        # (the Bing case); harmless/omitted for standalone Turnstile widgets.
         if challenge.get("action"):
             params["action"] = challenge["action"]
         if challenge.get("cdata"):
             params["data"] = challenge["cdata"]
+        if challenge.get("pagedata"):
+            params["pagedata"] = challenge["pagedata"]
     try:
         resp = requests.post(TWOCAPTCHA_IN_URL, data=params, timeout=30)
         body = resp.json()
@@ -1442,17 +1506,27 @@ def _inject_token_and_submit(driver, kind: str, token: str) -> None:
         else:  # turnstile
             driver.execute_script("""
                 var tok = arguments[0];
-                var names = ['cf-turnstile-response', 'g-recaptcha-response'];
-                names.forEach(function (n) {
+                var fired = false;
+                // Challenge-page path: feed the token to the callback we
+                // captured from turnstile.render — Cloudflare then continues
+                // (and reloads) on its own. This is the documented approach.
+                if (typeof window.tsCallback === 'function') {
+                  try { window.tsCallback(tok); fired = true; } catch (e) {}
+                }
+                // Standalone-widget path: write the token into the response
+                // field(s) the form reads.
+                ['cf-turnstile-response', 'g-recaptcha-response'].forEach(function (n) {
                   document.querySelectorAll('[name="' + n + '"]').forEach(function (el) {
                     el.value = tok;
                   });
                 });
-                if (typeof window.tsCallback === 'function') {
-                  try { window.tsCallback(tok); } catch (e) {}
+                // Only force a submit when we couldn't fire the captured
+                // callback — submitting a Challenge page ourselves would
+                // fight Cloudflare's own continuation.
+                if (!fired) {
+                  var form = document.querySelector('form');
+                  if (form) form.submit();
                 }
-                var form = document.querySelector('form');
-                if (form) form.submit();
             """, token)
     except Exception as exc:  # noqa: BLE001
         print(f"[WARN] 2captcha: token injection raised: {exc}", file=sys.stderr)
@@ -2643,6 +2717,10 @@ def main():
             # Step 2: Connect Selenium and check connectivity
             print("[INFO] Connecting to browser...")
             driver = connect_to_gologin_browser(debugger_address)
+
+            # Hook turnstile.render before any page loads so Cloudflare
+            # Challenge pages expose their solve params to the 2Captcha path.
+            _install_turnstile_interceptor(driver)
 
             print("[INFO] Checking browser connectivity...")
             if not check_browser_connectivity(driver):
