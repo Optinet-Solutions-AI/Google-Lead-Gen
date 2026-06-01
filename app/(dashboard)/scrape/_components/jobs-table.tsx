@@ -151,20 +151,23 @@ function OutcomeMarker({ job }: { job: ScrapeJob }) {
   if (job.status !== 'completed' && job.status !== 'running') return null
   if (!job.captcha_solved_by) return null
   const isBot = job.captcha_solved_by === 'auto_2captcha'
+  // Labeled chip, not a bare icon: a green "completed" looks identical
+  // whether a captcha was auto-solved, person-solved, or never hit, so
+  // the origin needs to be readable at a glance, not hover-only.
   return (
     <span
-      className="inline-flex items-center"
+      className={[
+        'inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
+        isBot ? 'bg-indigo-50 text-indigo-700' : 'bg-emerald-50 text-emerald-700',
+      ].join(' ')}
       title={
         isBot
           ? 'A captcha during this scrape was solved automatically by 2Captcha'
           : 'A captcha during this scrape was solved by a person'
       }
     >
-      {isBot ? (
-        <Bot className="h-3 w-3 text-indigo-500" />
-      ) : (
-        <User className="h-3 w-3 text-emerald-600" />
-      )}
+      {isBot ? <Bot className="h-3 w-3" /> : <User className="h-3 w-3" />}
+      {isBot ? 'captcha · bot' : 'captcha · person'}
     </span>
   )
 }
