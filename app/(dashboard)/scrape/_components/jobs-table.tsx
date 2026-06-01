@@ -118,7 +118,7 @@ function CaptchaSolveMarker({ job }: { job: ScrapeJob }) {
         className="inline-flex items-center"
         title="A captcha appeared and couldn't be solved, so the scrape stopped. Open the menu (⋮) → Try again to retry."
       >
-        <ShieldAlert className="h-3 w-3 text-rose-500" />
+        <ShieldAlert className="h-3 w-3 text-amber-600" />
       </span>
     )
   }
