@@ -1279,7 +1279,19 @@ def _extract_captcha_challenge(driver) -> dict | None:
             }
             if (aKey) return { kind: 'funcaptcha', sitekey: aKey, iframes: iframes };
 
-            return { kind: null, iframes: iframes };
+            // Nothing solvable found — gather everything that could tell us
+            // what this wall actually is (Cloudflare managed challenge stashes
+            // cData / chlPageData / action in window._cf_chl_opt).
+            var cfOpt = null;
+            try { cfOpt = JSON.stringify(window._cf_chl_opt || null); } catch (e) { cfOpt = 'STRINGIFY_ERR'; }
+            return {
+              kind: null,
+              iframes: iframes,
+              cfChlOpt: cfOpt,
+              title: document.title || '',
+              url: location.href || '',
+              htmlLen: (document.documentElement.outerHTML || '').length
+            };
         """)
     except Exception as exc:  # noqa: BLE001
         print(f"[WARN] 2captcha: sitekey extraction failed: {exc}", file=sys.stderr)
@@ -1289,8 +1301,12 @@ def _extract_captcha_challenge(driver) -> dict | None:
         # Diagnostic: dump what iframes WERE present so we can learn the
         # real provider/URL shape from the next live challenge. This is the
         # single most useful signal when a wall isn't auto-solving.
-        iframes = (info or {}).get("iframes") or []
+        info = info or {}
+        iframes = info.get("iframes") or []
         print("[WARN] 2captcha: no extractable sitekey on the wall — skipping auto-solve",
+              file=sys.stderr)
+        print(f"[DEBUG] 2captcha: wall title={info.get('title')!r} "
+              f"url={(info.get('url') or '')[:120]!r} htmlLen={info.get('htmlLen')}",
               file=sys.stderr)
         if iframes:
             print(f"[DEBUG] 2captcha: {len(iframes)} iframe(s) on the wall:", file=sys.stderr)
@@ -1300,6 +1316,22 @@ def _extract_captcha_challenge(driver) -> dict | None:
             print("[DEBUG] 2captcha: no iframes in the parent document "
                   "(challenge may be nested in a cross-origin frame we can't read)",
                   file=sys.stderr)
+        # Cloudflare managed-challenge state — the params 2Captcha's
+        # Cloudflare-Challenge method would need, if this is one.
+        cf_opt = info.get("cfChlOpt")
+        if cf_opt and cf_opt not in ("null", "STRINGIFY_ERR"):
+            print(f"[DEBUG] 2captcha: window._cf_chl_opt = {cf_opt[:1200]}", file=sys.stderr)
+        else:
+            print(f"[DEBUG] 2captcha: window._cf_chl_opt = {cf_opt}", file=sys.stderr)
+        # Dump the full wall HTML so we can inspect the exact challenge
+        # structure offline and decide the right solve method.
+        try:
+            dump_path = f"/tmp/captcha_wall_{int(time.time() * 1000)}.html"
+            with open(dump_path, "w", encoding="utf-8") as fh:
+                fh.write(driver.page_source or "")
+            print(f"[DEBUG] 2captcha: wall HTML dumped to {dump_path}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[DEBUG] 2captcha: wall HTML dump failed: {exc}", file=sys.stderr)
         return None
     return info
 
