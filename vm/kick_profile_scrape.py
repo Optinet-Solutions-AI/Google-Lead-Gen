@@ -210,6 +210,10 @@ def enrich_one(driver, scraper_mod, slug: str, *, interactive: bool,
     NULL so a re-run retries.
     """
     url = f"{KICK_BASE}/{slug}"
+    # Single attempt per session. Kick's WAF blocks the 2nd+ request from a
+    # session ("Request blocked by security policy."), so re-navigating in the
+    # same session is pointless — the caller retries with a FRESH session
+    # (new proxy IP) instead. ok=False (stub/blocked/nav error) signals that.
     try:
         driver.get(url)
     except Exception as exc:  # noqa: BLE001
@@ -236,11 +240,11 @@ def enrich_one(driver, scraper_mod, slug: str, *, interactive: bool,
             except Exception as exc:  # noqa: BLE001
                 print(f"[WARN] {slug}: checkpoint crashed: {exc}", file=sys.stderr)
         if not solved or _cloudflare_blocked(driver):
-            print(f"[WARN] {slug}: still blocked by Cloudflare — giving up on this one", file=sys.stderr)
+            print(f"[WARN] {slug}: still blocked by Cloudflare", file=sys.stderr)
             return {"ok": False, "fields": {}, "links": []}
 
-    # Wait for the SPA to hydrate the profile (follower count + channel-link
-    # cards render client-side). Poll page_source up to ~8s for either marker.
+    # Wait for the SPA to hydrate the profile (follower count +
+    # channel-link cards render client-side).
     _wait_for_profile(driver)
 
     try:
@@ -248,8 +252,10 @@ def enrich_one(driver, scraper_mod, slug: str, *, interactive: bool,
     except Exception:  # noqa: BLE001
         html = ""
     if len(html) < 5000:
-        # Page never rendered (blank/error) — fail so a re-run retries.
-        print(f"[WARN] {slug}: page did not render (len={len(html)})", file=sys.stderr)
+        # Stub page — almost always Kick's WAF block on a reused IP.
+        # Caller will retry on a fresh session.
+        print(f"[WARN] {slug}: page did not render (len={len(html)}) — likely WAF block",
+              file=sys.stderr)
         return {"ok": False, "fields": {}, "links": []}
 
     fields, links = extract_from_page(driver)
@@ -416,82 +422,72 @@ def run(args, scraper_mod) -> int:
     time.sleep(3)
 
     attempted = enriched = failed = 0
-    last_exc: Exception | None = None
-    # Survives across retry attempts so a mid-loop browser crash on attempt
-    # N doesn't re-navigate + re-write (duplicate kick_links) the streamers
-    # already handled on attempt N-1.
-    processed: set[str] = set()
 
-    for attempt in range(1, scraper_mod.MAX_RETRIES + 1):
-        driver = None
-        try:
-            print(f"[INFO] Starting GoLogin profile (attempt {attempt}/{scraper_mod.MAX_RETRIES})...")
-            debugger_address = gl.start()
-            time.sleep(2)
-            driver = scraper_mod.connect_to_gologin_browser(debugger_address)
-            scraper_mod._install_turnstile_interceptor(driver)
-            if not scraper_mod.check_browser_connectivity(driver):
-                raise RuntimeError("Browser connectivity check failed — proxy may be unreachable")
+    # ONE FRESH GoLogin session (new proxy IP) PER streamer. Kick's WAF
+    # returns {"error":"Request blocked by security policy."} for the 2nd+
+    # request in a session, so a session only ever scrapes one streamer.
+    # Each streamer gets up to MAX_RETRIES fresh sessions (covers a transient
+    # GoLogin/connectivity hiccup OR an unlucky already-flagged proxy IP).
+    for t in targets:
+        slug = t["slug"]
+        attempted += 1
+        result: dict[str, Any] | None = None
 
-            for t in targets:
-                slug = t["slug"]
-                if t["id"] is not None and t["id"] in processed:
-                    continue  # already handled on an earlier attempt
-                attempted += 1
+        for attempt in range(1, scraper_mod.MAX_RETRIES + 1):
+            driver = None
+            try:
+                print(f"[INFO] {slug}: GoLogin session (attempt {attempt}/{scraper_mod.MAX_RETRIES})")
+                debugger_address = gl.start()
+                time.sleep(2)
+                driver = scraper_mod.connect_to_gologin_browser(debugger_address)
+                scraper_mod._install_turnstile_interceptor(driver)
+                if not scraper_mod.check_browser_connectivity(driver):
+                    raise RuntimeError("Browser connectivity check failed — proxy may be unreachable")
+
                 result = enrich_one(
                     driver, scraper_mod, slug,
                     interactive=args.interactive, job_id=args.job_id,
                     worker_id=args.worker_id, worker_port=args.port,
                 )
-
                 if args.mode == "probe":
                     _dump_probe(driver, slug)
-                    continue
-
-                if not result["ok"]:
-                    failed += 1
-                    if not args.dry_run:
-                        mark_failed(sb, t["id"])
-                    processed.add(t["id"])
-                    continue
-
-                if args.dry_run:
-                    print(f"[DRY-RUN] {slug}: fields={json.dumps(result['fields'])} "
-                          f"links={len(result['links'])}")
-                else:
-                    write_enrichment(sb, t["id"], result["fields"], result["links"])
-                processed.add(t["id"])
-                enriched += 1
-                print(f"[INFO] {slug}: enriched ({len(result['fields'])} fields, "
-                      f"{len(result['links'])} links)")
-
-            # All targets processed in this attempt → done.
-            break
-
-        except scraper_mod.InteractiveCancelException:
-            # Operator cancelled at a checkpoint — clean terminal failure,
-            # no retry. (driver torn down in finally.)
-            print("[INFO] operator cancelled at Captcha solver checkpoint")
-            print("[RESULT] FAILED")
-            return 1
-        except Exception as exc:  # noqa: BLE001
-            last_exc = exc
-            print(f"[ERROR] Attempt {attempt} failed: {exc}", file=sys.stderr)
+                    break
+                if result["ok"]:
+                    break
+                # Stub / WAF block — a fresh session (new IP) may clear it.
+                if attempt < scraper_mod.MAX_RETRIES:
+                    print(f"[INFO] {slug}: retrying on a fresh session...")
+            except scraper_mod.InteractiveCancelException:
+                print("[INFO] operator cancelled at Captcha solver checkpoint")
+                _teardown(driver, gl)
+                print("[RESULT] FAILED")
+                return 1
+            except Exception as exc:  # noqa: BLE001
+                print(f"[ERROR] {slug}: session attempt {attempt} failed: {exc}", file=sys.stderr)
+            finally:
+                _teardown(driver, gl)
             if attempt < scraper_mod.MAX_RETRIES:
-                print("[INFO] Retrying in 7 seconds...")
                 time.sleep(7)
+
+        if args.mode == "probe":
             continue
 
-        finally:
-            # Runs on success-break, retry-continue, and cancel-return alike.
-            _teardown(driver, gl)
+        if result is None or not result["ok"]:
+            failed += 1
+            if not args.dry_run and t["id"] is not None:
+                mark_failed(sb, t["id"])
+            print(f"[WARN] {slug}: enrichment failed after retries", file=sys.stderr)
+        elif args.dry_run:
+            enriched += 1
+            print(f"[DRY-RUN] {slug}: fields={json.dumps(result['fields'])} "
+                  f"links={len(result['links'])}")
+        else:
+            write_enrichment(sb, t["id"], result["fields"], result["links"])
+            enriched += 1
+            print(f"[INFO] {slug}: enriched ({len(result['fields'])} fields, "
+                  f"{len(result['links'])} links)")
 
-    else:
-        # Loop exhausted without a successful `break`.
-        print(f"[ERROR] GoLogin bring-up failed after {scraper_mod.MAX_RETRIES} attempts: {last_exc}",
-              file=sys.stderr)
-        print("[RESULT] FAILED")
-        return 2
+        time.sleep(2)  # brief pause before the next fresh session
 
     if args.mode == "probe":
         print("[RESULT] SUCCESS")
