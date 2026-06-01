@@ -23,7 +23,7 @@
     },
     {
       "path": "/api/proxy/bandwidth/refresh",
-      "schedule": "*/30 * * * *"
+      "schedule": "*/5 * * * *"
     }
   ]
 }
