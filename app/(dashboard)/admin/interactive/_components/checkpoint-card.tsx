@@ -378,10 +378,10 @@ export function CheckpointCard({
               ) : (
                 <span
                   className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)]/40 px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-text-secondary)]"
-                  title="noVNC isn't configured on this deploy. See docs/runbook-novnc.md."
+                  title="This would let you watch the browser and click the captcha yourself. It's turned off here — and you don't need it, because captchas are solved automatically. If a scrape gets stuck on one, just click Cancel."
                 >
                   <Eye className="h-3 w-3" />
-                  Open VNC (not configured)
+                  Live view is off
                 </span>
               )}
 
@@ -500,7 +500,7 @@ export function CheckpointCard({
                 .
               </>
             ) : openVncError.reason === 'no_vnc_config' ? (
-              <>noVNC isn&apos;t configured on this deploy. See <code>docs/runbook-novnc.md</code>.</>
+              <>Watching the browser yourself is turned off. You don&apos;t need it — captchas are solved automatically. If this one is stuck, click <strong>Cancel</strong>.</>
             ) : openVncError.reason === 'not_waiting' || openVncError.reason === 'not_found' ? (
               <>This captcha already expired — refresh the page, then use <strong>Re-queue with Captcha solver</strong> on the timed-out card if you still need it.</>
             ) : (

@@ -208,13 +208,9 @@ export default async function InteractiveCheckpointsPage({
         </p>
         {(!vncBaseUrl || !vncSecretConfigured) && (
           <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
-            <strong>noVNC not configured.</strong> Set{' '}
-            <code>NEXT_PUBLIC_VNC_BASE_URL</code> and{' '}
-            <code>INTERACTIVE_VNC_HMAC_SECRET</code> on the Vercel side
-            and run the matching VM-side setup
-            (<code>docs/runbook-novnc.md</code>) to enable Open-VNC
-            buttons. Without it, Resume / Cancel still work — operators
-            would need a TightVNC client to actually click through.
+            <strong>Watching the live browser yourself is turned off.</strong>{' '}
+            You don&apos;t need it — captchas are solved automatically, and
+            the buttons below still work. (To switch it on, ask a developer.)
           </p>
         )}
       </header>
