@@ -2185,14 +2185,25 @@ def _bing_serp_state(driver):
     """
     try:
         return driver.execute_script("""
+            // Results FIRST: a real Cloudflare interstitial has no b_algo
+            // containers, so if results are present it's a SERP — even
+            // though normal Bing SERPs ship the marker strings below
+            // (cf-turnstile-wrapper / captcha_text) on a hidden element.
+            // Checking captcha markers first (the old order) misread good
+            // result pages as captchas and abandoned them.
+            if (document.querySelector('li.b_algo, li[data-bm], div[data-bm]') !== null) {
+              return 'results';
+            }
+            // The interceptor having captured render params is the strongest
+            // positive signal that a real Turnstile challenge is up.
+            if (window.__cf_ts_params && window.__cf_ts_params.sitekey) {
+              return 'captcha';
+            }
             var src = document.documentElement.outerHTML;
             if (src.indexOf('CloudflareHandleCaptcha') !== -1
                 || src.indexOf('challenge/verify') !== -1
                 || src.indexOf('captcha_text') !== -1) {
               return 'captcha';
-            }
-            if (document.querySelector('li.b_algo, li[data-bm], div[data-bm]') !== null) {
-              return 'results';
             }
             return '';
         """) or ''
