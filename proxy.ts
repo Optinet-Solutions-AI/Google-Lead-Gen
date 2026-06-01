@@ -7,6 +7,7 @@ import { updateSession } from '@/lib/supabase/middleware'
  *   /api/monday/webhook     — Monday authenticates via HS256 JWT, not Supabase
  *   /api/monday/sync        — Vercel cron authenticates via Bearer CRON_SECRET
  *   /api/scheduler/tick     — Vercel cron authenticates via Bearer CRON_SECRET
+ *   /api/proxy/bandwidth/refresh — Vercel cron authenticates via Bearer CRON_SECRET
  *   static assets           — handled by the `matcher` below
  *
  * Unauthenticated users on a protected route are redirected to /login
@@ -22,6 +23,7 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/api/monday/webhook') ||
     pathname.startsWith('/api/monday/sync') ||
     pathname.startsWith('/api/scheduler/tick') ||
+    pathname.startsWith('/api/proxy/bandwidth/refresh') ||
     pathname.startsWith('/api/enrichment/') ||
     pathname.startsWith('/login')
   ) {
@@ -70,6 +72,6 @@ export async function proxy(request: NextRequest) {
 export const config = {
   // Run on all routes except static assets + endpoints that authenticate themselves.
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|api/monday/webhook|api/monday/sync|api/scheduler/tick|api/enrichment).*)',
+    '/((?!_next/static|_next/image|favicon.ico|api/monday/webhook|api/monday/sync|api/scheduler/tick|api/proxy/bandwidth/refresh|api/enrichment).*)',
   ],
 }
