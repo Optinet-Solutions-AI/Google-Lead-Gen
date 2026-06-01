@@ -79,4 +79,8 @@ export type ScrapeJob = {
   /** Per-stage timing approximation. Null for non-completed jobs or
    *  jobs without enrichment. */
   stage_timings: StageTimings | null
+  /** Who cleared a captcha during this scrape, if one was hit:
+   *  'auto_2captcha' (the bot) | 'human'. Undefined when no captcha was
+   *  hit or it wasn't looked up. Sourced from interactive_checkpoints. */
+  captcha_solved_by?: 'auto_2captcha' | 'human' | null
 }

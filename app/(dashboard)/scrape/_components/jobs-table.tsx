@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import { Check, CheckSquare, Square } from 'lucide-react'
+import { Bot, Check, CheckSquare, Square, User } from 'lucide-react'
 import { VISIBLE_PIPELINE_STAGES, type EnrichmentStatus, type ScrapeJob } from '../_lib/pipeline'
 import { BulkScrapeActionsBar } from './bulk-actions-bar'
 import { JobActionsButton } from './job-row-actions'
@@ -101,6 +101,30 @@ function StatusBadge({ job }: { job: ScrapeJob }) {
       ].join(' ')}
     >
       {label}
+    </span>
+  )
+}
+
+/** Tiny icon shown next to the status when a captcha was hit during the
+ *  scrape: a robot when 2Captcha cleared it automatically, a person when
+ *  an operator did. Renders nothing when no captcha was recorded. */
+function CaptchaSolveMarker({ job }: { job: ScrapeJob }) {
+  if (!job.captcha_solved_by) return null
+  const isBot = job.captcha_solved_by === 'auto_2captcha'
+  return (
+    <span
+      className="inline-flex items-center"
+      title={
+        isBot
+          ? 'A captcha during this scrape was solved automatically by 2Captcha'
+          : 'A captcha during this scrape was solved by a person'
+      }
+    >
+      {isBot ? (
+        <Bot className="h-3 w-3 text-indigo-500" />
+      ) : (
+        <User className="h-3 w-3 text-emerald-600" />
+      )}
     </span>
   )
 }
@@ -362,7 +386,10 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                 </LinkTd>
                 <LinkTd href={href}>{job.pages}</LinkTd>
                 <LinkTd href={href}>
-                  <StatusBadge job={job} />
+                  <span className="inline-flex items-center gap-1">
+                    <StatusBadge job={job} />
+                    <CaptchaSolveMarker job={job} />
+                  </span>
                 </LinkTd>
                 <LinkTd
                   href={href}
@@ -415,7 +442,10 @@ export function JobsCardList({ jobs }: Props) {
                 {job.keyword}
               </p>
             </div>
-            <StatusBadge job={job} />
+            <span className="inline-flex items-center gap-1">
+              <StatusBadge job={job} />
+              <CaptchaSolveMarker job={job} />
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-text-secondary)]">
             <span>{job.country_code}</span>

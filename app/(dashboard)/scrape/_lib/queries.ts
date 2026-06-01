@@ -309,18 +309,43 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
   if (error) throw error
   const jobs = (data ?? []) as unknown as Omit<ScrapeJob, 'enrichment' | 'stage_timings'>[]
   const completedIds = jobs.filter(j => j.status === 'completed').map(j => j.id)
-  const [enrichmentByJob, timingsByJob] = await Promise.all([
+  const [enrichmentByJob, timingsByJob, captchaByJob] = await Promise.all([
     fetchEnrichmentStatus(completedIds),
     fetchStageTimings(jobs.filter(j => j.status === 'completed' && j.with_enrichment)),
+    fetchCaptchaSolvedBy(jobs.map(j => j.id)),
   ])
   return {
     rows: jobs.map(j => ({
       ...j,
       enrichment: enrichmentByJob.get(j.id) ?? {},
       stage_timings: timingsByJob.get(j.id) ?? null,
+      captcha_solved_by: captchaByJob.get(j.id) ?? null,
     })),
     total: count ?? jobs.length,
   }
+}
+
+/** Per-job captcha attribution from interactive_checkpoints: did the
+ *  bot (2Captcha) or a human clear a captcha during this scrape? Bot
+ *  wins display priority if both somehow appear. Absent → no captcha
+ *  recorded (or pre-attribution history). One query for the page. */
+async function fetchCaptchaSolvedBy(
+  jobIds: string[],
+): Promise<Map<string, 'auto_2captcha' | 'human'>> {
+  const out = new Map<string, 'auto_2captcha' | 'human'>()
+  if (jobIds.length === 0) return out
+  const svc = createServiceClient()
+  const { data } = await svc
+    .from('interactive_checkpoints')
+    .select('job_id, resolution_method')
+    .in('job_id', jobIds)
+    .eq('reason', 'captcha')
+    .in('resolution_method', ['auto_2captcha', 'human'])
+  for (const r of (data ?? []) as Array<{ job_id: string; resolution_method: string }>) {
+    if (r.resolution_method === 'auto_2captcha') out.set(r.job_id, 'auto_2captcha')
+    else if (!out.get(r.job_id)) out.set(r.job_id, 'human')
+  }
+  return out
 }
 
 /** One query, aggregated in TS — cheap for ~30 jobs × ~10 rows each. */
