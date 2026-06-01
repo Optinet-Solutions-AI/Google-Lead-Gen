@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import { Bot, Check, CheckSquare, ShieldAlert, Square, User } from 'lucide-react'
+import { Ban, Bot, Check, CheckSquare, ShieldAlert, Square, User, XCircle } from 'lucide-react'
 import { VISIBLE_PIPELINE_STAGES, type EnrichmentStatus, type ScrapeJob } from '../_lib/pipeline'
 import { BulkScrapeActionsBar } from './bulk-actions-bar'
 import { JobActionsButton } from './job-row-actions'
@@ -108,7 +108,7 @@ function StatusBadge({ job }: { job: ScrapeJob }) {
 /** Tiny icon shown next to the status when a captcha was hit during the
  *  scrape: a robot when 2Captcha cleared it automatically, a person when
  *  an operator did. Renders nothing when no captcha was recorded. */
-function CaptchaSolveMarker({ job }: { job: ScrapeJob }) {
+function OutcomeMarker({ job }: { job: ScrapeJob }) {
   // Stopped on a captcha it couldn't get past — auto-retries exhausted or
   // a human checkpoint timed out. One neutral "not solved" marker, shown
   // straight off the job status (no contradiction with the error).
@@ -119,6 +119,28 @@ function CaptchaSolveMarker({ job }: { job: ScrapeJob }) {
         title="A captcha appeared and couldn't be solved, so the scrape stopped. Open the menu (⋮) → Try again to retry."
       >
         <ShieldAlert className="h-3 w-3 text-amber-600" />
+      </span>
+    )
+  }
+  // Failed for some other reason (timeout, worker restart, error).
+  if (job.status === 'failed') {
+    return (
+      <span
+        className="inline-flex items-center"
+        title="This scrape failed and stopped. Open the menu (⋮) → Try again to retry."
+      >
+        <XCircle className="h-3 w-3 text-red-500" />
+      </span>
+    )
+  }
+  // Cancelled by a person.
+  if (job.status === 'cancelled') {
+    return (
+      <span
+        className="inline-flex items-center"
+        title="This scrape was cancelled."
+      >
+        <Ban className="h-3 w-3 text-slate-400" />
       </span>
     )
   }
@@ -406,7 +428,7 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                 <LinkTd href={href}>
                   <span className="inline-flex items-center gap-1">
                     <StatusBadge job={job} />
-                    <CaptchaSolveMarker job={job} />
+                    <OutcomeMarker job={job} />
                   </span>
                 </LinkTd>
                 <LinkTd
@@ -462,7 +484,7 @@ export function JobsCardList({ jobs }: Props) {
             </div>
             <span className="inline-flex items-center gap-1">
               <StatusBadge job={job} />
-              <CaptchaSolveMarker job={job} />
+              <OutcomeMarker job={job} />
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-text-secondary)]">
