@@ -33,8 +33,8 @@ export async function InteractiveBanner() {
     >
       <span className="inline-flex items-center gap-2">
         <Hand className="h-4 w-4 shrink-0" />
-        <strong>{count}</strong> scrape{count === 1 ? '' : 's'} waiting for a human —
-        click to resolve.
+        <strong>{count}</strong> captcha{count === 1 ? '' : 's'} 2Captcha
+        couldn&apos;t auto-solve — {count === 1 ? 'needs' : 'need'} a human. Click to resolve.
       </span>
     </Link>
   )

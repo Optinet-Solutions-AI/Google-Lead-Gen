@@ -10,11 +10,12 @@ import { HideTimersToggle, TimerPrefsProvider } from './_components/timer-prefs'
 export const dynamic = 'force-dynamic'
 
 const STATUS_TABS = [
-  { key: 'waiting',   label: 'Waiting' },
-  { key: 'resolved',  label: 'Resolved' },
-  { key: 'cancelled', label: 'Cancelled' },
-  { key: 'timed_out', label: 'Timed out' },
-  { key: 'all',       label: 'All' },
+  { key: 'waiting',     label: 'Waiting' },
+  { key: 'auto_solved', label: 'Auto-solved' },
+  { key: 'resolved',    label: 'Resolved' },
+  { key: 'cancelled',   label: 'Cancelled' },
+  { key: 'timed_out',   label: 'Timed out' },
+  { key: 'all',         label: 'All' },
 ] as const
 
 type SearchParams = Record<string, string | string[] | undefined>
@@ -29,6 +30,7 @@ type CheckpointRow = {
   page_title: string | null
   screenshot_path: string | null
   status: 'waiting' | 'resolved' | 'cancelled' | 'timed_out'
+  resolution_method: 'human' | 'auto_2captcha' | null
   resolution_note: string | null
   resolved_at: string | null
   resolved_by: string | null
@@ -75,12 +77,21 @@ export default async function InteractiveCheckpointsPage({
   let q = svc
     .from('interactive_checkpoints')
     .select(
-      'id, job_id, worker_id, worker_port, reason, current_url, page_title, screenshot_path, status, resolution_note, resolved_at, resolved_by, expires_at, created_at, updated_at, claimed_by_user_id, claimed_by_display, claimed_at, claim_expires_at, vnc_host',
+      'id, job_id, worker_id, worker_port, reason, current_url, page_title, screenshot_path, status, resolution_method, resolution_note, resolved_at, resolved_by, expires_at, created_at, updated_at, claimed_by_user_id, claimed_by_display, claimed_at, claim_expires_at, vnc_host',
     )
     .order('created_at', { ascending: false })
     .limit(200)
-  if (filter !== 'all') q = q.eq('status', filter)
-  let countsQ = svc.from('interactive_checkpoints').select('status')
+  // 'auto_solved' and 'resolved' are both status='resolved' rows, split
+  // by resolution_method. The bot's wins get their own tab so the human
+  // 'Resolved' list stays focused on operator actions.
+  if (filter === 'auto_solved') {
+    q = q.eq('status', 'resolved').eq('resolution_method', 'auto_2captcha')
+  } else if (filter === 'resolved') {
+    q = q.eq('status', 'resolved').neq('resolution_method', 'auto_2captcha')
+  } else if (filter !== 'all') {
+    q = q.eq('status', filter)
+  }
+  let countsQ = svc.from('interactive_checkpoints').select('status, resolution_method')
   if (shadowCtx.isShadow) {
     q = q.eq('job_is_shadow', true)
     countsQ = countsQ.eq('job_is_shadow', true)
@@ -107,8 +118,14 @@ export default async function InteractiveCheckpointsPage({
     rows = rows.filter(r => ownSet.has(r.job_id))
   }
   const countByStatus = new Map<string, number>()
-  for (const r of (counts ?? []) as Array<{ status: string }>) {
+  let autoSolvedCount = 0
+  let humanResolvedCount = 0
+  for (const r of (counts ?? []) as Array<{ status: string; resolution_method: string | null }>) {
     countByStatus.set(r.status, (countByStatus.get(r.status) ?? 0) + 1)
+    if (r.status === 'resolved') {
+      if (r.resolution_method === 'auto_2captcha') autoSolvedCount += 1
+      else humanResolvedCount += 1
+    }
   }
   const totalAll = counts?.length ?? 0
 
@@ -181,11 +198,13 @@ export default async function InteractiveCheckpointsPage({
           Interactive checkpoints
         </h1>
         <p className="mt-0.5 text-[12px] text-[color:var(--color-text-secondary)]">
-          When the scraper hits a wall it can&apos;t cross on its own
-          (captcha, age verification, cookie banner) it pauses here
-          and waits for a human. Click <strong>Open VNC</strong> to
-          drop into the live browser, click through the wall, then
-          come back and hit <strong>Resume</strong>.
+          When the scraper hits a wall (captcha, age verification,
+          cookie banner), <strong>2Captcha auto-solve tries first</strong> —
+          only the ones it can&apos;t crack land here for a human (the{' '}
+          <strong>Auto-solved</strong> tab shows the bot&apos;s wins). For
+          those, click <strong>Open VNC</strong> to drop into the live
+          browser, clear the wall, then come back and hit{' '}
+          <strong>Resume</strong>.
         </p>
         {(!vncBaseUrl || !vncSecretConfigured) && (
           <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
@@ -202,7 +221,14 @@ export default async function InteractiveCheckpointsPage({
 
       <nav className="flex flex-wrap items-center gap-1 border-b border-[color:var(--color-border)]">
         {STATUS_TABS.map(tab => {
-          const count = tab.key === 'all' ? totalAll : countByStatus.get(tab.key) ?? 0
+          const count =
+            tab.key === 'all'
+              ? totalAll
+              : tab.key === 'auto_solved'
+                ? autoSolvedCount
+                : tab.key === 'resolved'
+                  ? humanResolvedCount
+                  : countByStatus.get(tab.key) ?? 0
           const active = filter === tab.key
           return (
             <Link

@@ -1577,7 +1577,32 @@ def attempt_auto_captcha_solve(driver) -> bool:
               "falling through to existing path", file=sys.stderr)
         return False
     print("[INFO] 2captcha: wall cleared — resuming scrape")
+    _record_auto_solve_outcome(page_url)
     return True
+
+
+def _record_auto_solve_outcome(page_url: str) -> None:
+    """Write an audit record so /admin/interactive can attribute this
+    captcha to '2Captcha (auto)'. Best-effort — never blocks the scrape,
+    and no-ops when we have no job_id (legacy / ad-hoc invocations)."""
+    job_id = _CAPTCHA_SOLVER_CTX.get("job_id")
+    if not job_id:
+        return
+    try:
+        _supabase_request(
+            "POST",
+            "/rest/v1/rpc/record_auto_captcha_solve",
+            json_body={
+                "p_job_id": job_id,
+                "p_worker_id": _CAPTCHA_SOLVER_CTX.get("worker_id") or "unknown",
+                "p_worker_port": _CAPTCHA_SOLVER_CTX.get("worker_port", 9222),
+                "p_reason": "captcha",
+                "p_current_url": page_url or None,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] 2captcha: failed to record auto-solve audit row: {exc}",
+              file=sys.stderr)
 
 
 def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, interactive=None):

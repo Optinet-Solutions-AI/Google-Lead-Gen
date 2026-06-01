@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState, useTransition } from 'react'
 import {
   AlertTriangle,
+  Bot,
   CheckCircle2,
   Cookie,
   ExternalLink,
@@ -84,6 +85,7 @@ type Props = {
     page_title: string | null
     screenshot_path: string | null
     status: 'waiting' | 'resolved' | 'cancelled' | 'timed_out'
+    resolution_method: 'human' | 'auto_2captcha' | null
     resolution_note: string | null
     resolved_at: string | null
     resolved_by: string | null
@@ -259,6 +261,31 @@ export function CheckpointCard({
           >
             {row.status === 'timed_out' ? 'timed out' : row.status}
           </span>
+          {row.status === 'resolved' && (
+            <span
+              className={[
+                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold',
+                row.resolution_method === 'auto_2captcha'
+                  ? 'bg-indigo-100 text-indigo-800'
+                  : 'bg-emerald-100 text-emerald-800',
+              ].join(' ')}
+              title={
+                row.resolution_method === 'auto_2captcha'
+                  ? 'Solved automatically by the 2Captcha service — no operator needed'
+                  : `Solved by operator ${row.resolved_by ?? ''}`.trim()
+              }
+            >
+              {row.resolution_method === 'auto_2captcha' ? (
+                <>
+                  <Bot className="h-2.5 w-2.5" /> 2Captcha (auto)
+                </>
+              ) : (
+                <>
+                  <User className="h-2.5 w-2.5" /> {row.resolved_by ?? 'Human'}
+                </>
+              )}
+            </span>
+          )}
           <span className="text-[11px] text-[color:var(--color-text-secondary)]">
             worker {row.worker_id} · port {row.worker_port}
           </span>
@@ -410,7 +437,9 @@ export function CheckpointCard({
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-[11px] text-[color:var(--color-text-secondary)]">
               {row.status === 'resolved' && row.resolved_at && (
-                <>Resumed {new Date(row.resolved_at).toLocaleString()}{row.resolved_by ? ` by ${row.resolved_by}` : ''}</>
+                row.resolution_method === 'auto_2captcha'
+                  ? <>Auto-solved by 2Captcha {new Date(row.resolved_at).toLocaleString()}</>
+                  : <>Resumed {new Date(row.resolved_at).toLocaleString()}{row.resolved_by ? ` by ${row.resolved_by}` : ''}</>
               )}
               {row.status === 'cancelled' && row.resolved_at && (
                 <>Cancelled {new Date(row.resolved_at).toLocaleString()}{row.resolved_by ? ` by ${row.resolved_by}` : ''}</>
