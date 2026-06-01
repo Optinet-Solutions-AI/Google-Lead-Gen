@@ -1221,47 +1221,85 @@ TWOCAPTCHA_POST_INJECT_SETTLE_S = 6.0
 def _extract_captcha_challenge(driver) -> dict | None:
     """Inspect the live DOM and classify the captcha + pull its sitekey.
 
-    Returns {"kind": "recaptcha"|"turnstile", "sitekey": str,
-             "action": str|None, "cdata": str|None} or None when we
-    can't identify a solvable challenge (in which case the caller skips
-    2Captcha and falls through to the existing path).
+    Returns {"kind": "recaptcha"|"turnstile"|"funcaptcha", "sitekey": str,
+             "action": str|None, "cdata": str|None} or None when we can't
+    identify a solvable challenge (caller skips 2Captcha and falls through).
+
+    Most real walls (Bing's Cloudflare/Arkose interstitial, Google /sorry/)
+    render the widget in a CROSS-ORIGIN iframe, so `data-sitekey` is never
+    in the parent document — but the parent CAN read the iframe's `src`
+    attribute, and the sitekey/public-key is encoded in that URL. We try
+    data-sitekey first, then fall back to parsing iframe srcs. When both
+    fail we log every iframe src so the next real challenge tells us the
+    exact provider + URL shape instead of us guessing blind.
     """
     try:
         info = driver.execute_script("""
-            function findSitekey(sel) {
+            function attr(sel, name) {
               var el = document.querySelector(sel);
-              return el ? (el.getAttribute('data-sitekey') || '') : '';
+              return el ? (el.getAttribute(name) || '') : '';
             }
+            var iframes = [].slice.call(document.querySelectorAll('iframe'))
+              .map(function (f) { return f.src || ''; })
+              .filter(function (s) { return s; });
+
             // --- reCAPTCHA v2 (Google /sorry/) ---
-            var reKey = findSitekey('.g-recaptcha[data-sitekey]')
-                     || findSitekey('[data-sitekey][class*="recaptcha"]');
+            var reKey = attr('.g-recaptcha[data-sitekey]', 'data-sitekey')
+                     || attr('[data-sitekey][class*="recaptcha"]', 'data-sitekey');
             if (!reKey) {
-              var f = document.querySelector('iframe[src*="recaptcha/api2/anchor"], iframe[src*="recaptcha/enterprise/anchor"]');
-              if (f) {
-                var m = f.src.match(/[?&]k=([^&]+)/);
-                if (m) reKey = decodeURIComponent(m[1]);
+              for (var i = 0; i < iframes.length; i++) {
+                var m = iframes[i].match(/recaptcha\\/(?:api2|enterprise)\\/anchor.*?[?&]k=([^&]+)/);
+                if (m) { reKey = decodeURIComponent(m[1]); break; }
               }
             }
-            if (reKey) {
-              return { kind: 'recaptcha', sitekey: reKey, action: null, cdata: null };
+            if (reKey) return { kind: 'recaptcha', sitekey: reKey, iframes: iframes };
+
+            // --- Cloudflare Turnstile ---
+            var tKey = attr('.cf-turnstile[data-sitekey]', 'data-sitekey')
+                    || attr('[data-sitekey][id*="turnstile"]', 'data-sitekey');
+            var tAction = attr('.cf-turnstile[data-sitekey]', 'data-action') || null;
+            var tCdata = attr('.cf-turnstile[data-sitekey]', 'data-cdata') || null;
+            if (!tKey) {
+              for (var j = 0; j < iframes.length; j++) {
+                if (iframes[j].indexOf('challenges.cloudflare.com') === -1) continue;
+                // Turnstile sitekeys are 0x-prefixed; they appear as a path
+                // segment in the challenge-platform iframe URL.
+                var cm = iframes[j].match(/\\/(0x[0-9A-Za-z_-]{8,})\\b/);
+                if (cm) { tKey = cm[1]; break; }
+              }
             }
-            // --- Cloudflare Turnstile (Bing) ---
-            var tEl = document.querySelector('.cf-turnstile[data-sitekey], [data-sitekey][id*="turnstile"]');
-            var tKey = tEl ? (tEl.getAttribute('data-sitekey') || '') : '';
-            var tAction = tEl ? (tEl.getAttribute('data-action') || null) : null;
-            var tCdata = tEl ? (tEl.getAttribute('data-cdata') || null) : null;
-            if (tKey) {
-              return { kind: 'turnstile', sitekey: tKey, action: tAction, cdata: tCdata };
+            if (tKey) return { kind: 'turnstile', sitekey: tKey, action: tAction, cdata: tCdata, iframes: iframes };
+
+            // --- Arkose Labs FunCaptcha (Bing sometimes uses this) ---
+            var aKey = '';
+            for (var k = 0; k < iframes.length; k++) {
+              if (iframes[k].indexOf('arkoselabs.com') === -1) continue;
+              var am = iframes[k].match(/[?&](?:pk|pkey|public_key)=([^&]+)/);
+              if (am) { aKey = decodeURIComponent(am[1]); break; }
             }
-            return null;
+            if (aKey) return { kind: 'funcaptcha', sitekey: aKey, iframes: iframes };
+
+            return { kind: null, iframes: iframes };
         """)
     except Exception as exc:  # noqa: BLE001
         print(f"[WARN] 2captcha: sitekey extraction failed: {exc}", file=sys.stderr)
         return None
 
     if not info or not info.get("sitekey"):
+        # Diagnostic: dump what iframes WERE present so we can learn the
+        # real provider/URL shape from the next live challenge. This is the
+        # single most useful signal when a wall isn't auto-solving.
+        iframes = (info or {}).get("iframes") or []
         print("[WARN] 2captcha: no extractable sitekey on the wall — skipping auto-solve",
               file=sys.stderr)
+        if iframes:
+            print(f"[DEBUG] 2captcha: {len(iframes)} iframe(s) on the wall:", file=sys.stderr)
+            for src in iframes[:12]:
+                print(f"[DEBUG] 2captcha:   iframe src = {src[:300]}", file=sys.stderr)
+        else:
+            print("[DEBUG] 2captcha: no iframes in the parent document "
+                  "(challenge may be nested in a cross-origin frame we can't read)",
+                  file=sys.stderr)
         return None
     return info
 
@@ -1272,6 +1310,9 @@ def _2captcha_submit(challenge: dict, page_url: str) -> str | None:
     if challenge["kind"] == "recaptcha":
         params["method"] = "userrecaptcha"
         params["googlekey"] = challenge["sitekey"]
+    elif challenge["kind"] == "funcaptcha":
+        params["method"] = "funcaptcha"
+        params["publickey"] = challenge["sitekey"]
     else:  # turnstile
         params["method"] = "turnstile"
         params["sitekey"] = challenge["sitekey"]
