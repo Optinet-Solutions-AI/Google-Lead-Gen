@@ -139,14 +139,14 @@ export default async function AdminSystemPage() {
             Proxy bandwidth
           </h2>
           <p className="mt-1 max-w-3xl text-[11px] text-[color:var(--color-text-secondary)]">
-            How much data the metered proxy plan has left. Usage <em>and</em>
-            the plan limit are read from GoLogin every 30 minutes and shown
-            on the dashboard, so the limit auto-updates when you top up. The{' '}
-            <strong>plan size</strong> below is only a fallback used if
-            GoLogin ever reports no limit. Set the <strong>warn below</strong>{' '}
-            threshold to get an in-app low-balance warning before it runs
-            out. (Email alerts aren&apos;t wired up yet — the warning shows on
-            the dashboard.)
+            How much data the <strong>Enigma</strong> proxy plan has left —
+            the metered residential proxy your scrapes actually run through.
+            The remaining GB is read from Enigma every 30 minutes and shown
+            on the dashboard. Set the <strong>plan size</strong> to match
+            what you&apos;ve topped up to (so the % used and the bar are
+            right), and the <strong>warn below</strong> threshold to get an
+            in-app low-balance warning before it runs out. (Email alerts
+            aren&apos;t wired up yet — the warning shows on the dashboard.)
           </p>
         </header>
 

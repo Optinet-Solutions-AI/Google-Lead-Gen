@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { requireBearer } from '@/lib/auth/bearer'
-import { fetchGoLoginTraffic, BYTES_PER_GB } from '@/lib/proxy-bandwidth'
+import { fetchEnigmaBandwidth, BYTES_PER_GB } from '@/lib/proxy-bandwidth'
 
 // Vercel cron sends GET — alias to the POST handler.
 export async function GET(request: NextRequest) {
@@ -9,15 +9,17 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Polls GoLogin for proxy traffic usage and writes one snapshot row to
+ * Reads remaining proxy bandwidth from Enigma (the metered residential
+ * plan our scrapes actually run through) and writes one snapshot row to
  * proxy_bandwidth_snapshots. Called by Vercel cron (see vercel.json) and
  * reusable as a manual POST. Secured by the shared CRON_SECRET bearer
  * token, same as /api/scheduler/tick.
  *
- * Reconciliation: GoLogin is the source of truth for what it reports.
- * For anything it omits we fall back to the admin-configured plan size
- * (system_settings.proxy_bandwidth_limit_bytes), so the feature still
- * works even if GoLogin only returns "used".
+ * Enigma reports remaining only (scraped from the logged-in dashboard via
+ * the ENIGMA_COOKIE session). We pair that with the admin-configured plan
+ * size (system_settings.proxy_bandwidth_limit_bytes) to derive used and
+ * the progress bar. If the cookie expires the fetch throws, no snapshot is
+ * written, and the dashboard card goes stale until a fresh cookie lands.
  *
  * On the not-low → low transition we drop a row into activity_log so the
  * dashboard's Recent activity surfaces the warning (email dispatch isn't
@@ -41,13 +43,13 @@ export async function POST(request: NextRequest) {
   const configuredLimit = toBytes(limitRaw, 5 * BYTES_PER_GB)
   const lowThreshold = toBytes(thresholdRaw, BYTES_PER_GB)
 
-  // ----- Pull usage from GoLogin -----
+  // ----- Pull remaining bandwidth from Enigma -----
   let traffic
   try {
-    traffic = await fetchGoLoginTraffic()
+    traffic = await fetchEnigmaBandwidth()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    console.error('[proxy/bandwidth/refresh] GoLogin fetch failed:', message)
+    console.error('[proxy/bandwidth/refresh] Enigma fetch failed:', message)
     return Response.json({ ok: false, error: message }, { status: 502 })
   }
 

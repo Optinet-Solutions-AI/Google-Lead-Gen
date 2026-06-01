@@ -1,19 +1,27 @@
 import 'server-only'
 
 /**
- * Proxy bandwidth helpers — fetch + parse GoLogin's proxy traffic usage.
+ * Proxy bandwidth helpers — read remaining proxy data from the metered
+ * plan that actually carries our scrapes.
  *
- * Our scrapers run through GoLogin-managed residential proxies on a
- * metered plan. GoLogin exposes a traffic-usage endpoint we can poll
- * with the same GOLOGIN_API_TOKEN the workers use, so we read the real
- * consumption from the source of truth rather than estimating bytes
- * ourselves (which would drift from the plan's meter).
+ * ACTIVE SOURCE: Enigma (resi.enigmaproxy.net). The GoLogin profiles
+ * route through Enigma residential proxies on a metered plan that Chris
+ * tops up (the "15 GB"). Enigma has no usable API (its public API is
+ * reseller-gated) and its login is Cloudflare-Turnstile-protected, so we
+ * read the balance by fetching the logged-in dashboard with a copied
+ * `__session` cookie (ENIGMA_COOKIE) and scraping the remaining-GB value.
+ * See fetchEnigmaBandwidth below. The cookie is a "session" cookie and
+ * will eventually expire — when it does the poll fails and the dashboard
+ * card goes stale until a fresh cookie is pasted into the env.
  *
- * The documented response schema is incomplete, so parseGoLoginTraffic
- * is deliberately tolerant: it hunts for the usual field names and
- * keeps the raw blob for debugging. Run
- * `npx tsx scripts/qa/peek-gologin-traffic.ts` against the real account
- * to confirm the exact shape, then tighten this if needed.
+ * SECONDARY SOURCE: GoLogin's own datacenter traffic API
+ * (fetchGoLoginTraffic). This tracks a *different*, barely-used proxy
+ * pool and is kept for reference / possible future use — the poller does
+ * NOT use it. Run `npx tsx scripts/qa/peek-gologin-traffic.ts` to probe
+ * it.
+ *
+ * Both fetchers return the same ProxyTraffic shape so the poller
+ * (/api/proxy/bandwidth/refresh) is source-agnostic.
  */
 
 export const BYTES_PER_GB = 1024 ** 3
@@ -28,12 +36,12 @@ const TRAFFIC_ENDPOINTS = [
   '/user/traffic',
 ]
 
-export type GoLoginTraffic = {
-  /** Bytes consumed, or null if the response didn't expose it. */
+export type ProxyTraffic = {
+  /** Bytes consumed, or null if the source didn't expose it. */
   usedBytes: number | null
-  /** Plan allowance in bytes if GoLogin reports it, else null. */
+  /** Plan allowance in bytes if the source reports it, else null. */
   limitBytes: number | null
-  /** Bytes remaining if GoLogin reports it directly, else null. */
+  /** Bytes remaining if the source reports it directly, else null. */
   remainingBytes: number | null
   /** The raw parsed response (or text), kept for debugging. */
   raw: unknown
@@ -72,7 +80,7 @@ function numericLeaves(obj: unknown, prefix = '', out: Record<string, number> = 
  * Falls back to a generic field-name scan if the bucket shape ever
  * changes, so a future API tweak degrades instead of breaking.
  */
-export function parseGoLoginTraffic(raw: unknown): Omit<GoLoginTraffic, 'raw'> {
+export function parseGoLoginTraffic(raw: unknown): Omit<ProxyTraffic, 'raw'> {
   if (raw && typeof raw === 'object') {
     let usedSum = 0
     let limitSum = 0
@@ -124,7 +132,7 @@ export function parseGoLoginTraffic(raw: unknown): Omit<GoLoginTraffic, 'raw'> {
  * poller route) catches and reports it so a GoLogin outage never writes
  * a bogus snapshot.
  */
-export async function fetchGoLoginTraffic(): Promise<GoLoginTraffic> {
+export async function fetchGoLoginTraffic(): Promise<ProxyTraffic> {
   const token = process.env.GOLOGIN_API_TOKEN
   if (!token) {
     throw new Error('GOLOGIN_API_TOKEN is not set — add it to the deployment env.')
@@ -170,6 +178,84 @@ export async function fetchGoLoginTraffic(): Promise<GoLoginTraffic> {
   throw new Error(
     `GoLogin traffic endpoint unreachable (last status ${lastStatus || 'n/a'}: ${lastBody || 'no response'}).`,
   )
+}
+
+// ---------------------------------------------------------------------------
+// Enigma (active source) — scrape remaining GB from the logged-in dashboard.
+// ---------------------------------------------------------------------------
+
+const ENIGMA_DASHBOARD_URL = 'https://enigmaproxy.net/dashboard'
+const BROWSER_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+
+/**
+ * Pull the remaining-GB total out of the Enigma dashboard HTML.
+ *
+ * Each active plan renders its remaining data as `14.31<!-- --> GB`
+ * (the `<!-- -->` is React's text-node separator). That number-then-GB
+ * shape is unique to the plan cards — prices render as `$<!-- -->28.5`
+ * (number AFTER the comment) so they don't match. We sum every plan's
+ * remaining so multiple active plans collapse into one pool figure.
+ * Returns null if no plan value is found (layout change or bad session).
+ */
+export function parseEnigmaRemainingGb(html: string): number | null {
+  const matches = [...html.matchAll(/(\d+(?:\.\d+)?)\s*<!--\s*-->\s*GB/gi)]
+    .map(m => parseFloat(m[1] ?? ''))
+    .filter(n => Number.isFinite(n))
+  if (matches.length === 0) return null
+  return matches.reduce((a, b) => a + b, 0)
+}
+
+/**
+ * Fetch the Enigma dashboard with the copied session cookie and return
+ * remaining bandwidth. Throws (so the poller reports it and skips writing
+ * a bogus snapshot) when the cookie is missing/expired or the page shape
+ * changed.
+ */
+export async function fetchEnigmaBandwidth(): Promise<ProxyTraffic> {
+  const cookie = process.env.ENIGMA_COOKIE
+  if (!cookie) {
+    throw new Error(
+      'ENIGMA_COOKIE is not set — copy the __session cookie from the Enigma dashboard into the env.',
+    )
+  }
+
+  let res: Response
+  try {
+    res = await fetch(ENIGMA_DASHBOARD_URL, {
+      headers: {
+        Cookie: `__session=${cookie}`,
+        'User-Agent': BROWSER_UA,
+        Accept: 'text/html',
+      },
+      redirect: 'manual', // a redirect to /login means the session died
+      signal: AbortSignal.timeout(15_000),
+    })
+  } catch (err) {
+    throw new Error(`Enigma dashboard unreachable: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  if (res.status >= 300 && res.status < 400) {
+    throw new Error('Enigma session expired (redirected to login) — paste a fresh ENIGMA_COOKIE.')
+  }
+  if (!res.ok) {
+    throw new Error(`Enigma dashboard returned ${res.status} (Cloudflare block or session issue).`)
+  }
+
+  const html = await res.text()
+  const remainingGb = parseEnigmaRemainingGb(html)
+  if (remainingGb === null) {
+    throw new Error(
+      'Could not find a remaining-GB value on the Enigma dashboard — the session may be invalid or the page layout changed.',
+    )
+  }
+
+  return {
+    usedBytes: null,
+    limitBytes: null, // Enigma's dashboard shows remaining only, not the original plan size
+    remainingBytes: Math.round(remainingGb * BYTES_PER_GB),
+    raw: { source: 'enigma', remainingGb },
+  }
 }
 
 /** Format a byte count as a compact GB string, e.g. "3.8 GB". */
