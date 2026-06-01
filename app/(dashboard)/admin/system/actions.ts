@@ -64,6 +64,41 @@ export async function setCaptchaSolverEnabledAction(
   }
 }
 
+export async function setCaptchaAutoSolveEnabledAction(
+  _prev: SettingState,
+  fd: FormData,
+): Promise<SettingState> {
+  const auth = await requireAdmin()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+
+  const raw = String(fd.get('value') ?? '').trim().toLowerCase()
+  const next = raw === 'true'
+
+  const svc = createServiceClient()
+  const { error } = await svc.rpc('set_system_setting', {
+    p_key: 'captcha_auto_solve',
+    p_value: next,
+  })
+  if (error) return { status: 'error', error: error.message }
+
+  await logActivity({
+    action: next
+      ? 'system_settings.captcha_auto_solve_enable'
+      : 'system_settings.captcha_auto_solve_disable',
+    entity_type: 'system_setting',
+    entity_id: null,
+    details: { key: 'captcha_auto_solve', value: next },
+  })
+
+  revalidatePath('/admin/system')
+  return {
+    status: 'ok',
+    message: next
+      ? 'Auto-solve is now ON — captchas are sent to 2Captcha automatically. Each solve costs credits.'
+      : 'Auto-solve is now OFF — captchas are no longer sent to 2Captcha.',
+  }
+}
+
 export async function setMaintenanceModeAction(
   _prev: SettingState,
   fd: FormData,

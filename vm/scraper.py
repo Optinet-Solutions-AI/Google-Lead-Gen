@@ -550,6 +550,39 @@ def _fetch_captcha_solver_ttl_minutes() -> int:
               file=sys.stderr)
         return CHECKPOINT_DEFAULT_TTL_MINUTES
 
+
+def _fetch_captcha_auto_solve_enabled() -> bool:
+    """Live read of the `captcha_auto_solve` flag from system_settings.
+
+    Gates the automated 2Captcha solver independently of the manual
+    noVNC flow (`captcha_solver_enabled`). Read at the moment we hit a
+    wall — flipping it from /admin/system takes effect on the next
+    captcha without a worker restart.
+
+    Fails CLOSED (returns False) on any lookup error: we never want a
+    transient DB blip to start spending 2Captcha credits unexpectedly,
+    and False just means "behave as before".
+    """
+    try:
+        resp = _supabase_request(
+            "POST",
+            "/rest/v1/rpc/get_system_setting",
+            json_body={"p_key": "captcha_auto_solve"},
+        )
+        if resp.status_code != 200:
+            return False
+        val = resp.json()
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.strip().lower() == "true"
+        return False
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] captcha_auto_solve lookup failed: {exc} — treating as OFF",
+              file=sys.stderr)
+        return False
+
+
 # Set by main() at startup. check_for_captcha falls back to these
 # when callers don't pass kwargs explicitly. Keeps existing
 # `check_for_captcha(driver)` callsites working unchanged.
@@ -1156,6 +1189,250 @@ def ensure_google_login_if_required(driver):
         print(f"[INFO] google login: no creds for {country_code} — continuing without login")
 
 
+# ---------------------------
+# Automated 2Captcha solver
+# ---------------------------
+# Paid external service (https://2captcha.com) that solves reCAPTCHA v2
+# (Google /sorry/) and Cloudflare Turnstile (Bing) by returning a token
+# we inject into the page. Gated by BOTH:
+#   1. TWOCAPTCHA_API_KEY present in the VM's ~/.env, AND
+#   2. the live system_settings flag `captcha_auto_solve` == true
+# so we never spend credits unless an operator explicitly enabled it.
+#
+# HONEST CAVEAT: the token-injection + submit step is the fragile part.
+# Google /sorry/ binds reCAPTCHA tokens to the originating IP, and
+# Cloudflare's managed Turnstile sometimes needs an `action`/`cdata`
+# pair we can't always read from the DOM. Treat a failed solve as
+# normal — we fall through to the existing fail/retry path, which on a
+# fresh proxy often beats a second solve attempt on a flagged session.
+TWOCAPTCHA_API_KEY = os.environ.get("TWOCAPTCHA_API_KEY", "").strip()
+TWOCAPTCHA_IN_URL = "https://2captcha.com/in.php"
+TWOCAPTCHA_RES_URL = "https://2captcha.com/res.php"
+# 2Captcha typically returns reCAPTCHA in 15-45s, Turnstile in 5-20s.
+# Poll every 5s, give up after 130s so a stuck solve doesn't hold the
+# worker hostage — failing through to retry is cheaper than waiting.
+TWOCAPTCHA_POLL_SECONDS = 5
+TWOCAPTCHA_SOLVE_TIMEOUT_SECONDS = 130
+# Seconds to let the page settle after injecting the token + submitting,
+# before we re-probe whether the wall actually cleared.
+TWOCAPTCHA_POST_INJECT_SETTLE_S = 6.0
+
+
+def _extract_captcha_challenge(driver) -> dict | None:
+    """Inspect the live DOM and classify the captcha + pull its sitekey.
+
+    Returns {"kind": "recaptcha"|"turnstile", "sitekey": str,
+             "action": str|None, "cdata": str|None} or None when we
+    can't identify a solvable challenge (in which case the caller skips
+    2Captcha and falls through to the existing path).
+    """
+    try:
+        info = driver.execute_script("""
+            function findSitekey(sel) {
+              var el = document.querySelector(sel);
+              return el ? (el.getAttribute('data-sitekey') || '') : '';
+            }
+            // --- reCAPTCHA v2 (Google /sorry/) ---
+            var reKey = findSitekey('.g-recaptcha[data-sitekey]')
+                     || findSitekey('[data-sitekey][class*="recaptcha"]');
+            if (!reKey) {
+              var f = document.querySelector('iframe[src*="recaptcha/api2/anchor"], iframe[src*="recaptcha/enterprise/anchor"]');
+              if (f) {
+                var m = f.src.match(/[?&]k=([^&]+)/);
+                if (m) reKey = decodeURIComponent(m[1]);
+              }
+            }
+            if (reKey) {
+              return { kind: 'recaptcha', sitekey: reKey, action: null, cdata: null };
+            }
+            // --- Cloudflare Turnstile (Bing) ---
+            var tEl = document.querySelector('.cf-turnstile[data-sitekey], [data-sitekey][id*="turnstile"]');
+            var tKey = tEl ? (tEl.getAttribute('data-sitekey') || '') : '';
+            var tAction = tEl ? (tEl.getAttribute('data-action') || null) : null;
+            var tCdata = tEl ? (tEl.getAttribute('data-cdata') || null) : null;
+            if (tKey) {
+              return { kind: 'turnstile', sitekey: tKey, action: tAction, cdata: tCdata };
+            }
+            return null;
+        """)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] 2captcha: sitekey extraction failed: {exc}", file=sys.stderr)
+        return None
+
+    if not info or not info.get("sitekey"):
+        print("[WARN] 2captcha: no extractable sitekey on the wall — skipping auto-solve",
+              file=sys.stderr)
+        return None
+    return info
+
+
+def _2captcha_submit(challenge: dict, page_url: str) -> str | None:
+    """POST the challenge to 2Captcha's in.php. Returns the request id."""
+    params = {"key": TWOCAPTCHA_API_KEY, "json": 1, "pageurl": page_url}
+    if challenge["kind"] == "recaptcha":
+        params["method"] = "userrecaptcha"
+        params["googlekey"] = challenge["sitekey"]
+    else:  # turnstile
+        params["method"] = "turnstile"
+        params["sitekey"] = challenge["sitekey"]
+        if challenge.get("action"):
+            params["action"] = challenge["action"]
+        if challenge.get("cdata"):
+            params["data"] = challenge["cdata"]
+    try:
+        resp = requests.post(TWOCAPTCHA_IN_URL, data=params, timeout=30)
+        body = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] 2captcha submit failed: {exc}", file=sys.stderr)
+        return None
+    if body.get("status") == 1:
+        print(f"[INFO] 2captcha: submitted {challenge['kind']} (id={body['request']})")
+        return str(body["request"])
+    print(f"[ERROR] 2captcha submit rejected: {body.get('request')}", file=sys.stderr)
+    return None
+
+
+def _2captcha_poll(request_id: str) -> str | None:
+    """Poll res.php until the token is ready, or timeout. Returns token."""
+    deadline = time.time() + TWOCAPTCHA_SOLVE_TIMEOUT_SECONDS
+    # 2Captcha asks callers to wait before the first poll; respect that.
+    time.sleep(TWOCAPTCHA_POLL_SECONDS)
+    while time.time() < deadline:
+        try:
+            resp = requests.get(
+                TWOCAPTCHA_RES_URL,
+                params={"key": TWOCAPTCHA_API_KEY, "action": "get",
+                        "id": request_id, "json": 1},
+                timeout=30,
+            )
+            body = resp.json()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] 2captcha poll error: {exc}", file=sys.stderr)
+            time.sleep(TWOCAPTCHA_POLL_SECONDS)
+            continue
+        if body.get("status") == 1:
+            print("[INFO] 2captcha: token ready")
+            return str(body["request"])
+        reason = body.get("request", "")
+        if reason != "CAPCHA_NOT_READY":  # 2Captcha's spelling, not ours
+            # Hard error (ERROR_CAPTCHA_UNSOLVABLE, ERROR_ZERO_BALANCE, …)
+            print(f"[ERROR] 2captcha solve failed: {reason}", file=sys.stderr)
+            return None
+        time.sleep(TWOCAPTCHA_POLL_SECONDS)
+    print(f"[WARN] 2captcha: timed out after {TWOCAPTCHA_SOLVE_TIMEOUT_SECONDS}s",
+          file=sys.stderr)
+    return None
+
+
+def _inject_token_and_submit(driver, kind: str, token: str) -> None:
+    """Inject the solved token into the page and trigger continuation.
+
+    reCAPTCHA: write the token into #g-recaptcha-response, invoke any
+    registered grecaptcha callback, then submit the enclosing form.
+    Turnstile: write into the cf-turnstile-response field(s) and submit.
+    All best-effort — we re-probe the page state after, rather than
+    trusting any single trigger to have worked.
+    """
+    try:
+        if kind == "recaptcha":
+            driver.execute_script("""
+                var tok = arguments[0];
+                var ta = document.getElementById('g-recaptcha-response');
+                if (!ta) {
+                  ta = document.createElement('textarea');
+                  ta.id = 'g-recaptcha-response';
+                  ta.name = 'g-recaptcha-response';
+                  ta.style.display = 'block';
+                  document.body.appendChild(ta);
+                }
+                ta.style.display = 'block';
+                ta.value = tok;
+                ta.innerHTML = tok;
+                // Fire any grecaptcha callback registered in the config.
+                try {
+                  var cfg = window.___grecaptcha_cfg;
+                  if (cfg && cfg.clients) {
+                    Object.keys(cfg.clients).forEach(function (k) {
+                      var c = cfg.clients[k];
+                      JSON.stringify(c, function (key, val) {
+                        if (val && typeof val.callback === 'function') {
+                          try { val.callback(tok); } catch (e) {}
+                        }
+                        return val;
+                      });
+                    });
+                  }
+                } catch (e) {}
+                var form = ta.closest('form') || document.querySelector('form');
+                if (form) form.submit();
+            """, token)
+        else:  # turnstile
+            driver.execute_script("""
+                var tok = arguments[0];
+                var names = ['cf-turnstile-response', 'g-recaptcha-response'];
+                names.forEach(function (n) {
+                  document.querySelectorAll('[name="' + n + '"]').forEach(function (el) {
+                    el.value = tok;
+                  });
+                });
+                if (typeof window.tsCallback === 'function') {
+                  try { window.tsCallback(tok); } catch (e) {}
+                }
+                var form = document.querySelector('form');
+                if (form) form.submit();
+            """, token)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] 2captcha: token injection raised: {exc}", file=sys.stderr)
+
+
+def attempt_auto_captcha_solve(driver) -> bool:
+    """Try to clear the current captcha wall via 2Captcha.
+
+    Returns True only when the wall is verifiably gone afterward. Returns
+    False (cheaply) when auto-solve is disabled, the key is missing, the
+    challenge isn't identifiable, the solve fails, or the wall is still
+    up after injection — the caller then falls through to its existing
+    manual-checkpoint / fail path.
+    """
+    if not TWOCAPTCHA_API_KEY:
+        return False
+    if not _fetch_captcha_auto_solve_enabled():
+        return False
+
+    challenge = _extract_captcha_challenge(driver)
+    if not challenge:
+        return False
+
+    try:
+        page_url = driver.current_url or ""
+    except Exception:  # noqa: BLE001
+        page_url = ""
+    if not page_url:
+        return False
+
+    print(f"[INFO] 2captcha: attempting auto-solve ({challenge['kind']}, "
+          f"sitekey={challenge['sitekey'][:12]}…)")
+    request_id = _2captcha_submit(challenge, page_url)
+    if not request_id:
+        return False
+    token = _2captcha_poll(request_id)
+    if not token:
+        return False
+
+    _inject_token_and_submit(driver, challenge["kind"], token)
+    time.sleep(TWOCAPTCHA_POST_INJECT_SETTLE_S)
+
+    # Re-probe: did the wall actually clear? We reuse the silent checker
+    # (no escalation) so a still-up challenge just reports False.
+    still_blocked = _is_captcha_silent(driver)
+    if still_blocked:
+        print("[WARN] 2captcha: token injected but wall still up — "
+              "falling through to existing path", file=sys.stderr)
+        return False
+    print("[INFO] 2captcha: wall cleared — resuming scrape")
+    return True
+
+
 def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, interactive=None):
     """Detect if Google is showing a CAPTCHA or unusual traffic page.
 
@@ -1205,6 +1482,13 @@ def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, 
               "unsolvable, skipping Captcha solver and failing fast for retry",
               file=sys.stderr)
         raise CaptchaDetectedException("CAPTCHA detected (IP mismatch)")
+
+    # Automated 2Captcha first (when enabled + key present). A clean solve
+    # resumes the scrape with zero operator involvement. Anything less —
+    # disabled, unsolvable, timed out, or still blocked after injection —
+    # returns False and we fall through to the manual / fail path below.
+    if attempt_auto_captcha_solve(driver):
+        return
 
     if interactive and job_id:
         try:
