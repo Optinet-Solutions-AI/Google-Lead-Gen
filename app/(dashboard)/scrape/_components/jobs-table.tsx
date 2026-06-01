@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import { Bot, Check, CheckSquare, Square, User } from 'lucide-react'
+import { Bot, Check, CheckSquare, ShieldAlert, Square, User } from 'lucide-react'
 import { VISIBLE_PIPELINE_STAGES, type EnrichmentStatus, type ScrapeJob } from '../_lib/pipeline'
 import { BulkScrapeActionsBar } from './bulk-actions-bar'
 import { JobActionsButton } from './job-row-actions'
@@ -109,12 +109,21 @@ function StatusBadge({ job }: { job: ScrapeJob }) {
  *  scrape: a robot when 2Captcha cleared it automatically, a person when
  *  an operator did. Renders nothing when no captcha was recorded. */
 function CaptchaSolveMarker({ job }: { job: ScrapeJob }) {
+  // Stopped on a captcha it couldn't get past — auto-retries exhausted or
+  // a human checkpoint timed out. One neutral "not solved" marker, shown
+  // straight off the job status (no contradiction with the error).
+  if (job.status === 'captcha') {
+    return (
+      <span
+        className="inline-flex items-center"
+        title="A captcha appeared and couldn't be solved, so the scrape stopped. Open the menu (⋮) → Try again to retry."
+      >
+        <ShieldAlert className="h-3 w-3 text-rose-500" />
+      </span>
+    )
+  }
+  // Got past the captcha — show who solved it.
   if (!job.captcha_solved_by) return null
-  // A scrape can hit several captchas across its pages. If it ultimately
-  // stalled/failed ON a captcha, showing "solved by a person" next to a
-  // "nobody solved the captcha" error reads as a contradiction — so only
-  // show the marker when the solve actually let the scrape proceed.
-  if (job.status === 'captcha' || job.status === 'failed') return null
   const isBot = job.captcha_solved_by === 'auto_2captcha'
   return (
     <span
