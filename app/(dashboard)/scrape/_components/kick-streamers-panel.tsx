@@ -1,18 +1,23 @@
 'use client'
 
 import { useActionState } from 'react'
-import { CheckCircle2, Loader2, Play, Tv } from 'lucide-react'
-import { runKickProfileEnrichment, type StageRunState } from '../actions'
+import { CheckCircle2, Loader2, Play, Sparkles, Tv } from 'lucide-react'
+import {
+  runKickProfileEnrichment,
+  runKickStreamerAnalysis,
+  type StageRunState,
+} from '../actions'
 import type { KickStreamerSummary } from '../_lib/queries'
 
 const initialState: StageRunState = null
 
 /**
- * Kick Phase-2 panel. Shown only for search_engine='kick' jobs (their
- * leads table is empty — streamers live in kick_streamers). Surfaces the
- * Phase-1 discovery counts and the operator-triggered ▶ that enqueues a
- * Phase-2 browser-enrichment job (runKickProfileEnrichment → a new
- * scrape_queue row the GoLogin workers claim).
+ * Kick streamer panel (Phases 2 + 3). Shown only for search_engine='kick'
+ * jobs. Two operator-triggered ▶ actions:
+ *   - Enrich profiles  → Phase 2 browser scrape (runKickProfileEnrichment,
+ *     enqueues a scrape_queue job the GoLogin workers claim)
+ *   - Score & resolve  → Phase 3 affiliate scoring + shortener resolution
+ *     (runKickStreamerAnalysis, runs inline — pure data + light HTTP)
  */
 export function KickStreamersPanel({
   jobId,
@@ -21,21 +26,35 @@ export function KickStreamersPanel({
   jobId: string
   summary: KickStreamerSummary
 }) {
-  const [state, formAction, pending] = useActionState(runKickProfileEnrichment, initialState)
+  const [enrichState, enrichAction, enrichPending] = useActionState(
+    runKickProfileEnrichment,
+    initialState,
+  )
+  const [scoreState, scoreAction, scorePending] = useActionState(
+    runKickStreamerAnalysis,
+    initialState,
+  )
 
   const inflight = summary.inflight
-  const nothingToDo = summary.pending === 0 && summary.discovered > 0
+  const nothingToEnrich = summary.pending === 0 && summary.discovered > 0
   const noStreamers = summary.discovered === 0
-  const buttonDisabled = pending || inflight || nothingToDo || noStreamers
+  const enrichDisabled = enrichPending || inflight || nothingToEnrich || noStreamers
+  const scoreDisabled = scorePending || noStreamers
 
-  const message = state?.status === 'ok' ? state.message : null
-  const error = state?.status === 'error' ? state.error : null
+  const messages = [
+    enrichState?.status === 'ok' ? enrichState.message : null,
+    scoreState?.status === 'ok' ? scoreState.message : null,
+  ].filter(Boolean) as string[]
+  const errors = [
+    enrichState?.status === 'error' ? enrichState.error : null,
+    scoreState?.status === 'error' ? scoreState.error : null,
+  ].filter(Boolean) as string[]
 
-  const buttonTitle = noStreamers
+  const enrichTitle = noStreamers
     ? 'No streamers discovered yet — run the Kick scrape first'
     : inflight
       ? 'Profile enrichment already running — wait for it to finish'
-      : nothingToDo
+      : nothingToEnrich
         ? 'Every discovered streamer already enriched'
         : 'Enrich the top streamer profiles (socials, follower count, promo & pinned links)'
 
@@ -64,31 +83,59 @@ export function KickStreamersPanel({
               {summary.failed > 0 && (
                 <> · <span className="text-red-600">{summary.failed} failed</span></>
               )}
+              {summary.scored > 0 && (
+                <> · <span className="font-medium text-blue-700">{summary.likelyAffiliates} likely affiliate{summary.likelyAffiliates === 1 ? '' : 's'}</span></>
+              )}
             </>
           )}
         </span>
 
-        <div className="ml-auto">
-          <form action={formAction}>
+        <div className="ml-auto flex items-center gap-1.5">
+          <form action={enrichAction}>
             <input type="hidden" name="job_id" value={jobId} />
             <button
               type="submit"
-              disabled={buttonDisabled}
+              disabled={enrichDisabled}
               aria-label="Enrich Kick streamer profiles"
-              title={buttonTitle}
+              title={enrichTitle}
               className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 text-[12px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {inflight ? (
                 <>
                   <Loader2 className="h-3 w-3 animate-spin" /> Running
                 </>
-              ) : nothingToDo ? (
+              ) : nothingToEnrich ? (
                 <>
-                  <CheckCircle2 className="h-3 w-3 text-emerald-600" /> Done
+                  <CheckCircle2 className="h-3 w-3 text-emerald-600" /> Enriched
                 </>
               ) : (
                 <>
-                  <Play className={['h-3 w-3', pending ? 'animate-pulse' : ''].join(' ')} /> Enrich profiles
+                  <Play className={['h-3 w-3', enrichPending ? 'animate-pulse' : ''].join(' ')} /> Enrich profiles
+                </>
+              )}
+            </button>
+          </form>
+
+          <form action={scoreAction}>
+            <input type="hidden" name="job_id" value={jobId} />
+            <button
+              type="submit"
+              disabled={scoreDisabled}
+              aria-label="Score Kick streamers and resolve links"
+              title={
+                noStreamers
+                  ? 'No streamers to score yet'
+                  : 'Score streamers for affiliate likelihood and resolve shortener links'
+              }
+              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 text-[12px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {scorePending ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" /> Scoring
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-3 w-3" /> Score &amp; resolve
                 </>
               )}
             </button>
@@ -97,17 +144,19 @@ export function KickStreamersPanel({
       </div>
 
       <p className="mt-1.5 text-[11px] leading-snug text-[color:var(--color-text-secondary)]">
-        Opens the top streamers (by live viewers) in a real browser to backfill social handles,
-        follower count, and casino promo / pinned-chat links — surfaces the Kick API doesn&apos;t expose.
-        Re-running only re-attempts streamers not yet scraped.
+        <strong className="font-medium">Enrich</strong> opens the top streamers in a real browser to backfill socials,
+        follower count, and casino promo / pinned-chat links. <strong className="font-medium">Score &amp; resolve</strong>{' '}
+        then flags likely affiliates (niche score) and expands shortener links. Both are re-runnable.
       </p>
 
-      {(message || error) && (
+      {(messages.length > 0 || errors.length > 0) && (
         <div className="mt-1.5 flex flex-wrap gap-1.5 text-[11px]">
-          {message && (
-            <span className="rounded-md bg-green-50 px-2 py-1 text-green-700">{message}</span>
-          )}
-          {error && <span className="rounded-md bg-red-50 px-2 py-1 text-red-700">{error}</span>}
+          {messages.map((m, i) => (
+            <span key={`m${i}`} className="rounded-md bg-green-50 px-2 py-1 text-green-700">{m}</span>
+          ))}
+          {errors.map((e, i) => (
+            <span key={`e${i}`} className="rounded-md bg-red-50 px-2 py-1 text-red-700">{e}</span>
+          ))}
         </div>
       )}
     </section>

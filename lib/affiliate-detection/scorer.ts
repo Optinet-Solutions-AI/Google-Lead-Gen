@@ -25,10 +25,11 @@ export type AffiliateScoreResult = {
   error?: string
 }
 
-const CASINO_KEYWORDS = ['casino', 'bet', 'gaming', 'slots', 'poker', 'blackjack', 'spin']
+// Exported for reuse by the kick streamer scorer (lib/affiliate-detection/kick-scorer.ts).
+export const CASINO_KEYWORDS = ['casino', 'bet', 'gaming', 'slots', 'poker', 'blackjack', 'spin']
 
-const TRACKING_LINK_PATH_RE = /\/(track|click|go|visit|out|redirect|creat|aff|ref|link|offer|bonus|promo)\//i
-const TRACKING_LINK_QUERY_RE = /[?&](ref|aff|affiliate|campaign|source|tracking|click)=/i
+export const TRACKING_LINK_PATH_RE = /\/(track|click|go|visit|out|redirect|creat|aff|ref|link|offer|bonus|promo)\//i
+export const TRACKING_LINK_QUERY_RE = /[?&](ref|aff|affiliate|campaign|source|tracking|click)=/i
 const HREF_RE = /href=["']([^"']+)["']/gi
 
 const AFFILIATE_DISCLOSURES = [
@@ -64,7 +65,7 @@ const CTA_PATTERNS = [
   'claim bonus',
 ]
 
-const BONUS_COMPARISON_KEYWORDS = [
+export const BONUS_COMPARISON_KEYWORDS = [
   'welcome bonus',
   'bonus offer',
   'free spins',

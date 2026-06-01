@@ -19,7 +19,8 @@ import { CaptchaRecoveryBanner } from '../_components/captcha-recovery-banner'
 import { MobileSkippedRetryBanner } from '../_components/mobile-skipped-retry-banner'
 import { EnrichmentStages } from '../_components/enrichment-stages'
 import { KickStreamersPanel } from '../_components/kick-streamers-panel'
-import { fetchKickStreamerSummary, fetchStageSummary } from '../_lib/queries'
+import { KickStreamersTable } from '../_components/kick-streamers-table'
+import { fetchKickStreamerRows, fetchKickStreamerSummary, fetchStageSummary } from '../_lib/queries'
 
 type SearchParams = Record<string, string | string[] | undefined>
 
@@ -153,7 +154,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
 
   const isKick = job.search_engine === 'kick'
 
-  const [{ rows, total }, hiddenCount, stageSummary, captchaSolverEnabled, kickSummary] =
+  const [{ rows, total }, hiddenCount, stageSummary, captchaSolverEnabled, kickSummary, kickRows] =
     await Promise.all([
       queryLeads({
         page,
@@ -177,6 +178,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
             .then(({ data }) => data !== false)
         : Promise.resolve(true),
       isKick ? fetchKickStreamerSummary(id) : Promise.resolve(null),
+      isKick ? fetchKickStreamerRows(id) : Promise.resolve(null),
     ])
 
   const toggleHref = (() => {
@@ -279,9 +281,14 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         />
       )}
 
-      {isKick
-        ? kickSummary && <KickStreamersPanel jobId={job.id} summary={kickSummary} />
-        : stageSummary && <EnrichmentStages jobId={job.id} summary={stageSummary} />}
+      {isKick ? (
+        <>
+          {kickSummary && <KickStreamersPanel jobId={job.id} summary={kickSummary} />}
+          {kickRows && kickRows.length > 0 && <KickStreamersTable rows={kickRows} />}
+        </>
+      ) : (
+        stageSummary && <EnrichmentStages jobId={job.id} summary={stageSummary} />
+      )}
 
       <div className="pt-2">
         <AdvancedFilters columns={columns} preserve={['show_hidden']} />

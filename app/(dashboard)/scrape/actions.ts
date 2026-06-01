@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
+import { scoreKickStreamer, type KickScoreLink } from '@/lib/affiliate-detection/kick-scorer'
+import { needsResolution, resolveShorteners } from '@/lib/affiliate-detection/resolve-links'
 import { logActivity } from '@/lib/activity-log'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
 import { translateKeywordsToEnglish } from '@/lib/translate'
@@ -823,6 +825,124 @@ export async function runKickProfileEnrichment(
   return {
     status: 'ok',
     message: `Queued profile enrichment. A VM worker will open the top streamers (by live viewers) through GoLogin and backfill socials, follower count, and promo / pinned-chat links. ${pending} streamer${pending === 1 ? '' : 's'} still pending.`,
+  }
+}
+
+// ============================================================
+// Kick Phase 3 — affiliate scoring + shortener resolution
+//
+// Pure data work (+ light HTTP for shorteners), so it runs INLINE in this
+// action rather than as a VM/queue job. Resolves shortener-like kick_links
+// to their real destination, then scores each kick_streamer on the Phase
+// 1/2 signals (casino promo cards, affiliate-ref links, gambling tags,
+// casino keywords) → is_likely_affiliate + niche_score. No migration / no
+// VM — the columns were reserved in Phase 1.
+// ============================================================
+export async function runKickStreamerAnalysis(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+
+  const { data: job, error: jobErr } = await svc
+    .from('scrape_queue')
+    .select('search_engine')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (jobErr) return { status: 'error', error: safeError(jobErr, 'Failed to load the job.') }
+  if (!job) return { status: 'error', error: 'Job not found.' }
+  if (((job as { search_engine: string | null }).search_engine ?? '') !== 'kick') {
+    return { status: 'error', error: 'Scoring only applies to Kick scrape jobs.' }
+  }
+
+  // Streamers for this job + all their links.
+  const { data: streamers, error: sErr } = await svc
+    .from('kick_streamers')
+    .select('id, channel_description, stream_title, custom_tags')
+    .eq('scrape_queue_id', jobId)
+  if (sErr) return { status: 'error', error: safeError(sErr, 'Failed to load streamers.') }
+  if (!streamers || streamers.length === 0) {
+    return { status: 'ok', message: 'No streamers to score yet — run the Kick scrape first.' }
+  }
+  const streamerIds = (streamers as Array<{ id: string }>).map(s => s.id)
+
+  const { data: links, error: lErr } = await svc
+    .from('kick_links')
+    .select('id, kick_streamer_id, url, resolved_url, source, promo_brand, promo_bonus_terms')
+    .in('kick_streamer_id', streamerIds)
+  if (lErr) return { status: 'error', error: safeError(lErr, 'Failed to load streamer links.') }
+  const allLinks = (links ?? []) as Array<
+    KickScoreLink & { id: string; kick_streamer_id: string }
+  >
+
+  // Casino-operator domain set (host suffixes) for promo-link classification.
+  const { data: denyRows } = await svc.from('operator_domains_denylist').select('host_suffix')
+  const denylist = new Set(
+    (denyRows ?? []).map(r => (r as { host_suffix: string }).host_suffix.toLowerCase()),
+  )
+
+  // 1. Resolve shortener-like links that aren't resolved yet.
+  const toResolve = allLinks
+    .filter(l => !l.resolved_url && needsResolution(l.resolved_url ?? l.url))
+    .map(l => l.url)
+  let linksResolved = 0
+  if (toResolve.length > 0) {
+    const resolvedMap = await resolveShorteners(toResolve)
+    const nowIso = new Date().toISOString()
+    for (const l of allLinks) {
+      const resolved = resolvedMap.get(l.url)
+      if (!resolved) continue
+      l.resolved_url = resolved // reflect locally so scoring sees it
+      const { error: upErr } = await svc
+        .from('kick_links')
+        .update({ resolved_url: resolved, resolved_at: nowIso })
+        .eq('id', l.id)
+      if (!upErr) linksResolved++
+    }
+  }
+
+  // 2. Score each streamer.
+  const linksByStreamer = new Map<string, KickScoreLink[]>()
+  for (const l of allLinks) {
+    const arr = linksByStreamer.get(l.kick_streamer_id) ?? []
+    arr.push(l)
+    linksByStreamer.set(l.kick_streamer_id, arr)
+  }
+
+  let scored = 0
+  let likelyAffiliates = 0
+  for (const s of streamers as Array<{
+    id: string
+    channel_description: string | null
+    stream_title: string | null
+    custom_tags: string[] | null
+  }>) {
+    const result = scoreKickStreamer(s, linksByStreamer.get(s.id) ?? [], denylist)
+    const { error: upErr } = await svc
+      .from('kick_streamers')
+      .update({ is_likely_affiliate: result.isLikelyAffiliate, niche_score: result.nicheScore })
+      .eq('id', s.id)
+    if (upErr) continue
+    scored++
+    if (result.isLikelyAffiliate) likelyAffiliates++
+  }
+
+  await logActivity({
+    action: 'enrichment.kick_score',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { scored, likelyAffiliates, linksResolved },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: `Scored ${scored} streamer${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
   }
 }
 

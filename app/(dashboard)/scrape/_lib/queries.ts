@@ -207,30 +207,45 @@ export type KickStreamerSummary = {
   enriched: number
   failed: number
   pending: number
+  /** Streamers that have a niche_score (Phase 3 scoring has run on them). */
+  scored: number
+  /** Streamers flagged is_likely_affiliate=true. */
+  likelyAffiliates: number
   inflight: boolean
   inflightStatus: 'pending' | 'running' | null
 }
 
 export async function fetchKickStreamerSummary(jobId: string): Promise<KickStreamerSummary> {
   const svc = createServiceClient()
-  const [discoveredRes, enrichedRes, failedRes, inflightRes] = await Promise.all([
-    svc.from('kick_streamers').select('id', { count: 'exact', head: true }).eq('scrape_queue_id', jobId),
-    svc
-      .from('kick_streamers')
-      .select('id', { count: 'exact', head: true })
-      .eq('scrape_queue_id', jobId)
-      .not('about_scraped_at', 'is', null),
-    svc
-      .from('kick_streamers')
-      .select('id', { count: 'exact', head: true })
-      .eq('scrape_queue_id', jobId)
-      .eq('about_fetch_failed', true),
-    svc
-      .from('scrape_queue')
-      .select('status')
-      .eq('parent_scrape_job_id', jobId)
-      .in('status', ['pending', 'running']),
-  ])
+  const [discoveredRes, enrichedRes, failedRes, scoredRes, affiliateRes, inflightRes] =
+    await Promise.all([
+      svc.from('kick_streamers').select('id', { count: 'exact', head: true }).eq('scrape_queue_id', jobId),
+      svc
+        .from('kick_streamers')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .not('about_scraped_at', 'is', null),
+      svc
+        .from('kick_streamers')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .eq('about_fetch_failed', true),
+      svc
+        .from('kick_streamers')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .not('niche_score', 'is', null),
+      svc
+        .from('kick_streamers')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .eq('is_likely_affiliate', true),
+      svc
+        .from('scrape_queue')
+        .select('status')
+        .eq('parent_scrape_job_id', jobId)
+        .in('status', ['pending', 'running']),
+    ])
 
   const discovered = discoveredRes.count ?? 0
   const enriched = enrichedRes.count ?? 0
@@ -243,9 +258,78 @@ export async function fetchKickStreamerSummary(jobId: string): Promise<KickStrea
     enriched,
     failed,
     pending: Math.max(0, discovered - enriched),
+    scored: scoredRes.count ?? 0,
+    likelyAffiliates: affiliateRes.count ?? 0,
     inflight,
     inflightStatus: inflight ? (running ? 'running' : 'pending') : null,
   }
+}
+
+export type KickLinkRow = {
+  url: string
+  resolved_url: string | null
+  source: 'channel_description' | 'stream_title' | 'promo_card' | 'pinned_chat'
+  promo_brand: string | null
+}
+
+export type KickStreamerRow = {
+  id: string
+  slug: string
+  channel_url: string
+  follower_count: number | null
+  is_live: boolean | null
+  category_name: string | null
+  instagram_handle: string | null
+  twitter_handle: string | null
+  facebook_handle: string | null
+  youtube_handle: string | null
+  tiktok_handle: string | null
+  is_likely_affiliate: boolean | null
+  niche_score: number | null
+  about_scraped_at: string | null
+  links: KickLinkRow[]
+}
+
+/** Per-streamer rows for the Kick results table, affiliates-first then
+ *  niche_score desc then live viewers — with each streamer's promo/pinned
+ *  links attached. */
+export async function fetchKickStreamerRows(jobId: string): Promise<KickStreamerRow[]> {
+  const svc = createServiceClient()
+  const { data: streamers, error } = await svc
+    .from('kick_streamers')
+    .select(
+      'id, slug, channel_url, follower_count, is_live, category_name, stream_viewer_count, ' +
+        'instagram_handle, twitter_handle, facebook_handle, youtube_handle, tiktok_handle, ' +
+        'is_likely_affiliate, niche_score, about_scraped_at',
+    )
+    .eq('scrape_queue_id', jobId)
+  if (error) throw error
+  type RawRow = Omit<KickStreamerRow, 'links'> & { stream_viewer_count: number | null }
+  const rows = (streamers ?? []) as unknown as RawRow[]
+  if (rows.length === 0) return []
+
+  const { data: links } = await svc
+    .from('kick_links')
+    .select('kick_streamer_id, url, resolved_url, source, promo_brand')
+    .in('kick_streamer_id', rows.map(r => r.id))
+  const linksByStreamer = new Map<string, KickLinkRow[]>()
+  for (const l of (links ?? []) as unknown as Array<KickLinkRow & { kick_streamer_id: string }>) {
+    const arr = linksByStreamer.get(l.kick_streamer_id) ?? []
+    arr.push({ url: l.url, resolved_url: l.resolved_url, source: l.source, promo_brand: l.promo_brand })
+    linksByStreamer.set(l.kick_streamer_id, arr)
+  }
+
+  return rows
+    .slice()
+    .sort((a, b) => {
+      // affiliates first, then niche_score desc, then live viewers desc
+      const aff = Number(b.is_likely_affiliate ?? false) - Number(a.is_likely_affiliate ?? false)
+      if (aff !== 0) return aff
+      const ns = Number(b.niche_score ?? -1) - Number(a.niche_score ?? -1)
+      if (ns !== 0) return ns
+      return (b.stream_viewer_count ?? 0) - (a.stream_viewer_count ?? 0)
+    })
+    .map(r => ({ ...r, links: linksByStreamer.get(r.id) ?? [] }))
 }
 
 export async function listRecentJobs(limit = 30): Promise<ScrapeJob[]> {
