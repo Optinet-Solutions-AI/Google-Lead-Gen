@@ -47,6 +47,7 @@ import os
 import re
 import sys
 import time
+from html import unescape
 from urllib.parse import parse_qs, unquote, urlparse
 from typing import Any
 
@@ -87,9 +88,14 @@ _LINK_HOST_MAP: list[tuple[tuple[str, ...], str]] = [
 
 # Socials/contacts get their own column; anything else off-youtube that
 # isn't one of these is treated as the channel's website (first wins).
+# Excludes Google/YouTube's own chrome — sign-in links (accounts.google.com
+# ServiceLogin) appear when the GoLogin profile isn't logged into Google and
+# must NOT be mistaken for the channel's website. facebook has no column, so
+# it's parked here too rather than polluting website_url.
 _NON_WEBSITE_HOSTS = {
     "youtube.com", "youtu.be", "m.youtube.com", "music.youtube.com",
-    "facebook.com", "fb.com", "fb.me",  # captured as social-ish but not a column → website fallback skips
+    "accounts.google.com", "google.com", "support.google.com", "policies.google.com",
+    "facebook.com", "fb.com", "fb.me",
 }
 
 _EMAIL_RE = re.compile(
@@ -108,7 +114,11 @@ def _clean_host(url: str) -> str:
 
 def _unwrap_redirect(url: str) -> str:
     """YouTube wraps external links as youtube.com/redirect?q=<encoded>.
-    Unwrap to the real destination; pass through anything else."""
+    Unwrap to the real destination; pass through anything else.
+
+    ytInitialData serves these URLs HTML-entity-encoded (&amp; for &), which
+    breaks query parsing — unescape first so the q= param is found."""
+    url = unescape(url or "")
     try:
         p = urlparse(url)
     except Exception:  # noqa: BLE001
