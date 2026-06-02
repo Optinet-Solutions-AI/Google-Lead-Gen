@@ -5,8 +5,10 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { scoreKickStreamer, type KickScoreLink } from '@/lib/affiliate-detection/kick-scorer'
+import { scoreYoutubeChannel, type YoutubeScoreLink } from '@/lib/affiliate-detection/youtube-scorer'
 import { extractContacts } from '@/lib/affiliate-detection/kick-contacts'
 import { needsResolution, resolveShorteners } from '@/lib/affiliate-detection/resolve-links'
+import { extractStagsFromText } from '@/lib/stag-extraction/extract'
 import { logActivity } from '@/lib/activity-log'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
 import { translateKeywordsToEnglish } from '@/lib/translate'
@@ -980,6 +982,301 @@ export async function runKickStreamerAnalysis(
   return {
     status: 'ok',
     message: `Scored ${scored} streamer${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${withContacts} with contact${withContacts === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
+  }
+}
+
+// ============================================================
+// YouTube Phase 2 — contact enrichment (operator-triggered ▶)
+//
+// Queues a browser scrape_queue job (search_engine='youtube' +
+// parent_scrape_job_id) that a GoLogin worker claims and runs
+// youtube_profile_scrape.py over: it opens each discovered channel's About
+// tab and backfills website/socials + the reCAPTCHA-gated email. Mirrors
+// runKickProfileEnrichment exactly — same in-flight guard, same lineage
+// carry-over so requireJobAccess doesn't later refuse the owner.
+// ============================================================
+export async function runYoutubeContactEnrichment(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const jobId = jobIdFrom(fd) // the parent Phase-1 YouTube job
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+
+  const { data: job, error: readErr } = await svc
+    .from('scrape_queue')
+    .select(
+      'keyword, country_code, language, search_engine, created_by_email, created_by_username, created_by_display, created_by_is_shadow',
+    )
+    .eq('id', jobId)
+    .maybeSingle()
+  if (readErr) return { status: 'error', error: safeError(readErr, 'Failed to load the source job.') }
+  if (!job) return { status: 'error', error: 'Job not found.' }
+  const j = job as {
+    keyword: string
+    country_code: string
+    language: string | null
+    search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | null
+    created_by_email: string | null
+    created_by_username: string | null
+    created_by_display: string | null
+    created_by_is_shadow: boolean | null
+  }
+  if ((j.search_engine ?? '') !== 'youtube') {
+    return { status: 'error', error: 'Contact enrichment only applies to YouTube scrape jobs.' }
+  }
+
+  // Channels that haven't had their About tab scraped yet.
+  const { count: pending, error: cntErr } = await svc
+    .from('youtube_channels')
+    .select('id', { count: 'exact', head: true })
+    .eq('scrape_queue_id', jobId)
+    .is('about_tab_scraped_at', null)
+  if (cntErr) return { status: 'error', error: safeError(cntErr, 'Failed to count discovered channels.') }
+  if (!pending || pending === 0) {
+    revalidatePath(`/scrape/${jobId}`)
+    return {
+      status: 'ok',
+      message: 'No channels left to enrich — every discovered channel already has its About tab scraped.',
+    }
+  }
+
+  // Don't stack Phase 2 jobs: bail if one is already queued/running for this
+  // parent so a double-click doesn't burn two GoLogin sessions.
+  const { count: inflight, error: ifErr } = await svc
+    .from('scrape_queue')
+    .select('id', { count: 'exact', head: true })
+    .eq('parent_scrape_job_id', jobId)
+    .in('status', ['pending', 'running'])
+  if (ifErr) return { status: 'error', error: safeError(ifErr, 'Failed to check for an in-flight enrichment job.') }
+  if (inflight && inflight > 0) {
+    return { status: 'error', error: 'A contact-enrichment run is already queued or running for this job.' }
+  }
+
+  const { error: insertError } = await svc.from('scrape_queue').insert({
+    keyword: j.keyword,
+    country_code: j.country_code,
+    search_engine: 'youtube',
+    parent_scrape_job_id: jobId,
+    language: j.language,
+    priority: 0,
+    with_enrichment: false,
+    created_by_email: j.created_by_email,
+    created_by_username: j.created_by_username,
+    created_by_display: j.created_by_display,
+    created_by_is_shadow: j.created_by_is_shadow ?? false,
+  })
+  if (insertError) return { status: 'error', error: safeError(insertError, 'Failed to queue contact enrichment.') }
+
+  await logActivity({
+    action: 'enrichment.youtube_contact',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { pending_channels: pending },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: `Queued contact enrichment. A VM worker will open the top channels (by subscribers) through GoLogin and backfill website, socials, and the About-tab email. ${pending} channel${pending === 1 ? '' : 's'} still pending.`,
+  }
+}
+
+// ============================================================
+// YouTube Phase 3 — affiliate scoring + S-tag extraction / new-vs-known
+//
+// Pure data work (+ light HTTP to resolve affiliate redirect chains), so it
+// runs INLINE like runKickStreamerAnalysis. For each channel it mines the
+// recent video descriptions for affiliate tracking links, resolves them to
+// an S-tag, checks each S-tag against Monday (search_s_tag_on_monday — the
+// same RPC the lead s-tag dup-check uses), scores affiliate likelihood, and
+// extracts outreach contacts. A channel is flagged is_new_lead_candidate
+// when it's a likely affiliate carrying ≥1 S-tag NOT already on Monday.
+// No leads are created — the operator reviews the flagged candidates.
+// ============================================================
+export async function runYoutubeChannelAnalysis(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+
+  const { data: job, error: jobErr } = await svc
+    .from('scrape_queue')
+    .select('search_engine')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (jobErr) return { status: 'error', error: safeError(jobErr, 'Failed to load the job.') }
+  if (!job) return { status: 'error', error: 'Job not found.' }
+  if (((job as { search_engine: string | null }).search_engine ?? '') !== 'youtube') {
+    return { status: 'error', error: 'Scoring only applies to YouTube scrape jobs.' }
+  }
+
+  type ChannelRow = {
+    id: string
+    channel_url: string
+    channel_description: string | null
+    recent_video_descriptions: string[] | null
+    website_url: string | null
+    email: string | null
+    twitter_url: string | null
+    instagram_url: string | null
+    tiktok_url: string | null
+    telegram_url: string | null
+    discord_url: string | null
+  }
+  const { data: channels, error: cErr } = await svc
+    .from('youtube_channels')
+    .select(
+      'id, channel_url, channel_description, recent_video_descriptions, website_url, email, ' +
+        'twitter_url, instagram_url, tiktok_url, telegram_url, discord_url',
+    )
+    .eq('scrape_queue_id', jobId)
+  if (cErr) return { status: 'error', error: safeError(cErr, 'Failed to load channels.') }
+  const rows = (channels ?? []) as unknown as ChannelRow[]
+  if (rows.length === 0) {
+    return { status: 'ok', message: 'No channels to score yet — run the YouTube scrape first.' }
+  }
+
+  // Existing links so re-runs don't duplicate rows or re-resolve known tags.
+  type LinkRow = {
+    id: string
+    youtube_channel_id: string
+    url: string
+    resolved_url: string | null
+    s_tag: string | null
+    is_known_on_monday: boolean | null
+  }
+  const { data: existingLinks } = await svc
+    .from('youtube_channel_links')
+    .select('id, youtube_channel_id, url, resolved_url, s_tag, is_known_on_monday')
+    .in('youtube_channel_id', rows.map(r => r.id))
+  const linksByChannel = new Map<string, LinkRow[]>()
+  for (const l of (existingLinks ?? []) as unknown as LinkRow[]) {
+    const arr = linksByChannel.get(l.youtube_channel_id) ?? []
+    arr.push(l)
+    linksByChannel.set(l.youtube_channel_id, arr)
+  }
+
+  // Casino-operator domain set (host suffixes) for affiliate-link scoring.
+  const { data: denyRows } = await svc.from('operator_domains_denylist').select('host_suffix')
+  const denylist = new Set(
+    (denyRows ?? []).map(r => (r as { host_suffix: string }).host_suffix.toLowerCase()),
+  )
+
+  let scored = 0
+  let likelyAffiliates = 0
+  let newCandidates = 0
+  let tagsExtracted = 0
+  let withContacts = 0
+
+  for (const c of rows) {
+    const channelLinks = linksByChannel.get(c.id) ?? []
+    const knownTags = new Set(
+      channelLinks.map(l => (l.s_tag ?? '').toLowerCase()).filter(Boolean),
+    )
+
+    // 1. Mine affiliate S-tags from the recent video descriptions (resolves
+    //    redirect chains internally), skipping tags we already stored.
+    const descBlob = (c.recent_video_descriptions ?? []).filter(Boolean).join('\n')
+    if (descBlob) {
+      const stags = await extractStagsFromText(descBlob)
+      for (const t of stags) {
+        if (knownTags.has(t.s_tag.toLowerCase())) continue
+        knownTags.add(t.s_tag.toLowerCase())
+        // 2. New vs known — search Monday for this exact tag.
+        const { data: match } = await svc.rpc('search_s_tag_on_monday', { p_tag: t.s_tag })
+        const hit = (Array.isArray(match) ? match[0] : match) as
+          | { kind: string; item_id: string }
+          | null
+          | undefined
+        const isKnown = !!hit?.item_id
+        const { data: inserted } = await svc
+          .from('youtube_channel_links')
+          .insert({
+            youtube_channel_id: c.id,
+            url: t.tracking_url,
+            source: 'video_description',
+            resolved_url: t.final_url,
+            resolved_at: new Date().toISOString(),
+            s_tag: t.s_tag,
+            s_tag_param: t.source_param,
+            brand: t.brand,
+            is_known_on_monday: isKnown,
+            monday_match_kind: hit?.kind ?? null,
+            monday_match_item_id: hit?.item_id ?? null,
+          })
+          .select('id, youtube_channel_id, url, resolved_url, s_tag, is_known_on_monday')
+          .maybeSingle()
+        if (inserted) channelLinks.push(inserted as unknown as LinkRow)
+        tagsExtracted++
+      }
+    }
+
+    // 3. Score on casino language + the affiliate destinations.
+    const scoreLinks: YoutubeScoreLink[] = channelLinks.map(l => ({
+      url: l.url,
+      resolved_url: l.resolved_url,
+    }))
+    const result = scoreYoutubeChannel(
+      { channel_description: c.channel_description, recent_video_descriptions: c.recent_video_descriptions },
+      scoreLinks,
+      denylist,
+    )
+
+    // 4. Outreach contacts from text + the links we resolved (fills only
+    //    what Phase 2's browser scrape missed — never clobber it).
+    const linkUrls = channelLinks.flatMap(l =>
+      [l.resolved_url, l.url].filter((u): u is string => !!u),
+    )
+    if (c.website_url) linkUrls.push(c.website_url)
+    const contacts = extractContacts(
+      [c.channel_description ?? '', ...(c.recent_video_descriptions ?? [])],
+      linkUrls,
+    )
+
+    // 5. A new-lead candidate: a likely affiliate with ≥1 S-tag not on Monday.
+    const hasNewTag = channelLinks.some(l => l.is_known_on_monday === false)
+    const isNewCandidate = result.isLikelyAffiliate && hasNewTag
+
+    const update: Record<string, unknown> = {
+      is_likely_affiliate: result.isLikelyAffiliate,
+      niche_score: result.nicheScore,
+      is_new_lead_candidate: isNewCandidate,
+    }
+    if (!c.email && contacts.email) update.email = contacts.email
+    if (!c.telegram_url && contacts.telegram_url) update.telegram_url = contacts.telegram_url
+    if (!c.discord_url && contacts.discord_url) update.discord_url = contacts.discord_url
+    if (!c.twitter_url && contacts.socials.twitter) update.twitter_url = contacts.socials.twitter
+    if (!c.instagram_url && contacts.socials.instagram) update.instagram_url = contacts.socials.instagram
+    if (!c.tiktok_url && contacts.socials.tiktok) update.tiktok_url = contacts.socials.tiktok
+
+    const { error: upErr } = await svc.from('youtube_channels').update(update).eq('id', c.id)
+    if (upErr) continue
+    scored++
+    if (result.isLikelyAffiliate) likelyAffiliates++
+    if (isNewCandidate) newCandidates++
+    if (update.email || c.email || contacts.telegram_url || contacts.discord_url) withContacts++
+  }
+
+  await logActivity({
+    action: 'enrichment.youtube_score',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { scored, likelyAffiliates, newCandidates, tagsExtracted, withContacts },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: `Scored ${scored} channel${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}${tagsExtracted > 0 ? `, ${tagsExtracted} S-tag${tagsExtracted === 1 ? '' : 's'} extracted` : ''}.`,
   }
 }
 

@@ -20,7 +20,15 @@ import { MobileSkippedRetryBanner } from '../_components/mobile-skipped-retry-ba
 import { EnrichmentStages } from '../_components/enrichment-stages'
 import { KickStreamersPanel } from '../_components/kick-streamers-panel'
 import { KickStreamersTable } from '../_components/kick-streamers-table'
-import { fetchKickStreamerRows, fetchKickStreamerSummary, fetchStageSummary } from '../_lib/queries'
+import { YoutubeChannelsPanel } from '../_components/youtube-channels-panel'
+import { YoutubeChannelsTable } from '../_components/youtube-channels-table'
+import {
+  fetchKickStreamerRows,
+  fetchKickStreamerSummary,
+  fetchStageSummary,
+  fetchYoutubeChannelRows,
+  fetchYoutubeChannelSummary,
+} from '../_lib/queries'
 
 type SearchParams = Record<string, string | string[] | undefined>
 
@@ -153,9 +161,22 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
     job.result_summary?.['mobile_pass_skipped'] === 'captcha'
 
   const isKick = job.search_engine === 'kick'
+  const isYoutube = job.search_engine === 'youtube'
+  // Kick streamers and YouTube channels live in their own tables/panels —
+  // neither produces leads, so the lead filters + table + enrichment stages
+  // don't apply to them.
+  const noLeadsEngine = isKick || isYoutube
 
-  const [{ rows, total }, hiddenCount, stageSummary, captchaSolverEnabled, kickSummary, kickRows] =
-    await Promise.all([
+  const [
+    { rows, total },
+    hiddenCount,
+    stageSummary,
+    captchaSolverEnabled,
+    kickSummary,
+    kickRows,
+    youtubeSummary,
+    youtubeRows,
+  ] = await Promise.all([
       queryLeads({
         page,
         size,
@@ -170,8 +191,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         includeNotRelevant: showHidden,
       }),
       countNotRelevantInJob(svc, id),
-      // Kick jobs have no leads, so the lead-enrichment stages don't apply.
-      isKick ? Promise.resolve(null) : fetchStageSummary(id),
+      // Kick / YouTube jobs have no leads, so the lead-enrichment stages don't apply.
+      noLeadsEngine ? Promise.resolve(null) : fetchStageSummary(id),
       mobileCaptchaAborted
         ? svc
             .rpc('get_system_setting', { p_key: 'captcha_solver_enabled' })
@@ -179,6 +200,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         : Promise.resolve(true),
       isKick ? fetchKickStreamerSummary(id) : Promise.resolve(null),
       isKick ? fetchKickStreamerRows(id) : Promise.resolve(null),
+      isYoutube ? fetchYoutubeChannelSummary(id) : Promise.resolve(null),
+      isYoutube ? fetchYoutubeChannelRows(id) : Promise.resolve(null),
     ])
 
   const toggleHref = (() => {
@@ -286,14 +309,19 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
           {kickSummary && <KickStreamersPanel jobId={job.id} summary={kickSummary} />}
           {kickRows && kickRows.length > 0 && <KickStreamersTable rows={kickRows} />}
         </>
+      ) : isYoutube ? (
+        <>
+          {youtubeSummary && <YoutubeChannelsPanel jobId={job.id} summary={youtubeSummary} />}
+          {youtubeRows && youtubeRows.length > 0 && <YoutubeChannelsTable rows={youtubeRows} />}
+        </>
       ) : (
         stageSummary && <EnrichmentStages jobId={job.id} summary={stageSummary} />
       )}
 
-      {/* Kick jobs have no leads (streamers live in the panel/table above),
-          so the lead filters + table + pagination would just render an
-          empty "No rows" block — hide them for Kick. */}
-      {!isKick && (
+      {/* Kick / YouTube jobs have no leads (streamers/channels live in the
+          panel/table above), so the lead filters + table + pagination would
+          just render an empty "No rows" block — hide them for those engines. */}
+      {!noLeadsEngine && (
         <>
           <div className="pt-2">
             <AdvancedFilters columns={columns} preserve={['show_hidden']} />
@@ -309,9 +337,10 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         enabled={
           job.status === 'pending' ||
           job.status === 'running' ||
-          // Kick Phase-2 enrichment runs as its own scrape_queue job — keep
-          // refreshing while it's queued/running so counts update live.
+          // Kick / YouTube Phase-2 enrichment runs as its own scrape_queue
+          // job — keep refreshing while it's queued/running so counts update live.
           kickSummary?.inflight === true ||
+          youtubeSummary?.inflight === true ||
           (stageSummary != null &&
             (stageSummary.affiliate.inflight_pending + stageSummary.affiliate.inflight_running > 0 ||
               stageSummary.rooster.inflight_pending + stageSummary.rooster.inflight_running > 0 ||

@@ -338,6 +338,153 @@ export async function fetchKickStreamerRows(jobId: string): Promise<KickStreamer
     .map(r => ({ ...r, links: linksByStreamer.get(r.id) ?? [] }))
 }
 
+// ============================================================
+// YouTube channels (Phase 1 discovery + Phase 2/3 enrichment) — mirrors the
+// Kick streamer summary/rows helpers above.
+// ============================================================
+
+export type YoutubeChannelSummary = {
+  discovered: number
+  /** Channels whose About tab has been scraped (Phase 2 ran). */
+  enriched: number
+  /** Channels where the email reveal was reCAPTCHA-gated and unsolved. */
+  captchaBlocked: number
+  pending: number
+  /** Channels with a niche_score (Phase 3 scoring has run). */
+  scored: number
+  likelyAffiliates: number
+  /** Likely affiliates carrying ≥1 S-tag not already on Monday. */
+  newCandidates: number
+  inflight: boolean
+  inflightStatus: 'pending' | 'running' | null
+}
+
+export async function fetchYoutubeChannelSummary(jobId: string): Promise<YoutubeChannelSummary> {
+  const svc = createServiceClient()
+  const [discoveredRes, enrichedRes, captchaRes, scoredRes, affiliateRes, newRes, inflightRes] =
+    await Promise.all([
+      svc.from('youtube_channels').select('id', { count: 'exact', head: true }).eq('scrape_queue_id', jobId),
+      svc
+        .from('youtube_channels')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .not('about_tab_scraped_at', 'is', null),
+      svc
+        .from('youtube_channels')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .eq('about_tab_captcha_blocked', true),
+      svc
+        .from('youtube_channels')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .not('niche_score', 'is', null),
+      svc
+        .from('youtube_channels')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .eq('is_likely_affiliate', true),
+      svc
+        .from('youtube_channels')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .eq('is_new_lead_candidate', true),
+      svc
+        .from('scrape_queue')
+        .select('status')
+        .eq('parent_scrape_job_id', jobId)
+        .in('status', ['pending', 'running']),
+    ])
+
+  const discovered = discoveredRes.count ?? 0
+  const enriched = enrichedRes.count ?? 0
+  const inflightRows = (inflightRes.data ?? []) as Array<{ status: string }>
+  const inflight = inflightRows.length > 0
+  const running = inflightRows.some(r => r.status === 'running')
+  return {
+    discovered,
+    enriched,
+    captchaBlocked: captchaRes.count ?? 0,
+    pending: Math.max(0, discovered - enriched),
+    scored: scoredRes.count ?? 0,
+    likelyAffiliates: affiliateRes.count ?? 0,
+    newCandidates: newRes.count ?? 0,
+    inflight,
+    inflightStatus: inflight ? (running ? 'running' : 'pending') : null,
+  }
+}
+
+export type YoutubeChannelLinkRow = {
+  brand: string | null
+  s_tag: string | null
+  resolved_url: string | null
+  is_known_on_monday: boolean | null
+}
+
+export type YoutubeChannelRow = {
+  id: string
+  channel_url: string
+  channel_name: string | null
+  channel_handle: string | null
+  subscriber_count: number | null
+  email: string | null
+  website_url: string | null
+  twitter_url: string | null
+  instagram_url: string | null
+  tiktok_url: string | null
+  telegram_url: string | null
+  discord_url: string | null
+  is_likely_affiliate: boolean | null
+  niche_score: number | null
+  is_new_lead_candidate: boolean | null
+  about_tab_scraped_at: string | null
+  about_tab_captcha_blocked: boolean | null
+  links: YoutubeChannelLinkRow[]
+}
+
+/** Per-channel rows for the YouTube results table: new candidates first,
+ *  then affiliates, then niche_score desc, then subscribers — with each
+ *  channel's extracted affiliate S-tag links attached. */
+export async function fetchYoutubeChannelRows(jobId: string): Promise<YoutubeChannelRow[]> {
+  const svc = createServiceClient()
+  const { data: channels, error } = await svc
+    .from('youtube_channels')
+    .select(
+      'id, channel_url, channel_name, channel_handle, subscriber_count, email, website_url, ' +
+        'twitter_url, instagram_url, tiktok_url, telegram_url, discord_url, ' +
+        'is_likely_affiliate, niche_score, is_new_lead_candidate, ' +
+        'about_tab_scraped_at, about_tab_captcha_blocked',
+    )
+    .eq('scrape_queue_id', jobId)
+  if (error) throw error
+  const rows = (channels ?? []) as unknown as Omit<YoutubeChannelRow, 'links'>[]
+  if (rows.length === 0) return []
+
+  const { data: links } = await svc
+    .from('youtube_channel_links')
+    .select('youtube_channel_id, brand, s_tag, resolved_url, is_known_on_monday')
+    .in('youtube_channel_id', rows.map(r => r.id))
+  const linksByChannel = new Map<string, YoutubeChannelLinkRow[]>()
+  for (const l of (links ?? []) as unknown as Array<YoutubeChannelLinkRow & { youtube_channel_id: string }>) {
+    const arr = linksByChannel.get(l.youtube_channel_id) ?? []
+    arr.push({ brand: l.brand, s_tag: l.s_tag, resolved_url: l.resolved_url, is_known_on_monday: l.is_known_on_monday })
+    linksByChannel.set(l.youtube_channel_id, arr)
+  }
+
+  return rows
+    .slice()
+    .sort((a, b) => {
+      const nw = Number(b.is_new_lead_candidate ?? false) - Number(a.is_new_lead_candidate ?? false)
+      if (nw !== 0) return nw
+      const aff = Number(b.is_likely_affiliate ?? false) - Number(a.is_likely_affiliate ?? false)
+      if (aff !== 0) return aff
+      const ns = Number(b.niche_score ?? -1) - Number(a.niche_score ?? -1)
+      if (ns !== 0) return ns
+      return (b.subscriber_count ?? 0) - (a.subscriber_count ?? 0)
+    })
+    .map(r => ({ ...r, links: linksByChannel.get(r.id) ?? [] }))
+}
+
 export async function listRecentJobs(limit = 30): Promise<ScrapeJob[]> {
   return queryJobs({ limit, page: 1, size: limit }).then(r => r.rows)
 }

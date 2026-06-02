@@ -9,13 +9,20 @@ stays uniform.
 Flow:
   1. search.list   — keyword → up to maxResults videos (regionCode + relevanceLanguage applied)
   2. channels.list — batch up to 50 distinct channelIds → snippet + statistics
-  3. Supabase      — insert one row per unique channel into public.youtube_channels
-  4. Output JSON   — summary for worker.py (total_results, no per-lead rows)
+  3. videos.list   — batch up to 50 discovered videoIds → FULL descriptions
+                     (search.list's snippet.description is truncated, which
+                     drops most affiliate links; the full description is
+                     what Phase 3 mines for tracking links / S-tags)
+  4. Supabase      — insert one row per unique channel into public.youtube_channels,
+                     stashing the discovered video's full description in
+                     recent_video_descriptions for Phase 3
+  5. Output JSON   — summary for worker.py (total_results, no per-lead rows)
 
 Cost per job (free quota = 10,000 units/day):
   - 1× search.list   = 100 units
   - 1× channels.list = 1 unit (batches up to 50 ids per call)
-  → ~99 jobs/day before quota cap.
+  - 1× videos.list   = 1 unit (batches up to 50 ids per call)
+  → ~98 jobs/day before quota cap.
 
 Errors:
   - 400 invalid key, 403 quotaExceeded, 5xx transient — all exit non-zero
@@ -130,6 +137,41 @@ def fetch_channel_details(
     return out
 
 
+def fetch_video_descriptions(
+    video_ids: list[str], api_key: str
+) -> dict[str, str]:
+    """videos.list — bulk full descriptions for up to 50 ids at a time.
+    Always 1 unit per call regardless of batch size.
+
+    search.list only returns a truncated snippet.description; the full text
+    (where affiliate links / S-tags live) requires this follow-up call.
+    Best-effort: a failure leaves recent_video_descriptions empty rather
+    than failing the whole job — Phase 3 just has less to mine.
+    """
+    out: dict[str, str] = {}
+    ids = [v for v in video_ids if v]
+    for i in range(0, len(ids), 50):
+        batch = ids[i : i + 50]
+        params = {
+            "part": "snippet",
+            "id": ",".join(batch),
+            "key": api_key,
+        }
+        r = requests.get(f"{YOUTUBE_API_BASE}/videos", params=params, timeout=30)
+        if r.status_code != 200:
+            print(
+                f"[WARN] videos.list HTTP {r.status_code}: {r.text[:300]}",
+                file=sys.stderr,
+            )
+            return out
+        for item in (r.json() or {}).get("items") or []:
+            vid = item.get("id")
+            desc = (item.get("snippet") or {}).get("description")
+            if vid and desc:
+                out[vid] = desc
+    return out
+
+
 def _to_int(v: Any) -> int | None:
     """YouTube returns counts as strings — convert to int, or None when
     hiddenSubscriberCount is true (subscriberCount field missing)."""
@@ -148,14 +190,22 @@ def write_channels_to_db(
     keyword: str,
     channels: "OrderedDict[str, dict[str, Any]]",
     details: dict[str, dict[str, Any]],
+    descriptions: dict[str, str],
 ) -> int:
-    """Insert one row per unique channel. Returns rows-inserted count."""
+    """Insert one row per unique channel. Returns rows-inserted count.
+
+    `descriptions` maps discovered videoId → full description; the
+    discovered video's description is stashed in recent_video_descriptions
+    so Phase 3 can mine its affiliate links without another API call.
+    """
     if not channels:
         return 0
     sb = create_client(sb_url, sb_key)
     rows: list[dict[str, Any]] = []
     for channel_id, search_meta in channels.items():
         d = details.get(channel_id) or {}
+        video_id = search_meta.get("discovered_video_id")
+        full_desc = descriptions.get(video_id) if video_id else None
         rows.append({
             "scrape_queue_id": job_id,
             "channel_id": channel_id,
@@ -172,6 +222,9 @@ def write_channels_to_db(
             "country": d.get("country"),
             "published_at": d.get("published_at"),
             "thumbnail_url": d.get("thumbnail_url"),
+            # Single-element array: the discovered video's full description.
+            # Nullable column — leave unset when videos.list missed it.
+            "recent_video_descriptions": [full_desc] if full_desc else None,
         })
     sb.table("youtube_channels").insert(rows).execute()
     return len(rows)
@@ -239,9 +292,23 @@ def main() -> None:
         print(f"[WARN] channels.list crashed: {exc} — proceeding without enriched details", file=sys.stderr)
         details = {}
 
+    # Full descriptions for the discovered videos (Phase 3 mines these for
+    # affiliate links / S-tags). Best-effort — a failure just leaves
+    # recent_video_descriptions empty.
+    video_ids = [
+        m.get("discovered_video_id")
+        for m in channels.values()
+        if m.get("discovered_video_id")
+    ]
+    try:
+        descriptions = fetch_video_descriptions(video_ids, api_key)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] videos.list crashed: {exc} — proceeding without full descriptions", file=sys.stderr)
+        descriptions = {}
+
     try:
         inserted = write_channels_to_db(
-            sb_url, sb_key, args.job_id, args.keyword, channels, details,
+            sb_url, sb_key, args.job_id, args.keyword, channels, details, descriptions,
         )
     except Exception as exc:
         print(f"[ERROR] Supabase insert into youtube_channels failed: {exc}", file=sys.stderr)

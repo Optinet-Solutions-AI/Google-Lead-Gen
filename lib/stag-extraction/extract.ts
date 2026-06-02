@@ -166,19 +166,41 @@ export async function resolveFinalUrl(trackingUrl: string): Promise<string | nul
   }
 }
 
-/**
- * Given an affiliate page's HTML + base URL, extract every s-tag we
- * can resolve. Resolves redirects in parallel with a concurrency cap.
- */
-export async function extractStagsFromHtml(
-  html: string,
-  baseUrl: string,
-  opts: { concurrency?: number; maxLinks?: number } = {},
-): Promise<ExtractedStag[]> {
-  const links = findTrackingLinks(html, baseUrl).slice(0, opts.maxLinks ?? 30)
-  if (links.length === 0) return []
+// Plain-text URL run — stops at whitespace and common trailing delimiters.
+// Used for sources that aren't HTML (e.g. a YouTube video description),
+// where links are bare URLs rather than href= anchors.
+const PLAIN_URL_RE = /https?:\/\/[^\s)>\]"'}]+/gi
 
-  const concurrency = opts.concurrency ?? 5
+/** Pull recognized tracking links out of plain text. Mirrors
+ *  findTrackingLinks's filter (tracking path/query patterns + excluded-host
+ *  skip + per-call cap) but reads bare URLs instead of href attributes. */
+export function findTrackingLinksInText(text: string, maxLinks = 50): string[] {
+  if (!text) return []
+  const out = new Set<string>()
+  for (const m of text.matchAll(PLAIN_URL_RE)) {
+    const link = m[0].replace(/[).,;!?'"]+$/, '') // trim prose punctuation
+    if (!TRACKING_PATH_RE.test(link) && !TRACKING_QUERY_RE.test(link)) continue
+    let host: string
+    try {
+      host = new URL(link).hostname.toLowerCase().replace(/^www\./, '')
+    } catch {
+      continue
+    }
+    if (isExcludedHost(host)) continue
+    out.add(link)
+    if (out.size >= maxLinks) break
+  }
+  return Array.from(out)
+}
+
+/** Follow each tracking link's redirect chain (parallel, concurrency-capped),
+ *  parse the final URL for an s-tag, and dedupe by tag. Shared by the HTML
+ *  and plain-text entry points. */
+async function resolveLinksToStags(
+  links: string[],
+  concurrency: number,
+): Promise<ExtractedStag[]> {
+  if (links.length === 0) return []
   const results: (ExtractedStag | null)[] = new Array(links.length).fill(null)
 
   let cursor = 0
@@ -212,4 +234,30 @@ export async function extractStagsFromHtml(
     out.push(r)
   }
   return out
+}
+
+/**
+ * Given an affiliate page's HTML + base URL, extract every s-tag we
+ * can resolve. Resolves redirects in parallel with a concurrency cap.
+ */
+export async function extractStagsFromHtml(
+  html: string,
+  baseUrl: string,
+  opts: { concurrency?: number; maxLinks?: number } = {},
+): Promise<ExtractedStag[]> {
+  const links = findTrackingLinks(html, baseUrl).slice(0, opts.maxLinks ?? 30)
+  return resolveLinksToStags(links, opts.concurrency ?? 5)
+}
+
+/**
+ * Like extractStagsFromHtml but for plain text — e.g. a YouTube video
+ * description, where affiliate links appear as bare URLs. Same resolve +
+ * s-tag-parse + dedupe pipeline.
+ */
+export async function extractStagsFromText(
+  text: string,
+  opts: { concurrency?: number; maxLinks?: number } = {},
+): Promise<ExtractedStag[]> {
+  const links = findTrackingLinksInText(text, opts.maxLinks ?? 30)
+  return resolveLinksToStags(links, opts.concurrency ?? 5)
 }
