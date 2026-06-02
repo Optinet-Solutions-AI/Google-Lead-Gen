@@ -34,9 +34,9 @@ export function YoutubeChannelsTable({ rows }: { rows: YoutubeChannelRow[] }) {
             <th className="px-3 py-2 font-medium">Socials</th>
             <th
               className="cursor-help px-3 py-2 font-medium"
-              title="Affiliate S-tags mined from the channel's recent video descriptions, checked against the company database. NEW = not found on Monday."
+              title="Casino operators / affiliate links this channel promotes (from its video descriptions + landing page), checked against the company database. NEW = operator not found on Monday. (The classic stag/btag value sits behind a redirector — that's the 'stag later' follow-up.)"
             >
-              Affiliate S-tags
+              Affiliate links
             </th>
           </tr>
         </thead>
@@ -219,6 +219,11 @@ function ContactChip({
   )
 }
 
+/** twitter.com is now x.com — rewrite the host so links and tooltips show the current domain. */
+function normalizeTwitterUrl(href: string): string {
+  return href.replace(/^(https?:\/\/(?:www\.)?)twitter\.com(?=[/?#]|$)/i, '$1x.com')
+}
+
 function SocialChip({
   href,
   short,
@@ -229,12 +234,13 @@ function SocialChip({
   label: string
 }) {
   if (!href) return null
+  const url = normalizeTwitterUrl(href)
   return (
     <a
-      href={href}
+      href={url}
       target="_blank"
       rel="noreferrer"
-      title={`${label} — ${href}`}
+      title={`${label} — ${url}`}
       aria-label={label}
       className="inline-flex items-center gap-0.5 rounded bg-[color:var(--color-bg-primary)] px-1.5 py-0.5 text-[10px] font-semibold text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
     >
