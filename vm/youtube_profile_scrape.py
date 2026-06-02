@@ -304,27 +304,76 @@ def _read_revealed_email(driver) -> str | None:
     return None
 
 
-def _dismiss_consent(driver) -> None:
-    """Some regions land on a Google consent interstitial first. Best-effort
-    accept so we reach the channel page."""
-    from selenium.webdriver.common.by import By
+# Multilingual "Accept all" labels for the consent wall (the logged-in
+# profiles are GB/DE/NO, so EN/DE/NO must all work; a few extras are cheap).
+_CONSENT_ACCEPT_TEXTS = [
+    "accept all", "accept the all", "i agree", "agree to all", "agree",
+    "alle akzeptieren", "akzeptieren",          # DE
+    "godta alle", "godta",                       # NO
+    "tout accepter", "aceptar todo", "accetta tutto",
+]
+
+
+def _on_consent_wall(driver) -> bool:
     try:
-        host = urlparse(driver.current_url).hostname or ""
+        url = driver.current_url or ""
     except Exception:  # noqa: BLE001
-        host = ""
-    if "consent." not in host:
-        return
+        url = ""
+    if "consent.youtube.com" in url or "consent.google.com" in url:
+        return True
     try:
-        btns = driver.find_elements(
-            By.XPATH,
-            "//button[contains(translate(., 'ACEPT', 'acept'), 'accept') or "
-            "contains(., 'I agree') or contains(., 'Accept all')]",
-        )
-        if btns:
-            driver.execute_script("arguments[0].click();", btns[0])
-            time.sleep(2)
+        return "youtube" in (driver.title or "").lower() and "consent" in url.lower()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _dismiss_consent(driver, channel_id: str | None = None) -> None:
+    """Clear Google's EU/UK consent interstitial ("Before you continue to
+    YouTube"). The logged-in profiles are all EU/UK, so this fires on every
+    enrichment run. Language-independent: click the accept-all button by its
+    stable jsname, with a multilingual text fallback, then wait for the
+    redirect back to the continue= URL."""
+    from selenium.webdriver.common.by import By
+    if not _on_consent_wall(driver):
+        return
+
+    clicked = False
+    # 1. Stable jsname for the consent "Accept all" button (works regardless
+    #    of UI language). Reject-all is tWT92d; accept-all is b3VHJd.
+    try:
+        els = driver.find_elements(By.CSS_SELECTOR, 'button[jsname="b3VHJd"], [jsname="b3VHJd"]')
+        if els:
+            driver.execute_script("arguments[0].click();", els[0])
+            clicked = True
     except Exception:  # noqa: BLE001
         pass
+
+    # 2. Text fallback (multilingual) if the jsname changed.
+    if not clicked:
+        try:
+            for b in driver.find_elements(By.XPATH, "//button | //*[@role='button']"):
+                try:
+                    label = ((b.text or "") + " " + (b.get_attribute("aria-label") or "")).strip().lower()
+                except Exception:  # noqa: BLE001
+                    continue
+                if any(t in label for t in _CONSENT_ACCEPT_TEXTS):
+                    driver.execute_script("arguments[0].click();", b)
+                    clicked = True
+                    break
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not clicked:
+        print("[WARN] consent wall present but no accept button matched", file=sys.stderr)
+        return
+
+    # Wait for the post-accept redirect off consent.youtube.com.
+    deadline = time.time() + 12
+    while time.time() < deadline:
+        time.sleep(1.5)
+        if not _on_consent_wall(driver):
+            return
+    print("[WARN] clicked consent accept but still on the consent wall", file=sys.stderr)
 
 
 def extract_from_page(driver, scraper_mod, *, interactive: bool, job_id: str | None,
@@ -364,7 +413,8 @@ def enrich_one(driver, scraper_mod, channel_id: str, *, interactive: bool,
         return {"ok": False, "fields": {}}
 
     time.sleep(2)
-    _dismiss_consent(driver)
+    _dismiss_consent(driver, channel_id)
+    time.sleep(2)  # let the About page render after the consent redirect
 
     try:
         html = driver.page_source or ""
@@ -517,7 +567,8 @@ def run(args, scraper_mod) -> int:
                     worker_id=args.worker_id, worker_port=args.port,
                 )
                 if args.mode == "probe":
-                    _dump_probe(driver, channel_id)
+                    _dump_probe(driver, scraper_mod, channel_id, interactive=args.interactive,
+                                job_id=args.job_id, worker_port=args.port)
                     if result["ok"]:
                         break
                     if attempt < YT_MAX_TRIES:
@@ -577,10 +628,17 @@ def _teardown(driver, gl) -> None:
         pass
 
 
-def _dump_probe(driver, channel_id: str) -> None:
+def _dump_probe(driver, scraper_mod, channel_id: str, *, interactive: bool,
+                job_id: str | None, worker_port: int) -> None:
     """Spike helper: print what the extraction found + raw signal so a future
-    probe can confirm the parser still matches YouTube's markup."""
+    probe can confirm the parser still matches YouTube's markup. Also exercises
+    the email reveal so we can see whether the reCAPTCHA gate clears."""
     print(f"\n===== PROBE {channel_id} =====")
+    try:
+        print(f"current_url = {driver.current_url}")
+        print(f"title       = {driver.title!r}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"(url/title unavailable: {exc})")
     try:
         html = driver.page_source or ""
     except Exception as exc:  # noqa: BLE001
@@ -593,6 +651,15 @@ def _dump_probe(driver, channel_id: str) -> None:
         print(f"  {u}  ->  {_unwrap_redirect(u)}")
     print("----- classified contact fields -----")
     print(json.dumps(classify_links(urls), indent=2, default=str))
+    print("----- email reveal attempt -----")
+    try:
+        email, blocked = _attempt_email_reveal(
+            driver, scraper_mod, interactive=interactive, job_id=job_id,
+            worker_id=None, worker_port=worker_port,
+        )
+        print(f"email={email!r}  captcha_blocked={blocked}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"(email reveal crashed: {exc})")
     print(f"===== END PROBE {channel_id} =====\n")
 
 
