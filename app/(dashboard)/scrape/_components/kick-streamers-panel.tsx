@@ -41,6 +41,15 @@ export function KickStreamersPanel({
   const enrichDisabled = enrichPending || inflight || nothingToEnrich || noStreamers
   const scoreDisabled = scorePending || noStreamers
 
+  // Big jobs enrich in time-budgeted batches, so streamers can remain
+  // pending after a run — surface that the operator should re-run.
+  const enrichedSome = summary.enriched > 0
+  const moreToEnrich = summary.pending > 0 && enrichedSome
+  // Streamers that have never been scored (or were scored before more got
+  // enriched) — nudge the operator to (re-)run scoring.
+  const unscored = Math.max(0, summary.discovered - summary.scored)
+  const scoreNeeded = !noStreamers && !inflight && (unscored > 0 || (enrichedSome && summary.scored === 0))
+
   const messages = [
     enrichState?.status === 'ok' ? enrichState.message : null,
     scoreState?.status === 'ok' ? scoreState.message : null,
@@ -110,7 +119,8 @@ export function KickStreamersPanel({
                 </>
               ) : (
                 <>
-                  <Play className={['h-3 w-3', enrichPending ? 'animate-pulse' : ''].join(' ')} /> Enrich profiles
+                  <Play className={['h-3 w-3', enrichPending ? 'animate-pulse' : ''].join(' ')} />
+                  {moreToEnrich ? `Enrich ${summary.pending} more` : 'Enrich profiles'}
                 </>
               )}
             </button>
@@ -125,9 +135,16 @@ export function KickStreamersPanel({
               title={
                 noStreamers
                   ? 'No streamers to score yet'
-                  : 'Score streamers for affiliate likelihood and resolve shortener links'
+                  : scoreNeeded
+                    ? `${unscored > 0 ? `${unscored} streamer${unscored === 1 ? '' : 's'} not yet scored` : 'Newly enriched streamers'} — run scoring to flag affiliates + mine contacts`
+                    : 'Re-score to refresh affiliate flags, contacts, and resolved links'
               }
-              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 text-[12px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
+              className={[
+                'inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium disabled:cursor-not-allowed disabled:opacity-40',
+                scoreNeeded
+                  ? 'border-blue-300 bg-blue-50 text-blue-800 hover:bg-blue-100'
+                  : 'border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)]',
+              ].join(' ')}
             >
               {scorePending ? (
                 <>
@@ -146,7 +163,15 @@ export function KickStreamersPanel({
       <p className="mt-1.5 text-[11px] leading-snug text-[color:var(--color-text-secondary)]">
         <strong className="font-medium">Enrich</strong> opens the top streamers in a real browser to backfill socials,
         follower count, and casino promo / pinned-chat links. <strong className="font-medium">Score &amp; resolve</strong>{' '}
-        then flags likely affiliates (niche score) and expands shortener links. Both are re-runnable.
+        then flags likely affiliates (niche score), mines contacts, and expands shortener links. Both are re-runnable.
+        {moreToEnrich && (
+          <>
+            {' '}
+            <span className="font-medium text-amber-700">
+              Large jobs enrich in batches — {summary.pending} still pending, click Enrich again to continue.
+            </span>
+          </>
+        )}
       </p>
 
       {(messages.length > 0 || errors.length > 0) && (
