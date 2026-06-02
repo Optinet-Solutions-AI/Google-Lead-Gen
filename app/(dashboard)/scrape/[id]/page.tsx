@@ -290,13 +290,20 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         stageSummary && <EnrichmentStages jobId={job.id} summary={stageSummary} />
       )}
 
-      <div className="pt-2">
-        <AdvancedFilters columns={columns} preserve={['show_hidden']} />
-      </div>
+      {/* Kick jobs have no leads (streamers live in the panel/table above),
+          so the lead filters + table + pagination would just render an
+          empty "No rows" block — hide them for Kick. */}
+      {!isKick && (
+        <>
+          <div className="pt-2">
+            <AdvancedFilters columns={columns} preserve={['show_hidden']} />
+          </div>
 
-      <LeadsTable rows={rows} jobContext pageInfo={{ page, size, total }} />
+          <LeadsTable rows={rows} jobContext pageInfo={{ page, size, total }} />
 
-      <Pagination page={page} size={size} total={total} pageSizeOptions={LEAD_PAGE_SIZES} />
+          <Pagination page={page} size={size} total={total} pageSizeOptions={LEAD_PAGE_SIZES} />
+        </>
+      )}
 
       <AutoRefresh
         enabled={

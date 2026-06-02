@@ -45,7 +45,10 @@ const TELEGRAM_TEXT_RE = /(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.(?:me|dog
 const DISCORD_TEXT_RE = /(?:https?:\/\/)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com\/invite)\/[a-z0-9-]+/i
 
 function ensureScheme(u: string): string {
-  return /^https?:\/\//i.test(u) ? u : `https://${u}`
+  const withScheme = /^https?:\/\//i.test(u) ? u : `https://${u}`
+  // Collapse accidental double slashes in the path (e.g. a streamer who
+  // typed "t.me//handle") without touching the scheme's "://".
+  return withScheme.replace(/(?<!:)\/{2,}/g, '/')
 }
 
 /** Trim trailing punctuation a URL run commonly swallows from prose. */

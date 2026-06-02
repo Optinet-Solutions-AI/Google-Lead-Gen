@@ -411,6 +411,11 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
       ].join(', '),
       { count: 'exact' },
     )
+  // Hide Kick Phase-2 enrichment jobs — they're operator-triggered children
+  // of a discovery job (parent_scrape_job_id set), carry no streamers of
+  // their own, and would otherwise clutter the list as "No streamers
+  // discovered" rows. The parent discovery job stays in the list.
+  query = query.is('parent_scrape_job_id', null)
   query = applyShadowFilter(query, shadowCtx) as typeof query
 
   // Free-text search across a small set of columns.
