@@ -1153,6 +1153,7 @@ export async function runYoutubeChannelAnalysis(
     id: string
     channel_url: string
     channel_name: string | null
+    channel_handle: string | null
     channel_description: string | null
     recent_video_descriptions: string[] | null
     website_url: string | null
@@ -1166,7 +1167,7 @@ export async function runYoutubeChannelAnalysis(
   const { data: channels, error: cErr } = await svc
     .from('youtube_channels')
     .select(
-      'id, channel_url, channel_name, channel_description, recent_video_descriptions, website_url, email, ' +
+      'id, channel_url, channel_name, channel_handle, channel_description, recent_video_descriptions, website_url, email, ' +
         'twitter_url, instagram_url, tiktok_url, telegram_url, discord_url',
     )
     .eq('scrape_queue_id', jobId)
@@ -1176,7 +1177,6 @@ export async function runYoutubeChannelAnalysis(
     return { status: 'ok', message: 'No channels to score yet — run the YouTube scrape first.' }
   }
 
-  // Existing links so re-runs don't duplicate rows or re-resolve known tags.
   type LinkRow = {
     id: string
     youtube_channel_id: string
@@ -1185,16 +1185,11 @@ export async function runYoutubeChannelAnalysis(
     s_tag: string | null
     is_known_on_monday: boolean | null
   }
-  const { data: existingLinks } = await svc
-    .from('youtube_channel_links')
-    .select('id, youtube_channel_id, url, resolved_url, s_tag, is_known_on_monday')
-    .in('youtube_channel_id', rows.map(r => r.id))
+  // Clean slate: drop this job's previously-mined links so a re-run re-derives
+  // them deterministically (the resolved set + Monday verdicts can change, and
+  // stale rows from an earlier run would otherwise linger un-rechecked).
+  await svc.from('youtube_channel_links').delete().in('youtube_channel_id', rows.map(r => r.id))
   const linksByChannel = new Map<string, LinkRow[]>()
-  for (const l of (existingLinks ?? []) as unknown as LinkRow[]) {
-    const arr = linksByChannel.get(l.youtube_channel_id) ?? []
-    arr.push(l)
-    linksByChannel.set(l.youtube_channel_id, arr)
-  }
 
   // Casino-operator domain set (host suffixes) for affiliate-link scoring.
   const { data: denyRows } = await svc.from('operator_domains_denylist').select('host_suffix')
@@ -1275,7 +1270,7 @@ export async function runYoutubeChannelAnalysis(
     seen: Set<string>
     nicheScore: number
     likely: boolean
-    hasNewTag: boolean
+    alreadyNew: boolean
     twoHopUrl: string | null
   }
   const pendings: Pending[] = []
@@ -1329,10 +1324,25 @@ export async function runYoutubeChannelAnalysis(
       linkUrls,
     )
 
+    // New-lead check, per the SOP: compare the affiliate ID OR the channel
+    // USERNAME against Monday. A channel can be a new lead even when it
+    // promotes a known operator — what matters is whether THIS channel has
+    // been captured before. Key on the handle (unique; channel names are too
+    // generic to ilike-match safely). Only worth checking for likely
+    // affiliates (non-affiliate channels aren't leads).
+    let channelIsNew = false
+    if (result.isLikelyAffiliate) {
+      const handle = (c.channel_handle ?? '').replace(/^@/, '').trim()
+      if (handle.length >= 3) {
+        const known = await checkMonday(handle)
+        channelIsNew = !known
+      }
+    }
+
     const update: Record<string, unknown> = {
       is_likely_affiliate: result.isLikelyAffiliate,
       niche_score: result.nicheScore,
-      is_new_lead_candidate: result.isLikelyAffiliate && hasNewTag,
+      is_new_lead_candidate: result.isLikelyAffiliate && (hasNewTag || channelIsNew),
     }
     if (!c.email && contacts.email) update.email = contacts.email
     if (!c.telegram_url && contacts.telegram_url) update.telegram_url = contacts.telegram_url
@@ -1345,7 +1355,7 @@ export async function runYoutubeChannelAnalysis(
     if (upErr) continue
     scored++
     if (result.isLikelyAffiliate) likelyAffiliates++
-    if (result.isLikelyAffiliate && hasNewTag) newCandidates++
+    if (result.isLikelyAffiliate && (hasNewTag || channelIsNew)) newCandidates++
     if (update.email || c.email || contacts.telegram_url || contacts.discord_url) withContacts++
 
     // A likely affiliate whose casino link is a landing/review PAGE with no
@@ -1354,7 +1364,8 @@ export async function runYoutubeChannelAnalysis(
     pendings.push({
       c, links: channelLinks, seen,
       nicheScore: result.nicheScore, likely: result.isLikelyAffiliate,
-      hasNewTag, twoHopUrl: twoHop?.final_url ?? null,
+      alreadyNew: result.isLikelyAffiliate && (hasNewTag || channelIsNew),
+      twoHopUrl: twoHop?.final_url ?? null,
     })
   }
 
@@ -1382,9 +1393,10 @@ export async function runYoutubeChannelAnalysis(
       if (flaggedNew) foundNew = true
     }
     // A two-hop run can turn a likely affiliate into a confirmed new-lead
-    // candidate (found a not-known S-tag it didn't have before).
-    if (foundNew && !p.hasNewTag) {
+    // candidate (found a not-known operator it didn't have before).
+    if (foundNew && !p.alreadyNew) {
       await svc.from('youtube_channels').update({ is_new_lead_candidate: true }).eq('id', p.c.id)
+      p.alreadyNew = true
       newCandidates++
     }
   }
