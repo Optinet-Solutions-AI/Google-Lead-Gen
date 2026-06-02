@@ -11,10 +11,10 @@ export function KickStreamersTable({ rows }: { rows: KickStreamerRow[] }) {
   if (rows.length === 0) return null
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-[color:var(--color-border)]">
+    <div className="max-h-[70vh] overflow-auto rounded-lg border border-[color:var(--color-border)]">
       <table className="w-full border-collapse text-[12px]">
-        <thead>
-          <tr className="border-b border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] text-left text-[11px] text-[color:var(--color-text-secondary)]">
+        <thead className="sticky top-0 z-10 bg-[color:var(--color-bg-secondary)]">
+          <tr className="border-b border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] text-left text-[11px] text-[color:var(--color-text-secondary)] [&>th]:border-b [&>th]:border-[color:var(--color-border)]">
             <th className="px-3 py-2 font-medium">Streamer</th>
             <th
               className="cursor-help px-3 py-2 font-medium"
