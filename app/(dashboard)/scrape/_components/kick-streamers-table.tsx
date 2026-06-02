@@ -10,11 +10,14 @@ import type { KickStreamerRow } from '../_lib/queries'
 export function KickStreamersTable({ rows }: { rows: KickStreamerRow[] }) {
   if (rows.length === 0) return null
 
+  // No inner overflow wrapper: per-cell sticky <th> pins the header to the
+  // viewport as the PAGE scrolls — matches the jobs table (jobs-table.tsx).
+  // An overflow wrapper would trap the sticky cells inside it.
   return (
-    <div className="max-h-[70vh] overflow-auto rounded-lg border border-[color:var(--color-border)]">
+    <div className="rounded-lg border border-[color:var(--color-border)]">
       <table className="w-full border-collapse text-[12px]">
-        <thead className="sticky top-0 z-10 bg-[color:var(--color-bg-secondary)]">
-          <tr className="border-b border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] text-left text-[11px] text-[color:var(--color-text-secondary)] [&>th]:border-b [&>th]:border-[color:var(--color-border)]">
+        <thead className="bg-[color:var(--color-bg-secondary)]">
+          <tr className="text-left text-[11px] text-[color:var(--color-text-secondary)] [&>th]:sticky [&>th]:top-0 [&>th]:z-20 [&>th]:border-b [&>th]:border-[color:var(--color-border)] [&>th]:bg-[color:var(--color-bg-secondary)]">
             <th className="px-3 py-2 font-medium">Streamer</th>
             <th
               className="cursor-help px-3 py-2 font-medium"
