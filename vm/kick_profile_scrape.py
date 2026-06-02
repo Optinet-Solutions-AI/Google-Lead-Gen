@@ -265,6 +265,10 @@ def enrich_one(driver, scraper_mod, slug: str, *, interactive: bool,
     # The casino-link cards lazy-render below the video and can take 10-15s;
     # scroll + wait for them so we don't miss a real affiliate's links.
     _wait_for_profile(driver)
+    # Chat connects over a websocket after the page, and the pinned message
+    # (often the casino link for streamers without promo cards) renders a
+    # beat later — give it a moment so we don't miss it.
+    _settle_chat(driver)
 
     fields, links = extract_from_page(driver)
     if "follower_count" not in fields:
@@ -300,6 +304,25 @@ def _wait_for_profile(driver, timeout_s: int = 16) -> None:
             html = ""
         if "channel-links" in html:
             return
+        time.sleep(1.5)
+
+
+def _settle_chat(driver, timeout_s: int = 7) -> None:
+    """Give the chat websocket time to render the pinned message (it arrives
+    after the page loads). Returns as soon as a pinned-message element with
+    text appears; a streamer with no pinned message just waits the timeout."""
+    from selenium.webdriver.common.by import By
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            els = driver.find_elements(
+                By.CSS_SELECTOR,
+                '[class*="pinned" i],[data-testid*="pinned" i],[data-test*="pinned" i]',
+            )
+            if any((e.text or "").strip() for e in els):
+                return
+        except Exception:  # noqa: BLE001
+            pass
         time.sleep(1.5)
 
 
