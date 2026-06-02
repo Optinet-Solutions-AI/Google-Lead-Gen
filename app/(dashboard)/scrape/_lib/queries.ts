@@ -286,6 +286,9 @@ export type KickStreamerRow = {
   facebook_handle: string | null
   youtube_handle: string | null
   tiktok_handle: string | null
+  contact_email: string | null
+  telegram_url: string | null
+  discord_url: string | null
   is_likely_affiliate: boolean | null
   niche_score: number | null
   about_scraped_at: string | null
@@ -302,6 +305,7 @@ export async function fetchKickStreamerRows(jobId: string): Promise<KickStreamer
     .select(
       'id, slug, channel_url, follower_count, is_live, category_name, stream_viewer_count, ' +
         'instagram_handle, twitter_handle, facebook_handle, youtube_handle, tiktok_handle, ' +
+        'contact_email, telegram_url, discord_url, ' +
         'is_likely_affiliate, niche_score, about_scraped_at',
     )
     .eq('scrape_queue_id', jobId)

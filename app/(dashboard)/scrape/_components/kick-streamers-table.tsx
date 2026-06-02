@@ -1,4 +1,5 @@
-import { CheckCircle2, ExternalLink, Pin } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { CheckCircle2, ExternalLink, Mail, MessageCircle, Pin, Send } from 'lucide-react'
 import type { KickStreamerRow } from '../_lib/queries'
 
 /**
@@ -24,6 +25,12 @@ export function KickStreamersTable({ rows }: { rows: KickStreamerRow[] }) {
               title="Affiliate likelihood + niche score (0–100). “affiliate” = scored ≥30 (likely a casino affiliate); “no” = below 30. Hover a badge for the breakdown."
             >
               Affiliate
+            </th>
+            <th
+              className="cursor-help px-3 py-2 font-medium"
+              title="Outreach contacts mined from the bio, pinned chat, and promo cards — priority order email › Telegram › Discord. Run “Score & resolve” to populate."
+            >
+              Contact
             </th>
             <th className="px-3 py-2 font-medium text-right">Followers</th>
             <th className="px-3 py-2 font-medium">Socials</th>
@@ -87,6 +94,10 @@ function KickStreamerRowView({ r }: { r: KickStreamerRow }) {
         )}
       </td>
 
+      <td className="px-3 py-2">
+        <ContactCell r={r} />
+      </td>
+
       <td className="px-3 py-2 text-right tabular-nums text-[color:var(--color-text-primary)]">
         {r.follower_count == null ? '—' : r.follower_count.toLocaleString()}
       </td>
@@ -126,6 +137,76 @@ function KickStreamerRowView({ r }: { r: KickStreamerRow }) {
         </div>
       </td>
     </tr>
+  )
+}
+
+/**
+ * Outreach contacts, in the playbook's priority order: email › Telegram ›
+ * Discord. Email is a mailto: link; the others open in a new tab. Socials
+ * stay in their own column — these three are the high-value channels.
+ */
+function ContactCell({ r }: { r: KickStreamerRow }) {
+  const hasAny = r.contact_email || r.telegram_url || r.discord_url
+  if (!hasAny) return <span className="text-[11px] text-[color:var(--color-text-secondary)]">—</span>
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {r.contact_email && (
+        <ContactChip
+          href={`mailto:${r.contact_email}`}
+          label={r.contact_email}
+          icon={<Mail className="h-2.5 w-2.5 shrink-0" />}
+          className="bg-emerald-100 text-emerald-800 hover:bg-emerald-200"
+        />
+      )}
+      {r.telegram_url && (
+        <ContactChip
+          href={r.telegram_url}
+          label="Telegram"
+          external
+          icon={<Send className="h-2.5 w-2.5 shrink-0" />}
+          className="bg-sky-100 text-sky-800 hover:bg-sky-200"
+        />
+      )}
+      {r.discord_url && (
+        <ContactChip
+          href={r.discord_url}
+          label="Discord"
+          external
+          icon={<MessageCircle className="h-2.5 w-2.5 shrink-0" />}
+          className="bg-indigo-100 text-indigo-800 hover:bg-indigo-200"
+        />
+      )}
+    </div>
+  )
+}
+
+function ContactChip({
+  href,
+  label,
+  icon,
+  className,
+  external,
+}: {
+  href: string
+  label: string
+  icon: ReactNode
+  className: string
+  external?: boolean
+}) {
+  return (
+    <a
+      href={href}
+      {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
+      title={external ? href : label}
+      className={[
+        'inline-flex max-w-[200px] items-center gap-1 truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium',
+        className,
+      ].join(' ')}
+    >
+      {icon}
+      <span className="truncate">{label}</span>
+    </a>
   )
 }
 

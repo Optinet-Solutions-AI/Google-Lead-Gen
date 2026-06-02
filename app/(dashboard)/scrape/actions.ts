@@ -5,6 +5,7 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { scoreKickStreamer, type KickScoreLink } from '@/lib/affiliate-detection/kick-scorer'
+import { extractContacts } from '@/lib/affiliate-detection/kick-contacts'
 import { needsResolution, resolveShorteners } from '@/lib/affiliate-detection/resolve-links'
 import { logActivity } from '@/lib/activity-log'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
@@ -863,13 +864,16 @@ export async function runKickStreamerAnalysis(
   // Streamers for this job + all their links.
   const { data: streamers, error: sErr } = await svc
     .from('kick_streamers')
-    .select('id, channel_description, stream_title, custom_tags, category_name')
+    .select(
+      'id, channel_description, stream_title, custom_tags, category_name, ' +
+        'instagram_handle, twitter_handle, facebook_handle, youtube_handle, tiktok_handle',
+    )
     .eq('scrape_queue_id', jobId)
   if (sErr) return { status: 'error', error: safeError(sErr, 'Failed to load streamers.') }
   if (!streamers || streamers.length === 0) {
     return { status: 'ok', message: 'No streamers to score yet — run the Kick scrape first.' }
   }
-  const streamerIds = (streamers as Array<{ id: string }>).map(s => s.id)
+  const streamerIds = (streamers as unknown as Array<{ id: string }>).map(s => s.id)
 
   const { data: links, error: lErr } = await svc
     .from('kick_links')
@@ -916,34 +920,66 @@ export async function runKickStreamerAnalysis(
 
   let scored = 0
   let likelyAffiliates = 0
-  for (const s of streamers as Array<{
+  let withContacts = 0
+  for (const s of streamers as unknown as Array<{
     id: string
     channel_description: string | null
     stream_title: string | null
     custom_tags: string[] | null
     category_name: string | null
+    instagram_handle: string | null
+    twitter_handle: string | null
+    facebook_handle: string | null
+    youtube_handle: string | null
+    tiktok_handle: string | null
   }>) {
-    const result = scoreKickStreamer(s, linksByStreamer.get(s.id) ?? [], denylist)
-    const { error: upErr } = await svc
-      .from('kick_streamers')
-      .update({ is_likely_affiliate: result.isLikelyAffiliate, niche_score: result.nicheScore })
-      .eq('id', s.id)
+    const streamerLinks = linksByStreamer.get(s.id) ?? []
+    const result = scoreKickStreamer(s, streamerLinks, denylist)
+
+    // Mine outreach contacts from the bio/title + the links Phase 2 captured
+    // (url + resolved_url so a shortener that expanded to a t.me/discord
+    // invite still counts). email > Telegram > Discord per the playbook.
+    const linkUrls = streamerLinks.flatMap(l =>
+      [l.resolved_url, l.url].filter((u): u is string => !!u),
+    )
+    const contacts = extractContacts(
+      [s.channel_description ?? '', s.stream_title ?? ''],
+      linkUrls,
+    )
+
+    const update: Record<string, unknown> = {
+      is_likely_affiliate: result.isLikelyAffiliate,
+      niche_score: result.nicheScore,
+      contact_email: contacts.email,
+      telegram_url: contacts.telegram_url,
+      discord_url: contacts.discord_url,
+    }
+    // Fill only socials Phase 2 missed — never clobber a handle the browser
+    // scrape already captured (its channel-link cards are higher-fidelity).
+    if (!s.instagram_handle && contacts.socials.instagram) update.instagram_handle = contacts.socials.instagram
+    if (!s.twitter_handle && contacts.socials.twitter) update.twitter_handle = contacts.socials.twitter
+    if (!s.facebook_handle && contacts.socials.facebook) update.facebook_handle = contacts.socials.facebook
+    if (!s.youtube_handle && contacts.socials.youtube) update.youtube_handle = contacts.socials.youtube
+    if (!s.tiktok_handle && contacts.socials.tiktok) update.tiktok_handle = contacts.socials.tiktok
+
+    const { error: upErr } = await svc.from('kick_streamers').update(update).eq('id', s.id)
     if (upErr) continue
     scored++
     if (result.isLikelyAffiliate) likelyAffiliates++
+    if (contacts.email || contacts.telegram_url || contacts.discord_url) withContacts++
   }
 
   await logActivity({
     action: 'enrichment.kick_score',
     entity_type: 'scrape_job',
     entity_id: jobId,
-    details: { scored, likelyAffiliates, linksResolved },
+    details: { scored, likelyAffiliates, linksResolved, withContacts },
   })
 
   revalidatePath(`/scrape/${jobId}`)
   return {
     status: 'ok',
-    message: `Scored ${scored} streamer${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
+    message: `Scored ${scored} streamer${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${withContacts} with contact${withContacts === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
   }
 }
 
