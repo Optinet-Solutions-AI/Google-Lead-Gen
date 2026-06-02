@@ -64,9 +64,15 @@ KICK_BASE = "https://kick.com"
 #   - more fresh-IP tries per streamer → better odds of an un-flagged IP
 #   - pacing (delays) → IPs get flagged less and recover between uses
 # All env-tunable so we can dial reliability vs speed without a redeploy.
-KICK_MAX_TRIES = int(os.environ.get("KICK_PHASE2_MAX_TRIES", "4"))
+KICK_MAX_TRIES = int(os.environ.get("KICK_PHASE2_MAX_TRIES", "3"))
 KICK_INTER_STREAMER_DELAY_S = int(os.environ.get("KICK_PHASE2_STREAMER_DELAY_SECONDS", "5"))
 KICK_BLOCK_COOLDOWN_S = int(os.environ.get("KICK_PHASE2_BLOCK_COOLDOWN_SECONDS", "12"))
+# Wall-clock budget: stop starting NEW streamers past this, finish what's
+# done, and exit SUCCESS — so the job never gets killed mid-run by the
+# worker's subprocess timeout (which would requeue + re-burn bandwidth).
+# Kept under the non-interactive worker timeout (1200s) for safety in both
+# modes; un-enriched streamers stay pending for a re-run.
+KICK_BUDGET_S = int(os.environ.get("KICK_PHASE2_BUDGET_SECONDS", "1000"))
 
 # ---------------------------------------------------------------------------
 # Extraction model (confirmed by the VM --probe spike, 2026-06-01):
@@ -459,6 +465,7 @@ def run(args, scraper_mod) -> int:
     time.sleep(3)
 
     attempted = enriched = failed = 0
+    run_start = time.time()
 
     # ONE FRESH GoLogin session (new proxy IP) PER streamer. Kick's WAF
     # returns {"error":"Request blocked by security policy."} for the 2nd+
@@ -466,6 +473,15 @@ def run(args, scraper_mod) -> int:
     # Each streamer gets up to MAX_RETRIES fresh sessions (covers a transient
     # GoLogin/connectivity hiccup OR an unlucky already-flagged proxy IP).
     for t in targets:
+        # Stop starting new streamers once the time budget is spent, so the
+        # worker never kills us mid-run (which would requeue + re-burn the
+        # whole batch). Un-enriched streamers stay pending for a re-run.
+        if args.mode != "probe" and (enriched + failed) > 0 and (time.time() - run_start) > KICK_BUDGET_S:
+            remaining = len(targets) - attempted
+            print(f"[INFO] time budget ({KICK_BUDGET_S}s) reached — stopping with "
+                  f"{remaining} streamer(s) still pending (re-run to continue)")
+            break
+
         slug = t["slug"]
         attempted += 1
         result: dict[str, Any] | None = None
