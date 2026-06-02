@@ -184,16 +184,12 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
             <option value="google">Google</option>
             <option value="bing">Bing</option>
             <option value="both">Both (G + B)</option>
-            {/* YouTube option temporarily hidden pending stakeholder review
-                of Phase 2 scope. Re-enable by uncommenting after sign-off.
-                Server-side actions and the VM worker still accept and process
-                engine='youtube' — this only blocks new job creation from the UI. */}
-            {/* <option value="youtube">YouTube</option> */}
             {/* Twitch hidden until vm/twitch_search.py ships. DB enum +
                 server-side dispatch already accept 'twitch'; this only
                 gates new job creation from the UI. */}
             {/* <option value="twitch">Twitch</option> */}
             <option value="kick">Kick</option>
+            <option value="youtube">YouTube</option>
           </select>
         </label>
 
