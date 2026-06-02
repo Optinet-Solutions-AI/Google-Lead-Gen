@@ -19,6 +19,7 @@ export type MondayWebhookEvent = {
   type: string
   boardId?: number | string
   pulseId?: number | string
+  itemId?: number | string
   updateId?: number | string
   [key: string]: unknown
 }
@@ -46,25 +47,46 @@ export async function handleEvent(event: MondayWebhookEvent): Promise<HandlerRes
     }
   }
 
+  // IMPORTANT: the event type you SUBSCRIBE to in create_webhook
+  // (e.g. "change_column_value") is NOT the type string Monday puts in the
+  // delivered payload (e.g. "update_column_value"). We match BOTH so the
+  // handler is correct regardless of which one shows up. All item-mutation
+  // events route to handleItemChanged, which re-fetches the full item and
+  // upserts — so we don't need per-column granularity.
   switch (event.type) {
+    // Item created / changed.
     case 'create_item':
+    case 'create_pulse':
+    case 'create_subitem':
     case 'change_column_value':
+    case 'change_specific_column_value':
+    case 'update_column_value':
     case 'change_name':
+    case 'update_name':
     case 'change_status_column_value':
       return await handleItemChanged(event, board)
 
+    // Item removed.
     case 'item_deleted':
+    case 'delete_pulse':
     case 'item_archived':
+    case 'archive_pulse':
       return await handleItemRemoved(event, board)
 
+    // Update (post/comment) created or edited.
     case 'create_update':
     case 'edit_update':
       return await handleUpdateChanged(event, board)
 
+    // Update deleted.
     case 'delete_update':
       return await handleUpdateDeleted(event, board)
 
     default:
+      // Log so any still-unmapped delivered type surfaces in Vercel logs
+      // instead of silently 200-ignoring (which is how the original
+      // change_column_value/update_column_value mismatch hid for so long).
+      console.log('[monday-webhook] ignored unhandled event type:', event.type)
       return {
         status: 'ignored',
         message: `unhandled event type: ${event.type}`,
@@ -94,15 +116,18 @@ async function handleItemChanged(
   event: MondayWebhookEvent,
   board: BoardConfig,
 ): Promise<HandlerResult> {
-  if (event.pulseId == null) {
-    return { status: 'error', message: 'pulseId missing', event_type: event.type, board: board.key }
+  // Delivered payloads use pulseId for changes but itemId for some
+  // delete/archive events — accept either.
+  const itemId = event.pulseId ?? event.itemId
+  if (itemId == null) {
+    return { status: 'error', message: 'pulseId/itemId missing', event_type: event.type, board: board.key }
   }
 
-  const item = await fetchItemById(String(event.pulseId))
+  const item = await fetchItemById(String(itemId))
   if (!item) {
     return {
       status: 'ignored',
-      message: `item ${event.pulseId} not found (may already be deleted)`,
+      message: `item ${itemId} not found (may already be deleted)`,
       event_type: event.type,
       board: board.key,
     }
@@ -135,15 +160,16 @@ async function handleItemRemoved(
   event: MondayWebhookEvent,
   board: BoardConfig,
 ): Promise<HandlerResult> {
-  if (event.pulseId == null) {
-    return { status: 'error', message: 'pulseId missing', event_type: event.type, board: board.key }
+  const itemId = event.pulseId ?? event.itemId
+  if (itemId == null) {
+    return { status: 'error', message: 'pulseId/itemId missing', event_type: event.type, board: board.key }
   }
 
   const supabase = createServiceClient()
   const { error } = await supabase
     .from(board.items_table)
     .delete()
-    .eq('monday_item_id', String(event.pulseId))
+    .eq('monday_item_id', String(itemId))
 
   if (error) {
     return {
@@ -159,11 +185,11 @@ async function handleItemRemoved(
   await supabase
     .from(board.updates_table)
     .delete()
-    .eq('monday_item_id', String(event.pulseId))
+    .eq('monday_item_id', String(itemId))
 
   return {
     status: 'ok',
-    message: `deleted item ${event.pulseId}`,
+    message: `deleted item ${itemId}`,
     event_type: event.type,
     board: board.key,
   }
