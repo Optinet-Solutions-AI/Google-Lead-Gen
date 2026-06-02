@@ -31,6 +31,32 @@ export const VISIBLE_PIPELINE_STAGES = PIPELINE_STAGES.filter(s => !s.hidden)
 export type StageKey = (typeof PIPELINE_STAGES)[number]['key']
 export type EnrichmentStatus = Partial<Record<StageKey, boolean>>
 
+/** Kick scrapes don't flow through the leads pipeline above — they write
+ *  to `kick_streamers`, so the five leads-pipeline badges never light up
+ *  for them. The /scrape table renders this Kick-specific 3-dot variant
+ *  instead, mirroring the progression in the job detail's "Kick streamer
+ *  profiles" panel: discover (scrape) → Enrich → Score & resolve.
+ *
+ *  Strict/sequential fill: a dot only lights when its stage is fully
+ *  complete. `enriched`/`scored` use >= `discovered` so a partial run
+ *  (e.g. 20/25 enriched) leaves the dot empty. The Enriched rule matches
+ *  the panel's `pending === 0` exactly so column and panel never disagree. */
+export const KICK_PIPELINE_STAGES = [
+  { key: 'discovered', label: 'Discovered' },
+  { key: 'enriched', label: 'Enriched' },
+  { key: 'scored', label: 'Scored & resolved' },
+] as const
+
+export type KickStageKey = (typeof KICK_PIPELINE_STAGES)[number]['key']
+
+/** Per-Kick-job counts the badge derives its three dots from. Only present
+ *  for completed Kick jobs. */
+export type KickPipelineStatus = {
+  discovered: number
+  enriched: number
+  scored: number
+}
+
 /** Approximate per-stage timing for a single scrape job. All times in ms. */
 export type StageTimings = {
   scrape_ms: number | null
@@ -76,6 +102,10 @@ export type ScrapeJob = {
   created_at: string
   /** Per-stage applied flags. Only present for completed jobs that have rows. */
   enrichment: EnrichmentStatus
+  /** Kick-only progression counts. Present for completed Kick jobs; the
+   *  jobs-table renders the 3-dot Kick variant from this instead of the
+   *  leads-pipeline badges (which never apply to Kick). Null otherwise. */
+  kick: KickPipelineStatus | null
   /** Per-stage timing approximation. Null for non-completed jobs or
    *  jobs without enrichment. */
   stage_timings: StageTimings | null

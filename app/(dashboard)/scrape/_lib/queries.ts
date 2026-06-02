@@ -7,6 +7,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import {
   PIPELINE_STAGES,
   type EnrichmentStatus,
+  type KickPipelineStatus,
   type ScrapeJob,
   type StageKey,
   type StageTimings,
@@ -18,6 +19,7 @@ import {
 export {
   PIPELINE_STAGES,
   type EnrichmentStatus,
+  type KickPipelineStatus,
   type ScrapeJob,
   type StageKey,
   type StageTimings,
@@ -442,12 +444,16 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
 
   const { data, count, error } = await query
   if (error) throw error
-  const jobs = (data ?? []) as unknown as Omit<ScrapeJob, 'enrichment' | 'stage_timings'>[]
+  const jobs = (data ?? []) as unknown as Omit<ScrapeJob, 'enrichment' | 'stage_timings' | 'kick'>[]
   const completedIds = jobs.filter(j => j.status === 'completed').map(j => j.id)
-  const [enrichmentByJob, timingsByJob, captchaByJob] = await Promise.all([
+  const completedKickIds = jobs
+    .filter(j => j.status === 'completed' && j.search_engine === 'kick')
+    .map(j => j.id)
+  const [enrichmentByJob, timingsByJob, captchaByJob, kickByJob] = await Promise.all([
     fetchEnrichmentStatus(completedIds),
     fetchStageTimings(jobs.filter(j => j.status === 'completed' && j.with_enrichment)),
     fetchCaptchaSolvedBy(jobs.map(j => j.id)),
+    fetchKickProgress(completedKickIds),
   ])
   return {
     rows: jobs.map(j => ({
@@ -455,6 +461,7 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
       enrichment: enrichmentByJob.get(j.id) ?? {},
       stage_timings: timingsByJob.get(j.id) ?? null,
       captcha_solved_by: captchaByJob.get(j.id) ?? null,
+      kick: kickByJob.get(j.id) ?? null,
     })),
     total: count ?? jobs.length,
   }
@@ -542,6 +549,45 @@ async function fetchEnrichmentStatus(
     if (row.s_tag_id != null && leadIdsWithStagCheck.has(row.s_tag_id as number)) {
       acc.stag_check = true
     }
+    out.set(jobId, acc)
+  }
+  return out
+}
+
+/** Per-Kick-job progression counts for the jobs-table badge. Kick scrapes
+ *  populate `kick_streamers`, not the leads table, so the leads-pipeline
+ *  badges never apply — this drives the 3-dot Kick variant instead.
+ *
+ *  One chunked query over all the page's Kick jobs (vs. the per-job head
+ *  requests in `fetchKickStreamerSummary`, which the detail page uses):
+ *  selects the two booleans we fold into discovered/enriched/scored counts.
+ *  `enriched` = has `about_scraped_at`; `scored` = has `niche_score`. */
+async function fetchKickProgress(
+  jobIds: string[],
+): Promise<Map<string, KickPipelineStatus>> {
+  const out = new Map<string, KickPipelineStatus>()
+  if (jobIds.length === 0) return out
+
+  const svc = createServiceClient()
+  type Row = {
+    scrape_queue_id: string | null
+    about_scraped_at: string | null
+    niche_score: number | null
+  }
+  const rows = (await selectInChunks(jobIds, chunk =>
+    svc
+      .from('kick_streamers')
+      .select('scrape_queue_id, about_scraped_at, niche_score')
+      .in('scrape_queue_id', chunk),
+  )) as unknown as Row[]
+
+  for (const r of rows) {
+    const jobId = r.scrape_queue_id
+    if (!jobId) continue
+    const acc = out.get(jobId) ?? { discovered: 0, enriched: 0, scored: 0 }
+    acc.discovered += 1
+    if (r.about_scraped_at !== null) acc.enriched += 1
+    if (r.niche_score !== null) acc.scored += 1
     out.set(jobId, acc)
   }
   return out

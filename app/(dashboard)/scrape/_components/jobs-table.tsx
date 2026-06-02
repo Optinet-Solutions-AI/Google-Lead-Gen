@@ -3,7 +3,13 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { Ban, Bot, Check, CheckSquare, ShieldAlert, Square, User, XCircle } from 'lucide-react'
-import { VISIBLE_PIPELINE_STAGES, type EnrichmentStatus, type ScrapeJob } from '../_lib/pipeline'
+import {
+  KICK_PIPELINE_STAGES,
+  VISIBLE_PIPELINE_STAGES,
+  type EnrichmentStatus,
+  type KickPipelineStatus,
+  type ScrapeJob,
+} from '../_lib/pipeline'
 import { BulkScrapeActionsBar } from './bulk-actions-bar'
 import { JobActionsButton } from './job-row-actions'
 
@@ -223,35 +229,88 @@ function ViewModeBadge({ mode }: { mode: ScrapeJob['view_mode'] }) {
   )
 }
 
+/** One pipeline dot: filled emerald when the stage is done, dashed
+ *  outline otherwise. Shared by the leads (5-dot) and Kick (3-dot)
+ *  variants so they stay visually identical. */
+function PipelineDot({ done, title }: { done: boolean; title: string }) {
+  return (
+    <span
+      title={title}
+      className={[
+        'inline-flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-medium',
+        done
+          ? 'bg-emerald-100 text-emerald-700'
+          : 'border border-dashed border-[color:var(--color-border)] text-[color:var(--color-text-secondary)]',
+      ].join(' ')}
+    >
+      {done ? <Check className="h-2.5 w-2.5" strokeWidth={3} /> : null}
+    </span>
+  )
+}
+
+/** Kick scrapes never touch the leads pipeline, so their five leads-dots
+ *  would always read empty (misleadingly "0 of 5 done"). This variant
+ *  shows Kick's own progression instead: Discovered → Enriched → Scored.
+ *  Strict/sequential — a dot fills only when its stage is fully complete
+ *  (enriched/scored counts must reach `discovered`). Enriched mirrors the
+ *  detail panel's `pending === 0` so the two never disagree. */
+function KickPipelineBadges({ kick }: { kick: KickPipelineStatus }) {
+  const { discovered, enriched, scored } = kick
+  const done: Record<(typeof KICK_PIPELINE_STAGES)[number]['key'], boolean> = {
+    discovered: discovered > 0,
+    enriched: discovered > 0 && enriched >= discovered,
+    scored: discovered > 0 && scored >= discovered,
+  }
+  const counts: Record<(typeof KICK_PIPELINE_STAGES)[number]['key'], string> = {
+    discovered: `${discovered} discovered`,
+    enriched: `${enriched}/${discovered} enriched`,
+    scored: `${scored}/${discovered} scored`,
+  }
+  return (
+    <div className="flex items-center gap-1">
+      {KICK_PIPELINE_STAGES.map(stage => (
+        <PipelineDot
+          key={stage.key}
+          done={done[stage.key]}
+          title={`${stage.label}: ${done[stage.key] ? 'done' : 'not yet'} (${counts[stage.key]})`}
+        />
+      ))}
+    </div>
+  )
+}
+
 function PipelineBadges({
   status,
   enrichment,
+  engine,
+  kick,
 }: {
   status: ScrapeJob['status']
   enrichment: EnrichmentStatus
+  engine: ScrapeJob['search_engine']
+  kick: ScrapeJob['kick']
 }) {
   if (status !== 'completed') {
     return <span className="text-[color:var(--color-text-secondary)]">—</span>
   }
+  // Kick rows show their own 3-dot progression. If discovery returned no
+  // streamers there's nothing to track — fall through to a dash.
+  if (engine === 'kick') {
+    return kick && kick.discovered > 0 ? (
+      <KickPipelineBadges kick={kick} />
+    ) : (
+      <span className="text-[color:var(--color-text-secondary)]">—</span>
+    )
+  }
   return (
     <div className="flex items-center gap-1">
-      {VISIBLE_PIPELINE_STAGES.map(stage => {
-        const applied = enrichment[stage.key] === true
-        return (
-          <span
-            key={stage.key}
-            title={`${stage.label}: ${applied ? 'applied' : 'not yet'}`}
-            className={[
-              'inline-flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-medium',
-              applied
-                ? 'bg-emerald-100 text-emerald-700'
-                : 'border border-dashed border-[color:var(--color-border)] text-[color:var(--color-text-secondary)]',
-            ].join(' ')}
-          >
-            {applied ? <Check className="h-2.5 w-2.5" strokeWidth={3} /> : null}
-          </span>
-        )
-      })}
+      {VISIBLE_PIPELINE_STAGES.map(stage => (
+        <PipelineDot
+          key={stage.key}
+          done={enrichment[stage.key] === true}
+          title={`${stage.label}: ${enrichment[stage.key] === true ? 'applied' : 'not yet'}`}
+        />
+      ))}
     </div>
   )
 }
@@ -447,7 +506,12 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                   <ResultsCell summary={job.result_summary} />
                 </LinkTd>
                 <LinkTd href={href}>
-                  <PipelineBadges status={job.status} enrichment={job.enrichment} />
+                  <PipelineBadges
+                    status={job.status}
+                    enrichment={job.enrichment}
+                    engine={job.search_engine}
+                    kick={job.kick}
+                  />
                 </LinkTd>
                 <LinkTd href={href}>{job.batch_id ?? '—'}</LinkTd>
                 <LinkTd
@@ -502,7 +566,12 @@ export function JobsCardList({ jobs }: Props) {
           </div>
           {job.status === 'completed' && (
             <div className="mt-1.5">
-              <PipelineBadges status={job.status} enrichment={job.enrichment} />
+              <PipelineBadges
+                status={job.status}
+                enrichment={job.enrichment}
+                engine={job.search_engine}
+                kick={job.kick}
+              />
             </div>
           )}
           {job.error_message && (
