@@ -22,6 +22,12 @@ export function KickStreamersTable({ rows }: { rows: KickStreamerRow[] }) {
             <th className="px-3 py-2 font-medium">Streamer</th>
             <th
               className="cursor-help px-3 py-2 font-medium"
+              title="Broadcast language of the channel, as reported by Kick for the discovered stream."
+            >
+              Language
+            </th>
+            <th
+              className="cursor-help px-3 py-2 font-medium"
               title="Affiliate likelihood + niche score (0–100). “affiliate” = scored ≥30 (likely a casino affiliate); “no” = below 30. Hover a badge for the breakdown."
             >
               Affiliate
@@ -66,6 +72,14 @@ function KickStreamerRowView({ r }: { r: KickStreamerRow }) {
         </a>
         {r.category_name && (
           <div className="text-[10px] text-[color:var(--color-text-secondary)]">{r.category_name}</div>
+        )}
+      </td>
+
+      <td className="px-3 py-2 text-[color:var(--color-text-primary)]">
+        {r.stream_language ? (
+          languageLabel(r.stream_language)
+        ) : (
+          <span className="text-[11px] text-[color:var(--color-text-secondary)]">—</span>
         )}
       </td>
 
@@ -252,6 +266,47 @@ function LinkChip({ href, label, pinned }: { href: string; label: string; pinned
       <span className="truncate">{label}</span>
     </a>
   )
+}
+
+// Kick reports the stream language as either a full English name
+// ("English", "português") or an ISO-639-1 code ("en", "pt") depending on
+// the endpoint version. Map the common codes; otherwise just capitalize
+// whatever Kick gave us so the cell reads cleanly either way.
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: 'English',
+  es: 'Spanish',
+  pt: 'Portuguese',
+  fr: 'French',
+  de: 'German',
+  it: 'Italian',
+  nl: 'Dutch',
+  pl: 'Polish',
+  tr: 'Turkish',
+  ru: 'Russian',
+  ar: 'Arabic',
+  ja: 'Japanese',
+  ko: 'Korean',
+  zh: 'Chinese',
+  hi: 'Hindi',
+  sv: 'Swedish',
+  no: 'Norwegian',
+  da: 'Danish',
+  fi: 'Finnish',
+  cs: 'Czech',
+  el: 'Greek',
+  ro: 'Romanian',
+  hu: 'Hungarian',
+  th: 'Thai',
+  vi: 'Vietnamese',
+  id: 'Indonesian',
+  tl: 'Filipino',
+}
+
+function languageLabel(raw: string): string {
+  const v = raw.trim()
+  const mapped = LANGUAGE_NAMES[v.toLowerCase()]
+  if (mapped) return mapped
+  return v.charAt(0).toUpperCase() + v.slice(1)
 }
 
 function hostLabel(url: string): string {

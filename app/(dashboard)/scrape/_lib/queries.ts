@@ -281,6 +281,7 @@ export type KickStreamerRow = {
   follower_count: number | null
   is_live: boolean | null
   category_name: string | null
+  stream_language: string | null
   instagram_handle: string | null
   twitter_handle: string | null
   facebook_handle: string | null
@@ -303,7 +304,7 @@ export async function fetchKickStreamerRows(jobId: string): Promise<KickStreamer
   const { data: streamers, error } = await svc
     .from('kick_streamers')
     .select(
-      'id, slug, channel_url, follower_count, is_live, category_name, stream_viewer_count, ' +
+      'id, slug, channel_url, follower_count, is_live, category_name, stream_language, stream_viewer_count, ' +
         'instagram_handle, twitter_handle, facebook_handle, youtube_handle, tiktok_handle, ' +
         'contact_email, telegram_url, discord_url, ' +
         'is_likely_affiliate, niche_score, about_scraped_at',
