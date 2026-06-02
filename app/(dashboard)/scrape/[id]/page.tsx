@@ -68,6 +68,11 @@ const STATUS_STYLES: Record<Job['status'], string> = {
 }
 
 export const dynamic = 'force-dynamic'
+// The YouTube "Score & check" action (runYoutubeChannelAnalysis) runs inline
+// from this route and does bounded HTTP work — shortener follows + a two-hop
+// fetch of each likely affiliate's landing page to mine S-tags. Give it room
+// past the default serverless timeout (mirrors the Monday sync routes).
+export const maxDuration = 300
 
 async function countNotRelevantInJob(
   svc: ReturnType<typeof createServiceClient>,

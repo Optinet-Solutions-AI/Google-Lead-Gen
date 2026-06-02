@@ -17,9 +17,15 @@ import { BONUS_COMPARISON_KEYWORDS, CASINO_KEYWORDS } from './scorer'
 import { isAffiliateCasinoLink } from './kick-scorer'
 
 export type YoutubeScoreChannel = {
+  channel_name: string | null
   channel_description: string | null
   recent_video_descriptions: string[] | null
 }
+
+// Gambling terms in a channel NAME — a strong YouTube affiliate tell
+// ("GambleMojo", "Cowboy Slots", "NZ Pokies"). Broader than CASINO_KEYWORDS
+// because channel names use gambl/pokies/wager that the link-keyword list omits.
+const NAME_GAMBLING_RE = /casino|slots?|pokies?|gambl|\bbet(ting)?\b|roulette|blackjack|poker|jackpot|wager|bonus/i
 
 export type YoutubeScoreLink = {
   url: string
@@ -89,7 +95,17 @@ export function scoreYoutubeChannel(
     indicators.push('bonus / free-spins language')
   }
 
+  // Channel name is a strong signal on YouTube — a "GambleMojo" / "Cowboy
+  // Slots" / "NZ Pokies" channel surfaced by a casino keyword is almost
+  // always affiliate-adjacent even before we resolve its links.
+  if (channel.channel_name && NAME_GAMBLING_RE.test(channel.channel_name)) {
+    score += 15
+    indicators.push(`gambling channel name: ${channel.channel_name}`)
+  }
+
   const nicheScore = Math.min(Math.round(score * 100) / 100, 100)
+  // Affiliate if it links to a casino at all, OR clears the threshold on the
+  // softer signals (name + keywords + a resolved promo destination).
   const isLikelyAffiliate = casinoHosts.size > 0 || nicheScore >= AFFILIATE_THRESHOLD
 
   return { isLikelyAffiliate, nicheScore, indicators }

@@ -8,7 +8,12 @@ import { scoreKickStreamer, type KickScoreLink } from '@/lib/affiliate-detection
 import { scoreYoutubeChannel, type YoutubeScoreLink } from '@/lib/affiliate-detection/youtube-scorer'
 import { extractContacts } from '@/lib/affiliate-detection/kick-contacts'
 import { needsResolution, resolveShorteners } from '@/lib/affiliate-detection/resolve-links'
-import { extractStagsFromText } from '@/lib/stag-extraction/extract'
+import {
+  collectCandidates,
+  resolveCandidate,
+  twoHopStags,
+  type ResolvedLink,
+} from '@/lib/affiliate-detection/youtube-links'
 import { logActivity } from '@/lib/activity-log'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
 import { translateKeywordsToEnglish } from '@/lib/translate'
@@ -1056,9 +1061,34 @@ export async function runYoutubeContactEnrichment(
     return { status: 'error', error: 'A contact-enrichment run is already queued or running for this job.' }
   }
 
+  // The About-tab email is gated behind a "View email address" button that
+  // only appears for a Google-LOGGED-IN session. A channel's About content is
+  // geo-independent, so we run enrichment under a logged-in profile's country
+  // regardless of the parent job's country — claim_scrape_job then locks that
+  // country, keeping GoLogin-profile concurrency correct (no double-use of the
+  // same profile). Channel selection is by parent_scrape_job_id, so it's
+  // unaffected by the country swap.
+  const { data: liProfiles, error: liErr } = await svc
+    .from('gologin_profiles')
+    .select('country_code')
+    .eq('is_google_logged_in', true)
+    .eq('is_active', true)
+    .not('gologin_profile_id', 'is', null)
+    .order('country_code', { ascending: true })
+    .limit(1)
+  if (liErr) return { status: 'error', error: safeError(liErr, 'Failed to look up a logged-in profile.') }
+  const loggedInCountry = (liProfiles?.[0] as { country_code: string } | undefined)?.country_code
+  if (!loggedInCountry) {
+    return {
+      status: 'error',
+      error:
+        'No Google-logged-in GoLogin profile is available — contact enrichment needs one to read the About-tab email. Log into Google on an active profile first.',
+    }
+  }
+
   const { error: insertError } = await svc.from('scrape_queue').insert({
     keyword: j.keyword,
-    country_code: j.country_code,
+    country_code: loggedInCountry,
     search_engine: 'youtube',
     parent_scrape_job_id: jobId,
     language: j.language,
@@ -1075,13 +1105,13 @@ export async function runYoutubeContactEnrichment(
     action: 'enrichment.youtube_contact',
     entity_type: 'scrape_job',
     entity_id: jobId,
-    details: { pending_channels: pending },
+    details: { pending_channels: pending, profile_country: loggedInCountry },
   })
 
   revalidatePath(`/scrape/${jobId}`)
   return {
     status: 'ok',
-    message: `Queued contact enrichment. A VM worker will open the top channels (by subscribers) through GoLogin and backfill website, socials, and the About-tab email. ${pending} channel${pending === 1 ? '' : 's'} still pending.`,
+    message: `Queued contact enrichment (via the logged-in ${loggedInCountry} profile). A VM worker will open the top channels (by subscribers) through GoLogin and backfill website, socials, and the About-tab email. ${pending} channel${pending === 1 ? '' : 's'} still pending.`,
   }
 }
 
@@ -1122,6 +1152,7 @@ export async function runYoutubeChannelAnalysis(
   type ChannelRow = {
     id: string
     channel_url: string
+    channel_name: string | null
     channel_description: string | null
     recent_video_descriptions: string[] | null
     website_url: string | null
@@ -1135,7 +1166,7 @@ export async function runYoutubeChannelAnalysis(
   const { data: channels, error: cErr } = await svc
     .from('youtube_channels')
     .select(
-      'id, channel_url, channel_description, recent_video_descriptions, website_url, email, ' +
+      'id, channel_url, channel_name, channel_description, recent_video_descriptions, website_url, email, ' +
         'twitter_url, instagram_url, tiktok_url, telegram_url, discord_url',
     )
     .eq('scrape_queue_id', jobId)
@@ -1177,79 +1208,126 @@ export async function runYoutubeChannelAnalysis(
   let tagsExtracted = 0
   let withContacts = 0
 
+  // Monday "have we seen this S-tag?" check, memoized so the same tag across
+  // channels costs one RPC. Returns the match (or null).
+  const mondayCache = new Map<string, { kind: string; item_id: string } | null>()
+  async function checkMonday(tag: string): Promise<{ kind: string; item_id: string } | null> {
+    const key = tag.toLowerCase()
+    if (mondayCache.has(key)) return mondayCache.get(key) ?? null
+    const { data } = await svc.rpc('search_s_tag_on_monday', { p_tag: tag })
+    const hit = (Array.isArray(data) ? data[0] : data) as { kind: string; item_id: string } | null | undefined
+    const val = hit?.item_id ? hit : null
+    mondayCache.set(key, val)
+    return val
+  }
+
+  // Insert a youtube_channel_links row (deduped by resolved destination /
+  // s_tag against what's already stored for the channel). Returns true if it
+  // carried a NOT-known S-tag (→ new-lead signal).
+  async function storeLink(
+    channelId: string,
+    existing: LinkRow[],
+    seenDest: Set<string>,
+    seenTags: Set<string>,
+    row: { url: string; final_url: string; s_tag: string | null; s_tag_param: string | null; brand: string | null },
+  ): Promise<boolean> {
+    const tagKey = (row.s_tag ?? '').toLowerCase()
+    if (tagKey && seenTags.has(tagKey)) return false
+    if (!tagKey && seenDest.has(row.final_url.toLowerCase())) return false
+    if (tagKey) seenTags.add(tagKey)
+    else seenDest.add(row.final_url.toLowerCase())
+
+    let isKnown: boolean | null = null
+    let hit: { kind: string; item_id: string } | null = null
+    if (row.s_tag) {
+      hit = await checkMonday(row.s_tag)
+      isKnown = !!hit
+      tagsExtracted++
+    }
+    const { data: inserted } = await svc
+      .from('youtube_channel_links')
+      .insert({
+        youtube_channel_id: channelId,
+        url: row.url,
+        source: 'video_description',
+        resolved_url: row.final_url,
+        resolved_at: new Date().toISOString(),
+        s_tag: row.s_tag,
+        s_tag_param: row.s_tag_param,
+        brand: row.brand,
+        is_known_on_monday: isKnown,
+        monday_match_kind: hit?.kind ?? null,
+        monday_match_item_id: hit?.item_id ?? null,
+      })
+      .select('id, youtube_channel_id, url, resolved_url, s_tag, is_known_on_monday')
+      .maybeSingle()
+    if (inserted) existing.push(inserted as unknown as LinkRow)
+    return !!row.s_tag && isKnown === false
+  }
+
+  // Per-channel state we carry from the shallow pass into the bounded two-hop
+  // pass (so two-hop only fetches the likely affiliates' landing pages).
+  type Pending = {
+    c: ChannelRow
+    links: LinkRow[]
+    seenDest: Set<string>
+    seenTags: Set<string>
+    nicheScore: number
+    likely: boolean
+    hasNewTag: boolean
+    twoHopUrl: string | null
+  }
+  const pendings: Pending[] = []
+
+  // ---- Pass 1: shallow, every channel ----
   for (const c of rows) {
     const channelLinks = linksByChannel.get(c.id) ?? []
-    const knownTags = new Set(
-      channelLinks.map(l => (l.s_tag ?? '').toLowerCase()).filter(Boolean),
+    const seenDest = new Set(channelLinks.map(l => (l.resolved_url ?? l.url ?? '').toLowerCase()).filter(Boolean))
+    const seenTags = new Set(channelLinks.map(l => (l.s_tag ?? '').toLowerCase()).filter(Boolean))
+
+    // Collect + resolve the description's outbound affiliate candidates.
+    const candidates = collectCandidates(
+      [c.channel_description ?? '', ...(c.recent_video_descriptions ?? [])],
+      c.website_url,
     )
+    const resolved: ResolvedLink[] = []
+    for (const cand of candidates) resolved.push(await resolveCandidate(cand, denylist))
+    const casino = resolved.filter(r => r.is_casino)
 
-    // 1. Mine affiliate S-tags from the recent video descriptions (resolves
-    //    redirect chains internally), skipping tags we already stored.
-    const descBlob = (c.recent_video_descriptions ?? []).filter(Boolean).join('\n')
-    if (descBlob) {
-      const stags = await extractStagsFromText(descBlob)
-      for (const t of stags) {
-        if (knownTags.has(t.s_tag.toLowerCase())) continue
-        knownTags.add(t.s_tag.toLowerCase())
-        // 2. New vs known — search Monday for this exact tag.
-        const { data: match } = await svc.rpc('search_s_tag_on_monday', { p_tag: t.s_tag })
-        const hit = (Array.isArray(match) ? match[0] : match) as
-          | { kind: string; item_id: string }
-          | null
-          | undefined
-        const isKnown = !!hit?.item_id
-        const { data: inserted } = await svc
-          .from('youtube_channel_links')
-          .insert({
-            youtube_channel_id: c.id,
-            url: t.tracking_url,
-            source: 'video_description',
-            resolved_url: t.final_url,
-            resolved_at: new Date().toISOString(),
-            s_tag: t.s_tag,
-            s_tag_param: t.source_param,
-            brand: t.brand,
-            is_known_on_monday: isKnown,
-            monday_match_kind: hit?.kind ?? null,
-            monday_match_item_id: hit?.item_id ?? null,
-          })
-          .select('id, youtube_channel_id, url, resolved_url, s_tag, is_known_on_monday')
-          .maybeSingle()
-        if (inserted) channelLinks.push(inserted as unknown as LinkRow)
-        tagsExtracted++
-      }
+    let hasNewTag = false
+    for (const r of casino) {
+      const flaggedNew = await storeLink(c.id, channelLinks, seenDest, seenTags, {
+        url: r.source_url,
+        final_url: r.final_url,
+        s_tag: r.s_tag,
+        s_tag_param: r.s_tag_param,
+        brand: r.brand,
+      })
+      if (flaggedNew) hasNewTag = true
     }
+    // Carry the existing stored links' verdicts too (a prior run's tags).
+    if (channelLinks.some(l => l.is_known_on_monday === false)) hasNewTag = true
 
-    // 3. Score on casino language + the affiliate destinations.
-    const scoreLinks: YoutubeScoreLink[] = channelLinks.map(l => ({
-      url: l.url,
-      resolved_url: l.resolved_url,
-    }))
+    // Score on the resolved casino destinations + name/keyword signals.
+    const scoreLinks: YoutubeScoreLink[] = casino.map(r => ({ url: r.source_url, resolved_url: r.final_url }))
     const result = scoreYoutubeChannel(
-      { channel_description: c.channel_description, recent_video_descriptions: c.recent_video_descriptions },
+      { channel_name: c.channel_name, channel_description: c.channel_description, recent_video_descriptions: c.recent_video_descriptions },
       scoreLinks,
       denylist,
     )
 
-    // 4. Outreach contacts from text + the links we resolved (fills only
-    //    what Phase 2's browser scrape missed — never clobber it).
-    const linkUrls = channelLinks.flatMap(l =>
-      [l.resolved_url, l.url].filter((u): u is string => !!u),
-    )
+    // Contacts from text + resolved links (fills only what Phase 2 missed).
+    const linkUrls = channelLinks.flatMap(l => [l.resolved_url, l.url].filter((u): u is string => !!u))
     if (c.website_url) linkUrls.push(c.website_url)
     const contacts = extractContacts(
       [c.channel_description ?? '', ...(c.recent_video_descriptions ?? [])],
       linkUrls,
     )
 
-    // 5. A new-lead candidate: a likely affiliate with ≥1 S-tag not on Monday.
-    const hasNewTag = channelLinks.some(l => l.is_known_on_monday === false)
-    const isNewCandidate = result.isLikelyAffiliate && hasNewTag
-
     const update: Record<string, unknown> = {
       is_likely_affiliate: result.isLikelyAffiliate,
       niche_score: result.nicheScore,
-      is_new_lead_candidate: isNewCandidate,
+      is_new_lead_candidate: result.isLikelyAffiliate && hasNewTag,
     }
     if (!c.email && contacts.email) update.email = contacts.email
     if (!c.telegram_url && contacts.telegram_url) update.telegram_url = contacts.telegram_url
@@ -1262,8 +1340,48 @@ export async function runYoutubeChannelAnalysis(
     if (upErr) continue
     scored++
     if (result.isLikelyAffiliate) likelyAffiliates++
-    if (isNewCandidate) newCandidates++
+    if (result.isLikelyAffiliate && hasNewTag) newCandidates++
     if (update.email || c.email || contacts.telegram_url || contacts.discord_url) withContacts++
+
+    // A likely affiliate whose casino link is a landing/review PAGE with no
+    // direct S-tag → queue it for the (bounded) two-hop pass.
+    const twoHop = casino.find(r => r.two_hop_candidate)
+    pendings.push({
+      c, links: channelLinks, seenDest, seenTags,
+      nicheScore: result.nicheScore, likely: result.isLikelyAffiliate,
+      hasNewTag, twoHopUrl: twoHop?.final_url ?? null,
+    })
+  }
+
+  // ---- Pass 2: two-hop, bounded to the strongest likely affiliates ----
+  // Fetch the creator's review/landing page and mine ITS outbound casino
+  // links for the real S-tags. Capped so the inline action stays well under
+  // the function timeout (re-run to cover more).
+  const TWO_HOP_CAP = 8
+  const twoHopTargets = pendings
+    .filter(p => p.likely && p.twoHopUrl)
+    .sort((a, b) => b.nicheScore - a.nicheScore)
+    .slice(0, TWO_HOP_CAP)
+
+  for (const p of twoHopTargets) {
+    const stags = await twoHopStags(p.twoHopUrl as string, { maxLinks: 10 })
+    let foundNew = false
+    for (const t of stags) {
+      const flaggedNew = await storeLink(p.c.id, p.links, p.seenDest, p.seenTags, {
+        url: t.tracking_url,
+        final_url: t.final_url,
+        s_tag: t.s_tag,
+        s_tag_param: t.source_param,
+        brand: t.brand,
+      })
+      if (flaggedNew) foundNew = true
+    }
+    // A two-hop run can turn a likely affiliate into a confirmed new-lead
+    // candidate (found a not-known S-tag it didn't have before).
+    if (foundNew && !p.hasNewTag) {
+      await svc.from('youtube_channels').update({ is_new_lead_candidate: true }).eq('id', p.c.id)
+      newCandidates++
+    }
   }
 
   await logActivity({
