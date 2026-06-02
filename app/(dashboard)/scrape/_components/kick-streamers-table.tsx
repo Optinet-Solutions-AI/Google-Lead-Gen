@@ -16,7 +16,12 @@ export function KickStreamersTable({ rows }: { rows: KickStreamerRow[] }) {
         <thead>
           <tr className="border-b border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] text-left text-[11px] text-[color:var(--color-text-secondary)]">
             <th className="px-3 py-2 font-medium">Streamer</th>
-            <th className="px-3 py-2 font-medium">Affiliate</th>
+            <th
+              className="cursor-help px-3 py-2 font-medium"
+              title="Affiliate likelihood + niche score (0–100). “affiliate” = scored ≥30 (likely a casino affiliate); “no” = below 30. Hover a badge for the breakdown."
+            >
+              Affiliate
+            </th>
             <th className="px-3 py-2 font-medium text-right">Followers</th>
             <th className="px-3 py-2 font-medium">Socials</th>
             <th className="px-3 py-2 font-medium">Casino partners / links</th>
@@ -56,13 +61,24 @@ function KickStreamerRowView({ r }: { r: KickStreamerRow }) {
 
       <td className="px-3 py-2">
         {r.niche_score == null ? (
-          <span className="text-[11px] text-[color:var(--color-text-secondary)]">not scored</span>
+          <span
+            className="cursor-help text-[11px] text-[color:var(--color-text-secondary)]"
+            title="Not scored yet — click “Score & resolve” to compute an affiliate likelihood for each streamer."
+          >
+            not scored
+          </span>
         ) : r.is_likely_affiliate ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+          <span
+            className="inline-flex cursor-help items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800"
+            title={`Likely casino affiliate. Niche score ${niche}/100 (≥30 is flagged). Built from casino promo cards, affiliate-ref links (?r=, /r/, ?c=), gambling tags, and casino keywords — higher = stronger signal.`}
+          >
             <CheckCircle2 className="h-3 w-3" /> affiliate · {niche}
           </span>
         ) : (
-          <span className="rounded-full bg-[color:var(--color-bg-secondary)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]">
+          <span
+            className="cursor-help rounded-full bg-[color:var(--color-bg-secondary)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]"
+            title={`Not flagged as an affiliate. Niche score ${niche}/100 (below the 30 threshold). Same signals as affiliates — casino promo cards, affiliate-ref links, gambling tags/keywords — just weaker.`}
+          >
             no · {niche}
           </span>
         )}
