@@ -251,20 +251,20 @@ def enrich_one(driver, scraper_mod, slug: str, *, interactive: bool,
             print(f"[WARN] {slug}: still blocked by Cloudflare", file=sys.stderr)
             return {"ok": False, "fields": {}, "links": []}
 
-    # Wait for the SPA to hydrate the profile (follower count +
-    # channel-link cards render client-side).
-    _wait_for_profile(driver)
-
+    # Fail fast on a WAF/stub page BEFORE the longer hydration wait, so a
+    # blocked IP doesn't burn the full channel-link timeout.
     try:
         html = driver.page_source or ""
     except Exception:  # noqa: BLE001
         html = ""
     if len(html) < 5000:
-        # Stub page — almost always Kick's WAF block on a reused IP.
-        # Caller will retry on a fresh session.
         print(f"[WARN] {slug}: page did not render (len={len(html)}) — likely WAF block",
               file=sys.stderr)
         return {"ok": False, "fields": {}, "links": []}
+
+    # The casino-link cards lazy-render below the video and can take 10-15s;
+    # scroll + wait for them so we don't miss a real affiliate's links.
+    _wait_for_profile(driver)
 
     fields, links = extract_from_page(driver)
     if "follower_count" not in fields:
@@ -278,30 +278,20 @@ def enrich_one(driver, scraper_mod, slug: str, *, interactive: bool,
     return {"ok": True, "fields": fields, "links": links}
 
 
-def _wait_for_profile(driver, timeout_s: int = 14) -> None:
-    """Poll until the channel-link cards (socials + promo) are in the DOM,
-    or the timeout elapses. Best-effort — extraction runs regardless.
+def _wait_for_profile(driver, timeout_s: int = 16) -> None:
+    """Poll until the casino-link cards are in the DOM, scrolling to the
+    bottom each iteration to trigger them. Returns as soon as they appear.
 
-    We wait on 'channel-links' specifically, NOT 'followers_count':
-    followers_count is in the initial RSC payload and present almost
-    immediately, so returning on it skips the wait for the link cards,
-    which hydrate a beat later. To avoid stalling the full timeout on a
-    streamer who genuinely has no cards, bail early once the page data has
-    loaded (followers_count seen) and a generous grace period has passed.
-
-    The channel-link cards live in the About section BELOW the video and
-    don't hydrate until scrolled into view, so we scroll the page down to
-    force them to render."""
+    The cards live in the About section BELOW the video, lazy-render on
+    scroll, and (verified on the spike) can take 10-15s to show up — so we
+    scroll + wait up to ~16s rather than bail early. follower_count is in
+    the RSC immediately and extracted regardless; a genuinely card-less
+    streamer just waits out the timeout (the follow-up cost of reliably
+    catching the ones that DO have links)."""
     deadline = time.time() + timeout_s
-    data_seen_at: float | None = None
     while time.time() < deadline:
-        # Nudge the below-the-fold About panel to lazy-render its cards.
         try:
-            driver.execute_script(
-                "window.scrollTo(0, document.body.scrollHeight);"
-                "document.querySelectorAll('main,[class*=scroll],[class*=overflow]')"
-                ".forEach(e => { e.scrollTop = e.scrollHeight; });"
-            )
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -310,12 +300,7 @@ def _wait_for_profile(driver, timeout_s: int = 14) -> None:
             html = ""
         if "channel-links" in html:
             return
-        if "followers_count" in html:
-            if data_seen_at is None:
-                data_seen_at = time.time()
-            elif time.time() - data_seen_at >= 8:
-                return  # data loaded, no cards after a generous grace — likely none
-        time.sleep(1)
+        time.sleep(1.5)
 
 
 def _cloudflare_blocked(driver) -> bool:
