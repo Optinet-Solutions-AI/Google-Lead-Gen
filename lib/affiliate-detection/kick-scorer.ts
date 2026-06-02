@@ -17,6 +17,7 @@ export type KickScoreStreamer = {
   channel_description: string | null
   stream_title: string | null
   custom_tags: string[] | null
+  category_name: string | null
 }
 
 export type KickScoreLink = {
@@ -118,6 +119,16 @@ export function scoreKickStreamer(
   if (pinnedCasino.length > 0) {
     score += 15
     indicators.push('casino affiliate link in pinned chat')
+  }
+
+  // Streaming in a gambling category is a meaningful affiliate signal on
+  // its own — and it survives when the casino-link panel didn't capture
+  // (so a real affiliate like casinodaddy still surfaces). Kept modest so
+  // category alone doesn't cross the threshold without a second signal.
+  const category = (streamer.category_name ?? '').toLowerCase()
+  if (/casino|slots|gambl|poker|roulette|blackjack|bet/.test(category)) {
+    score += 12
+    indicators.push(`gambling category: ${streamer.category_name}`)
   }
 
   const tags = (streamer.custom_tags ?? []).map(t => t.toLowerCase().trim())

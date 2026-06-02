@@ -863,7 +863,7 @@ export async function runKickStreamerAnalysis(
   // Streamers for this job + all their links.
   const { data: streamers, error: sErr } = await svc
     .from('kick_streamers')
-    .select('id, channel_description, stream_title, custom_tags')
+    .select('id, channel_description, stream_title, custom_tags, category_name')
     .eq('scrape_queue_id', jobId)
   if (sErr) return { status: 'error', error: safeError(sErr, 'Failed to load streamers.') }
   if (!streamers || streamers.length === 0) {
@@ -921,6 +921,7 @@ export async function runKickStreamerAnalysis(
     channel_description: string | null
     stream_title: string | null
     custom_tags: string[] | null
+    category_name: string | null
   }>) {
     const result = scoreKickStreamer(s, linksByStreamer.get(s.id) ?? [], denylist)
     const { error: upErr } = await svc
