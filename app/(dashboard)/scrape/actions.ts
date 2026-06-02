@@ -1205,44 +1205,46 @@ export async function runYoutubeChannelAnalysis(
   let scored = 0
   let likelyAffiliates = 0
   let newCandidates = 0
-  let tagsExtracted = 0
+  let affiliateLinks = 0
   let withContacts = 0
 
-  // Monday "have we seen this S-tag?" check, memoized so the same tag across
-  // channels costs one RPC. Returns the match (or null).
+  // Monday "have we seen this affiliate ID/operator?" check, memoized so the
+  // same key across channels costs one RPC. Returns the match (or null).
   const mondayCache = new Map<string, { kind: string; item_id: string } | null>()
-  async function checkMonday(tag: string): Promise<{ kind: string; item_id: string } | null> {
-    const key = tag.toLowerCase()
+  async function checkMonday(key0: string): Promise<{ kind: string; item_id: string } | null> {
+    const key = key0.toLowerCase()
     if (mondayCache.has(key)) return mondayCache.get(key) ?? null
-    const { data } = await svc.rpc('search_s_tag_on_monday', { p_tag: tag })
+    const { data } = await svc.rpc('search_s_tag_on_monday', { p_tag: key0 })
     const hit = (Array.isArray(data) ? data[0] : data) as { kind: string; item_id: string } | null | undefined
     const val = hit?.item_id ? hit : null
     mondayCache.set(key, val)
     return val
   }
 
-  // Insert a youtube_channel_links row (deduped by resolved destination /
-  // s_tag against what's already stored for the channel). Returns true if it
-  // carried a NOT-known S-tag (→ new-lead signal).
+  // Insert a youtube_channel_links row (deduped per channel by its check key).
+  // Returns true when the link's affiliate ID is NOT known on Monday (→ a
+  // new-lead signal). The check key is the classic S-tag when we have one,
+  // else the affiliate destination/operator brand — YouTube links are usually
+  // redirectors with no in-URL stag, so the operator brand (vipclub,
+  // dashcasinos, gamblemojo) is the dedup key we DO have. (Resolving the real
+  // stag behind the redirector is the documented "stag later" follow-up.)
   async function storeLink(
     channelId: string,
     existing: LinkRow[],
-    seenDest: Set<string>,
-    seenTags: Set<string>,
+    seen: Set<string>,
     row: { url: string; final_url: string; s_tag: string | null; s_tag_param: string | null; brand: string | null },
   ): Promise<boolean> {
-    const tagKey = (row.s_tag ?? '').toLowerCase()
-    if (tagKey && seenTags.has(tagKey)) return false
-    if (!tagKey && seenDest.has(row.final_url.toLowerCase())) return false
-    if (tagKey) seenTags.add(tagKey)
-    else seenDest.add(row.final_url.toLowerCase())
+    const checkKey = row.s_tag || row.brand || ''
+    const dedupeKey = (checkKey || row.final_url).toLowerCase()
+    if (seen.has(dedupeKey)) return false
+    seen.add(dedupeKey)
+    affiliateLinks++
 
     let isKnown: boolean | null = null
     let hit: { kind: string; item_id: string } | null = null
-    if (row.s_tag) {
-      hit = await checkMonday(row.s_tag)
+    if (checkKey) {
+      hit = await checkMonday(checkKey)
       isKnown = !!hit
-      tagsExtracted++
     }
     const { data: inserted } = await svc
       .from('youtube_channel_links')
@@ -1262,7 +1264,7 @@ export async function runYoutubeChannelAnalysis(
       .select('id, youtube_channel_id, url, resolved_url, s_tag, is_known_on_monday')
       .maybeSingle()
     if (inserted) existing.push(inserted as unknown as LinkRow)
-    return !!row.s_tag && isKnown === false
+    return isKnown === false
   }
 
   // Per-channel state we carry from the shallow pass into the bounded two-hop
@@ -1270,8 +1272,7 @@ export async function runYoutubeChannelAnalysis(
   type Pending = {
     c: ChannelRow
     links: LinkRow[]
-    seenDest: Set<string>
-    seenTags: Set<string>
+    seen: Set<string>
     nicheScore: number
     likely: boolean
     hasNewTag: boolean
@@ -1282,8 +1283,12 @@ export async function runYoutubeChannelAnalysis(
   // ---- Pass 1: shallow, every channel ----
   for (const c of rows) {
     const channelLinks = linksByChannel.get(c.id) ?? []
-    const seenDest = new Set(channelLinks.map(l => (l.resolved_url ?? l.url ?? '').toLowerCase()).filter(Boolean))
-    const seenTags = new Set(channelLinks.map(l => (l.s_tag ?? '').toLowerCase()).filter(Boolean))
+    // Dedupe key per stored link: its S-tag, else brand, else resolved URL.
+    const seen = new Set(
+      channelLinks
+        .map(l => (l.s_tag || (l.resolved_url ?? l.url) || '').toLowerCase())
+        .filter(Boolean),
+    )
 
     // Collect + resolve the description's outbound affiliate candidates.
     const candidates = collectCandidates(
@@ -1296,7 +1301,7 @@ export async function runYoutubeChannelAnalysis(
 
     let hasNewTag = false
     for (const r of casino) {
-      const flaggedNew = await storeLink(c.id, channelLinks, seenDest, seenTags, {
+      const flaggedNew = await storeLink(c.id, channelLinks, seen, {
         url: r.source_url,
         final_url: r.final_url,
         s_tag: r.s_tag,
@@ -1347,7 +1352,7 @@ export async function runYoutubeChannelAnalysis(
     // direct S-tag → queue it for the (bounded) two-hop pass.
     const twoHop = casino.find(r => r.two_hop_candidate)
     pendings.push({
-      c, links: channelLinks, seenDest, seenTags,
+      c, links: channelLinks, seen,
       nicheScore: result.nicheScore, likely: result.isLikelyAffiliate,
       hasNewTag, twoHopUrl: twoHop?.final_url ?? null,
     })
@@ -1367,7 +1372,7 @@ export async function runYoutubeChannelAnalysis(
     const stags = await twoHopStags(p.twoHopUrl as string, { maxLinks: 10 })
     let foundNew = false
     for (const t of stags) {
-      const flaggedNew = await storeLink(p.c.id, p.links, p.seenDest, p.seenTags, {
+      const flaggedNew = await storeLink(p.c.id, p.links, p.seen, {
         url: t.tracking_url,
         final_url: t.final_url,
         s_tag: t.s_tag,
@@ -1388,13 +1393,13 @@ export async function runYoutubeChannelAnalysis(
     action: 'enrichment.youtube_score',
     entity_type: 'scrape_job',
     entity_id: jobId,
-    details: { scored, likelyAffiliates, newCandidates, tagsExtracted, withContacts },
+    details: { scored, likelyAffiliates, newCandidates, affiliateLinks, withContacts },
   })
 
   revalidatePath(`/scrape/${jobId}`)
   return {
     status: 'ok',
-    message: `Scored ${scored} channel${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}${tagsExtracted > 0 ? `, ${tagsExtracted} S-tag${tagsExtracted === 1 ? '' : 's'} extracted` : ''}.`,
+    message: `Scored ${scored} channel${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}${affiliateLinks > 0 ? `, ${affiliateLinks} affiliate link${affiliateLinks === 1 ? '' : 's'} captured` : ''}.`,
   }
 }
 
