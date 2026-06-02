@@ -178,6 +178,17 @@ function OutcomeMarker({ job }: { job: ScrapeJob }) {
   )
 }
 
+/** Colour for the Error-column text. While a job is still in flight
+ *  (running, or pending after an auto-requeue) its error_message is a
+ *  leftover from a PRIOR attempt the system is already retrying — render it
+ *  muted, not in alarming red, so a healthy retry doesn't read as a failure.
+ *  Only terminal states (failed / captcha / cancelled) get the red error. */
+function errorTone(job: ScrapeJob): string {
+  return job.status === 'running' || job.status === 'pending'
+    ? 'italic text-[color:var(--color-text-secondary)]'
+    : 'text-red-700'
+}
+
 function EngineBadge({ engine }: { engine: ScrapeJob['search_engine'] }) {
   const e = engine ?? 'google'
   const styles =
@@ -516,7 +527,7 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                 <LinkTd href={href}>{job.batch_id ?? '—'}</LinkTd>
                 <LinkTd
                   href={href}
-                  className="max-w-[280px] truncate text-red-700"
+                  className={['max-w-[280px] truncate', errorTone(job)].join(' ')}
                   title={job.error_message ?? ''}
                 >
                   {job.error_message ?? ''}
@@ -575,7 +586,7 @@ export function JobsCardList({ jobs }: Props) {
             </div>
           )}
           {job.error_message && (
-            <p className="mt-1.5 text-[11px] text-red-700" title={job.error_message}>
+            <p className={['mt-1.5 text-[11px]', errorTone(job)].join(' ')} title={job.error_message}>
               {job.error_message.length > 100
                 ? job.error_message.slice(0, 100) + '…'
                 : job.error_message}

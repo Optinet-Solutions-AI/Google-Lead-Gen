@@ -331,9 +331,9 @@ def classify_failure(*, exit_code: int | None,
     # Almost always means the worker tore the scrape down (timeout, restart,
     # OOM) rather than a real error in the scraper itself.
     if exit_code is not None and exit_code < 0:
-        return ("Scrape was stopped before it could finish "
-                "(took too long, or the worker was restarted). "
-                "Auto-retry will run.")
+        return ("The scrape ran long and was automatically restarted before "
+                "it could finish — it retries on its own, so this usually "
+                "clears without any action.")
 
     return f"{source} couldn't finish — no specific cause detected. Try re-queueing; full log is on the VM."
 
