@@ -60,6 +60,14 @@ from typing import Any
 
 KICK_BASE = "https://kick.com"
 
+# Failure mitigation (Kick's WAF blocks scraper IPs under load):
+#   - more fresh-IP tries per streamer → better odds of an un-flagged IP
+#   - pacing (delays) → IPs get flagged less and recover between uses
+# All env-tunable so we can dial reliability vs speed without a redeploy.
+KICK_MAX_TRIES = int(os.environ.get("KICK_PHASE2_MAX_TRIES", "4"))
+KICK_INTER_STREAMER_DELAY_S = int(os.environ.get("KICK_PHASE2_STREAMER_DELAY_SECONDS", "5"))
+KICK_BLOCK_COOLDOWN_S = int(os.environ.get("KICK_PHASE2_BLOCK_COOLDOWN_SECONDS", "12"))
+
 # ---------------------------------------------------------------------------
 # Extraction model (confirmed by the VM --probe spike, 2026-06-01):
 #
@@ -262,7 +270,7 @@ def enrich_one(driver, scraper_mod, slug: str, *, interactive: bool,
     return {"ok": True, "fields": fields, "links": links}
 
 
-def _wait_for_profile(driver, timeout_s: int = 10) -> None:
+def _wait_for_profile(driver, timeout_s: int = 14) -> None:
     """Poll until the channel-link cards (socials + promo) are in the DOM,
     or the timeout elapses. Best-effort — extraction runs regardless.
 
@@ -271,10 +279,23 @@ def _wait_for_profile(driver, timeout_s: int = 10) -> None:
     immediately, so returning on it skips the wait for the link cards,
     which hydrate a beat later. To avoid stalling the full timeout on a
     streamer who genuinely has no cards, bail early once the page data has
-    loaded (followers_count seen) and a short grace period has passed."""
+    loaded (followers_count seen) and a generous grace period has passed.
+
+    The channel-link cards live in the About section BELOW the video and
+    don't hydrate until scrolled into view, so we scroll the page down to
+    force them to render."""
     deadline = time.time() + timeout_s
     data_seen_at: float | None = None
     while time.time() < deadline:
+        # Nudge the below-the-fold About panel to lazy-render its cards.
+        try:
+            driver.execute_script(
+                "window.scrollTo(0, document.body.scrollHeight);"
+                "document.querySelectorAll('main,[class*=scroll],[class*=overflow]')"
+                ".forEach(e => { e.scrollTop = e.scrollHeight; });"
+            )
+        except Exception:  # noqa: BLE001
+            pass
         try:
             html = driver.page_source or ""
         except Exception:  # noqa: BLE001
@@ -284,8 +305,8 @@ def _wait_for_profile(driver, timeout_s: int = 10) -> None:
         if "followers_count" in html:
             if data_seen_at is None:
                 data_seen_at = time.time()
-            elif time.time() - data_seen_at >= 4:
-                return  # data loaded, no cards after grace — likely none
+            elif time.time() - data_seen_at >= 8:
+                return  # data loaded, no cards after a generous grace — likely none
         time.sleep(1)
 
 
@@ -433,10 +454,10 @@ def run(args, scraper_mod) -> int:
         attempted += 1
         result: dict[str, Any] | None = None
 
-        for attempt in range(1, scraper_mod.MAX_RETRIES + 1):
+        for attempt in range(1, KICK_MAX_TRIES + 1):
             driver = None
             try:
-                print(f"[INFO] {slug}: GoLogin session (attempt {attempt}/{scraper_mod.MAX_RETRIES})")
+                print(f"[INFO] {slug}: GoLogin session (attempt {attempt}/{KICK_MAX_TRIES})")
                 debugger_address = gl.start()
                 time.sleep(2)
                 driver = scraper_mod.connect_to_gologin_browser(debugger_address)
@@ -451,11 +472,14 @@ def run(args, scraper_mod) -> int:
                 )
                 if args.mode == "probe":
                     _dump_probe(driver, slug)
-                    break
-                if result["ok"]:
+                    if result["ok"]:
+                        break
+                    if attempt < KICK_MAX_TRIES:
+                        print(f"[INFO] {slug}: probe got a stub (WAF block), retrying fresh session...")
+                elif result["ok"]:
                     break
                 # Stub / WAF block — a fresh session (new IP) may clear it.
-                if attempt < scraper_mod.MAX_RETRIES:
+                elif attempt < KICK_MAX_TRIES:
                     print(f"[INFO] {slug}: retrying on a fresh session...")
             except scraper_mod.InteractiveCancelException:
                 print("[INFO] operator cancelled at Captcha solver checkpoint")
@@ -466,8 +490,9 @@ def run(args, scraper_mod) -> int:
                 print(f"[ERROR] {slug}: session attempt {attempt} failed: {exc}", file=sys.stderr)
             finally:
                 _teardown(driver, gl)
-            if attempt < scraper_mod.MAX_RETRIES:
-                time.sleep(7)
+            if attempt < KICK_MAX_TRIES:
+                # Cooldown before the next fresh IP — lets a flagged IP recover.
+                time.sleep(KICK_BLOCK_COOLDOWN_S)
 
         if args.mode == "probe":
             continue
@@ -487,7 +512,7 @@ def run(args, scraper_mod) -> int:
             print(f"[INFO] {slug}: enriched ({len(result['fields'])} fields, "
                   f"{len(result['links'])} links)")
 
-        time.sleep(2)  # brief pause before the next fresh session
+        time.sleep(KICK_INTER_STREAMER_DELAY_S)  # pace requests to reduce WAF flagging
 
     if args.mode == "probe":
         print("[RESULT] SUCCESS")
