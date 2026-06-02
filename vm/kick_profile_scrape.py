@@ -267,6 +267,14 @@ def enrich_one(driver, scraper_mod, slug: str, *, interactive: bool,
         return {"ok": False, "fields": {}, "links": []}
 
     fields, links = extract_from_page(driver)
+    if "follower_count" not in fields:
+        # The page rendered (length OK) but the profile data never hydrated
+        # — no follower count, which every real channel has (even 0). Treat
+        # as incomplete so it retries on a fresh session instead of being
+        # recorded as a false "enriched" that future re-runs would skip.
+        print(f"[WARN] {slug}: rendered but profile data missing (no follower count) — retrying",
+              file=sys.stderr)
+        return {"ok": False, "fields": {}, "links": []}
     return {"ok": True, "fields": fields, "links": links}
 
 
