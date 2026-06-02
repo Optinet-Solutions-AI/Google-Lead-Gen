@@ -539,72 +539,105 @@ def run(args, scraper_mod) -> int:
     attempted = enriched = failed = 0
     run_start = time.time()
 
-    for t in targets:
-        if args.mode != "probe" and (enriched + failed) > 0 and (time.time() - run_start) > YT_BUDGET_S:
-            remaining = len(targets) - attempted
-            print(f"[INFO] time budget ({YT_BUDGET_S}s) reached — stopping with "
-                  f"{remaining} channel(s) still pending (re-run to continue)")
-            break
-
-        channel_id = t["channel_id"]
-        attempted += 1
-        result: dict[str, Any] | None = None
-
-        for attempt in range(1, YT_MAX_TRIES + 1):
-            driver = None
+    # ONE GoLogin session for the whole batch. Unlike Kick (whose WAF blocks
+    # the 2nd+ request per session), YouTube serves many About tabs from a
+    # single session — and the Google login below is expensive and trips
+    # Google's "verify it's you" if repeated, so we sign in ONCE then loop.
+    # Bring-up gets a few tries to ride out a transient GoLogin/proxy hiccup.
+    driver = None
+    session_ok = False
+    for attempt in range(1, YT_MAX_TRIES + 1):
+        try:
+            print(f"[INFO] GoLogin session bring-up (attempt {attempt}/{YT_MAX_TRIES})")
+            debugger_address = gl.start()
+            time.sleep(2)
+            driver = scraper_mod.connect_to_gologin_browser(debugger_address)
+            scraper_mod._install_turnstile_interceptor(driver)
+            if not scraper_mod.check_browser_connectivity(driver):
+                raise RuntimeError("Browser connectivity check failed — proxy may be unreachable")
+            # Sign into Google ONCE. The About-tab email reveal only renders
+            # for a logged-in viewer; ensure_google_login_if_required reads
+            # country_code / requires_google_login from _CAPTCHA_SOLVER_CTX
+            # (set in main()), auto-logs-in from the stored per-country creds,
+            # and escalates a Google challenge to the interactive checkpoint
+            # when enabled. No-op for already-signed-in / login-not-required.
             try:
-                print(f"[INFO] {channel_id}: GoLogin session (attempt {attempt}/{YT_MAX_TRIES})")
-                debugger_address = gl.start()
-                time.sleep(2)
-                driver = scraper_mod.connect_to_gologin_browser(debugger_address)
-                scraper_mod._install_turnstile_interceptor(driver)
-                if not scraper_mod.check_browser_connectivity(driver):
-                    raise RuntimeError("Browser connectivity check failed — proxy may be unreachable")
+                scraper_mod.ensure_google_login_if_required(driver)
+            except scraper_mod.InteractiveCancelException:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                print(f"[WARN] google login step crashed (continuing logged-out): {exc}",
+                      file=sys.stderr)
+            session_ok = True
+            break
+        except scraper_mod.InteractiveCancelException:
+            print("[INFO] operator cancelled at Captcha solver checkpoint")
+            _teardown(driver, gl)
+            print("[RESULT] FAILED")
+            return 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ERROR] session bring-up attempt {attempt} failed: {exc}", file=sys.stderr)
+            _teardown(driver, gl)
+            driver = None
+            if attempt < YT_MAX_TRIES:
+                time.sleep(YT_BLOCK_COOLDOWN_S)
 
+    if not session_ok or driver is None:
+        print("[ERROR] could not bring up a GoLogin session after retries", file=sys.stderr)
+        try:
+            gl.stop()
+        except Exception:
+            pass
+        if args.mode != "probe":
+            _write_summary(args.output, args.parent_job_id, 0, 0, len(targets))
+        print("[RESULT] FAILED")
+        return 2
+
+    try:
+        for t in targets:
+            if args.mode != "probe" and (enriched + failed) > 0 and (time.time() - run_start) > YT_BUDGET_S:
+                remaining = len(targets) - attempted
+                print(f"[INFO] time budget ({YT_BUDGET_S}s) reached — stopping with "
+                      f"{remaining} channel(s) still pending (re-run to continue)")
+                break
+
+            channel_id = t["channel_id"]
+            attempted += 1
+            try:
                 result = enrich_one(
                     driver, scraper_mod, channel_id,
                     interactive=args.interactive, job_id=args.job_id,
                     worker_id=args.worker_id, worker_port=args.port,
                 )
-                if args.mode == "probe":
-                    _dump_probe(driver, scraper_mod, channel_id, interactive=args.interactive,
-                                job_id=args.job_id, worker_port=args.port)
-                    if result["ok"]:
-                        break
-                    if attempt < YT_MAX_TRIES:
-                        print(f"[INFO] {channel_id}: probe got a stub, retrying fresh session...")
-                elif result["ok"]:
-                    break
-                elif attempt < YT_MAX_TRIES:
-                    print(f"[INFO] {channel_id}: retrying on a fresh session...")
             except scraper_mod.InteractiveCancelException:
                 print("[INFO] operator cancelled at Captcha solver checkpoint")
                 _teardown(driver, gl)
                 print("[RESULT] FAILED")
                 return 1
             except Exception as exc:  # noqa: BLE001
-                print(f"[ERROR] {channel_id}: session attempt {attempt} failed: {exc}", file=sys.stderr)
-            finally:
-                _teardown(driver, gl)
-            if attempt < YT_MAX_TRIES:
-                time.sleep(YT_BLOCK_COOLDOWN_S)
+                print(f"[ERROR] {channel_id}: enrichment crashed: {exc}", file=sys.stderr)
+                result = {"ok": False, "fields": {}}
 
-        if args.mode == "probe":
-            continue
+            if args.mode == "probe":
+                _dump_probe(driver, scraper_mod, channel_id, interactive=args.interactive,
+                            job_id=args.job_id, worker_port=args.port)
+                continue
 
-        if result is None or not result["ok"]:
-            failed += 1
-            print(f"[WARN] {channel_id}: enrichment failed after retries", file=sys.stderr)
-        elif args.dry_run:
-            enriched += 1
-            print(f"[DRY-RUN] {channel_id}: fields={json.dumps(result['fields'])}")
-        else:
-            write_enrichment(sb, t["id"], result["fields"])
-            enriched += 1
-            n_contacts = len([k for k in result["fields"] if k.endswith("_url") or k == "email"])
-            print(f"[INFO] {channel_id}: enriched ({n_contacts} contact field(s))")
+            if not result["ok"]:
+                failed += 1
+                print(f"[WARN] {channel_id}: enrichment failed", file=sys.stderr)
+            elif args.dry_run:
+                enriched += 1
+                print(f"[DRY-RUN] {channel_id}: fields={json.dumps(result['fields'])}")
+            else:
+                write_enrichment(sb, t["id"], result["fields"])
+                enriched += 1
+                n_contacts = len([k for k in result["fields"] if k.endswith("_url") or k == "email"])
+                print(f"[INFO] {channel_id}: enriched ({n_contacts} contact field(s))")
 
-        time.sleep(YT_INTER_CHANNEL_DELAY_S)
+            time.sleep(YT_INTER_CHANNEL_DELAY_S)  # pace requests
+    finally:
+        _teardown(driver, gl)
 
     if args.mode == "probe":
         print("[RESULT] SUCCESS")
@@ -677,6 +710,10 @@ def main() -> None:
     parser.add_argument("--job-id", dest="job_id", default=None,
                         help="This Phase-2 scrape_queue.id (for captcha checkpoints)")
     parser.add_argument("--worker-id", dest="worker_id", default="", help="Worker identifier (logged)")
+    parser.add_argument("--country-code", dest="country_code", default="",
+                        help="ISO-2 of the (logged-in) profile — drives Google auto-login credential lookup")
+    parser.add_argument("--requires-login", dest="requires_login", action="store_true",
+                        help="Profile requires a Google login (escalate a challenge to the checkpoint)")
     parser.add_argument("--output", default="/tmp/youtube_phase2.json", help="Summary JSON path")
     parser.add_argument("--interactive", action="store_true",
                         help="Checkpoint to noVNC on an unsolved reCAPTCHA instead of flagging blocked")
@@ -701,12 +738,16 @@ def main() -> None:
         print("[RESULT] FAILED")
         sys.exit(1)
 
-    # Share captcha context with scraper.py's helpers (same mechanism as
-    # kick_profile_scrape.py / scraper.py main()).
+    # Share context with scraper.py's helpers (same mechanism as
+    # kick_profile_scrape.py / scraper.py main()). country_code +
+    # requires_google_login drive ensure_google_login_if_required's credential
+    # lookup and challenge-escalation decision.
     scraper_mod._CAPTCHA_SOLVER_CTX["job_id"] = args.job_id
     scraper_mod._CAPTCHA_SOLVER_CTX["worker_id"] = args.worker_id
     scraper_mod._CAPTCHA_SOLVER_CTX["worker_port"] = args.port
     scraper_mod._CAPTCHA_SOLVER_CTX["interactive"] = bool(args.interactive)
+    scraper_mod._CAPTCHA_SOLVER_CTX["country_code"] = (args.country_code or "").strip().upper() or None
+    scraper_mod._CAPTCHA_SOLVER_CTX["requires_google_login"] = bool(args.requires_login)
 
     rc = run(args, scraper_mod)
     sys.exit(rc)

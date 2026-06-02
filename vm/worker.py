@@ -954,6 +954,8 @@ def run_youtube_profile_scrape(
     parent_job_id: str,
     job_id: str,
     top_n: int,
+    country_code: str,
+    requires_google_login: bool,
 ) -> tuple[int, str, Path, Path]:
     """Invoke youtube_profile_scrape.py (Phase 2) as a subprocess.
 
@@ -980,14 +982,17 @@ def run_youtube_profile_scrape(
         "--top-n", str(top_n),
         "--job-id", job_id,
         "--worker-id", WORKER_ID,
+        "--country-code", country_code,
         "--output", str(output_path),
     ]
+    if requires_google_login:
+        cmd += ["--requires-login"]
     if captcha_solver_should_run():
         cmd += ["--interactive"]
 
     env = os.environ.copy()
-    log.info("launching youtube_profile_scrape (port=%d profile=%s parent=%s top_n=%d log=%s)",
-             GOLOGIN_PORT, profile_id[:8], parent_job_id[:8], top_n, log_path)
+    log.info("launching youtube_profile_scrape (port=%d profile=%s parent=%s top_n=%d cc=%s log=%s)",
+             GOLOGIN_PORT, profile_id[:8], parent_job_id[:8], top_n, country_code, log_path)
 
     timeout_s = INTERACTIVE_TIMEOUT_S if captcha_solver_should_run() else SCRAPE_TIMEOUT_S
     with open(log_path, "w", encoding="utf-8") as log_f:
@@ -1024,6 +1029,7 @@ def process_youtube_phase2_job(job: dict[str, Any]) -> None:
         fail_job(job_id, f"No gologin_profile_id configured for country_code={country_code}")
         return
     profile_id = profile["gologin_profile_id"]
+    requires_google_login = bool(profile.get("requires_google_login"))
 
     _kill_port()
 
@@ -1033,6 +1039,8 @@ def process_youtube_phase2_job(job: dict[str, Any]) -> None:
             parent_job_id=parent_job_id,
             job_id=job_id,
             top_n=YOUTUBE_PHASE2_TOP_N,
+            country_code=country_code,
+            requires_google_login=requires_google_login,
         )
     except subprocess.TimeoutExpired:
         _kill_port()
