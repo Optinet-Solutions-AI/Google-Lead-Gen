@@ -1154,6 +1154,75 @@ def _x_click_text_button(driver, labels):
     return False
 
 
+def _x_dismiss_cookies(driver):
+    """Dismiss X's cookie-consent banner if present — it overlays the lower
+    page and can intercept clicks on the login form."""
+    try:
+        els = driver.find_elements(By.CSS_SELECTOR, 'button, [role="button"]')
+    except Exception:  # noqa: BLE001
+        return
+    for label in ("refuse non-essential cookies", "accept all cookies", "accept all", "refuse non-essential"):
+        for el in els:
+            try:
+                if (el.text or "").strip().lower() == label:
+                    driver.execute_script("arguments[0].click();", el)
+                    time.sleep(1)
+                    return
+            except Exception:  # noqa: BLE001
+                continue
+
+
+def _x_find_username_input(driver, timeout_s=20):
+    """Poll for the username/email field across the selectors X uses on both
+    the /i/flow/login modal and the x.com landing's inline 'Email or username'
+    form. Returns the element or None."""
+    selectors = (
+        'input[autocomplete="username"]',
+        'input[name="text"]',
+        'input[autocapitalize="sentences"][type="text"]',
+        'input[type="email"]',
+        'input[type="text"]',
+    )
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        for sel in selectors:
+            try:
+                for el in driver.find_elements(By.CSS_SELECTOR, sel):
+                    if el.is_displayed() and el.is_enabled():
+                        return el
+            except Exception:  # noqa: BLE001
+                continue
+        time.sleep(1)
+    return None
+
+
+def _x_dump_login_diag(driver, where):
+    """On a login-step failure, print what the page actually shows (url, title,
+    the input inventory, button labels) so selectors can be fixed without
+    guesswork. Best-effort."""
+    try:
+        print(f"[DIAG] x login ({where}): url={driver.current_url!r} title={driver.title!r}",
+              file=sys.stderr)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        info = driver.execute_script(
+            """
+            const inputs = [...document.querySelectorAll('input')].slice(0,12).map(i => ({
+              ac: i.getAttribute('autocomplete'), name: i.getAttribute('name'),
+              type: i.getAttribute('type'), ph: i.getAttribute('placeholder'),
+              vis: !!(i.offsetWidth || i.offsetHeight)
+            }));
+            const btns = [...document.querySelectorAll('button,[role=button]')].slice(0,15)
+              .map(b => (b.innerText || '').trim()).filter(Boolean);
+            return { inputs, btns };
+            """
+        )
+        print(f"[DIAG] x login ({where}): {json.dumps(info)[:1600]}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[DIAG] x login ({where}): diag dump failed: {exc}", file=sys.stderr)
+
+
 def attempt_x_login(driver, username, password):
     """
     Drive x.com's sign-in form. Returns:
@@ -1162,6 +1231,10 @@ def attempt_x_login(driver, username, password):
                     can't fully auto-clear (caller may hand it to 2Captcha)
       'failed'    — wrong credentials / blocked / unknown error
     No DB side effects (single shared burner credential from the VM env).
+
+    Handles both X login surfaces — the /i/flow/login modal and the x.com
+    landing's inline form (button reads "Continue" there, "Next" on the modal)
+    — and dismisses the cookie-consent banner that otherwise intercepts clicks.
     """
     print(f"[INFO] x login: attempting auto sign-in as {username}")
     try:
@@ -1169,30 +1242,40 @@ def attempt_x_login(driver, username, password):
     except Exception as exc:  # noqa: BLE001
         print(f"[WARN] x login: navigation failed: {exc}", file=sys.stderr)
         return "failed"
-    time.sleep(4)  # client-rendered SPA flow
+    time.sleep(5)  # client-rendered SPA flow
+    _x_dismiss_cookies(driver)
+
+    next_labels = ("Next", "Continue", "Weiter", "Siguiente", "Suivant", "Fortfahren")
 
     # Username step ---------------------------------------------------------
+    user_input = _x_find_username_input(driver, timeout_s=20)
+    if user_input is None:
+        if _x_login_has_challenge(driver):
+            return "challenge"
+        _x_dump_login_diag(driver, "username-not-found")
+        return "failed"
     try:
-        user_input = WebDriverWait(driver, 20).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, 'input[autocomplete="username"]'))
-        )
+        try:
+            user_input.click()
+        except Exception:  # noqa: BLE001
+            pass
         user_input.clear()
         for ch in username:
             user_input.send_keys(ch)
             time.sleep(random.uniform(0.04, 0.14))
         time.sleep(0.5)
-        if not _x_click_text_button(driver, ("Next", "Weiter", "Siguiente", "Suivant")):
+        if not _x_click_text_button(driver, next_labels):
             user_input.send_keys(Keys.RETURN)
     except Exception as exc:  # noqa: BLE001
-        print(f"[WARN] x login: username step failed: {exc}", file=sys.stderr)
         if _x_login_has_challenge(driver):
             return "challenge"
+        print(f"[WARN] x login: username entry failed: {exc}", file=sys.stderr)
+        _x_dump_login_diag(driver, "username-entry")
         return "failed"
 
     time.sleep(3)
 
-    # Optional "enter your phone number or username" re-confirm interstitial
-    # (X shows this on a fresh/unusual login). Feed the username again.
+    # Optional "enter your phone number or username" re-confirm interstitial.
     try:
         verify = driver.find_elements(By.CSS_SELECTOR, 'input[data-testid="ocfEnterTextTextInput"]')
         if verify:
@@ -1201,7 +1284,7 @@ def attempt_x_login(driver, username, password):
                 verify[0].send_keys(ch)
                 time.sleep(random.uniform(0.04, 0.12))
             time.sleep(0.4)
-            if not _x_click_text_button(driver, ("Next", "Weiter", "Siguiente", "Suivant")):
+            if not _x_click_text_button(driver, next_labels):
                 verify[0].send_keys(Keys.RETURN)
             time.sleep(3)
     except Exception:  # noqa: BLE001
@@ -1211,7 +1294,8 @@ def attempt_x_login(driver, username, password):
     try:
         pwd_input = WebDriverWait(driver, 15).until(
             EC.element_to_be_clickable(
-                (By.CSS_SELECTOR, 'input[name="password"], input[autocomplete="current-password"]')
+                (By.CSS_SELECTOR,
+                 'input[name="password"], input[autocomplete="current-password"], input[type="password"]')
             )
         )
         pwd_input.clear()
@@ -1228,6 +1312,7 @@ def attempt_x_login(driver, username, password):
         if _x_login_has_challenge(driver):
             return "challenge"
         print(f"[WARN] x login: password step failed: {exc}", file=sys.stderr)
+        _x_dump_login_diag(driver, "password")
         return "failed"
 
     # Wait for the post-login redirect to the app shell ---------------------
@@ -1244,6 +1329,7 @@ def attempt_x_login(driver, username, password):
         return "success"
     if _x_login_has_challenge(driver):
         return "challenge"
+    _x_dump_login_diag(driver, "post-login-no-redirect")
     return "failed"
 
 
