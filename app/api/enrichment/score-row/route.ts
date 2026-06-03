@@ -153,7 +153,15 @@ export async function POST(req: Request): Promise<Response> {
         .eq('id', leadId)
       return NextResponse.json({ ok: true, status: 'skipped' })
     }
-    const result = scoreAffiliate(html, url)
+    // Pull the active brand domains so a direct link to a Rooster brand
+    // counts as a casino-outbound signal even on non-English pages where
+    // the brand domain doesn't contain an English CASINO_KEYWORD.
+    const { data: brandRows } = await svc.rpc('list_rooster_brand_domains')
+    const brandDomains = ((brandRows ?? []) as Array<{ domain: string }>)
+      .map(b => b.domain)
+      .filter((d): d is string => typeof d === 'string' && d.length > 0)
+
+    const result = scoreAffiliate(html, url, { brandDomains })
     let isAffiliate = result.classification === 'AFFILIATE'
     // Confidence is widened to string since the LLM-tie-broken paths
     // produce composite labels like LOW_LLM_AFFILIATE that the scorer's
@@ -340,9 +348,17 @@ export async function POST(req: Request): Promise<Response> {
       // Final safety net: ask the LLM to look at the page text + brand
       // list. Catches affiliates whose brand promotion is via image
       // logos / CTAs / cloaked tracking that neither cheap nor deep
-      // signals picked up. Only runs when we have HTML cached AND the
-      // lead is currently flagged as affiliate (otherwise it's
-      // probably not a partner site).
+      // signals picked up.
+      //
+      // Gate: run UNLESS the affiliate heuristic was a *confident*
+      // NOT_AFFILIATE (is_affiliate=false at HIGH/VERY_HIGH). The old
+      // gate required is_affiliate===true, which created a cascading
+      // false-negative: a Danish/non-English review site that the
+      // English-biased heuristic scored LOW (is_affiliate=false) would
+      // never reach this net, even though it promotes our brands. By
+      // also running on uncertain verdicts (LOW/MEDIUM, ERROR, null) we
+      // recover those while still skipping pages the heuristic is sure
+      // are not affiliates — keeping the OpenAI cost bounded.
       const { data: cacheRow } = await svc
         .from('fetched_html_cache')
         .select('html')
@@ -351,16 +367,21 @@ export async function POST(req: Request): Promise<Response> {
       const cachedHtml = (cacheRow as { html: string | null } | null)?.html ?? ''
       const { data: leadFlags } = await svc
         .from('google_lead_gen_table')
-        .select('is_affiliate, is_rooster_overridden_at')
+        .select('is_affiliate, affiliate_confidence, is_rooster_overridden_at')
         .eq('id', leadId)
         .maybeSingle()
-      const isAff =
-        (leadFlags as { is_affiliate: boolean | null } | null)?.is_affiliate === true
-      const isOverridden =
-        (leadFlags as { is_rooster_overridden_at: string | null } | null)
-          ?.is_rooster_overridden_at !== null
+      const flags = leadFlags as {
+        is_affiliate: boolean | null
+        affiliate_confidence: string | null
+        is_rooster_overridden_at: string | null
+      } | null
+      const confidence = flags?.affiliate_confidence ?? ''
+      const confidentNotAffiliate =
+        flags?.is_affiliate === false &&
+        (confidence === 'HIGH' || confidence === 'VERY_HIGH')
+      const isOverridden = flags?.is_rooster_overridden_at != null
 
-      if (isAff && !isOverridden && cachedHtml.length > 200) {
+      if (!confidentNotAffiliate && !isOverridden && cachedHtml.length > 200) {
         const llm = await classifyRoosterBorderline({
           url: url,
           html: cachedHtml,
@@ -398,7 +419,7 @@ export async function POST(req: Request): Promise<Response> {
         ok: true,
         partner: false,
         resolved_count: resolvedUrls.length,
-        llm_consulted: isAff && !isOverridden && cachedHtml.length > 200,
+        llm_consulted: !confidentNotAffiliate && !isOverridden && cachedHtml.length > 200,
       })
     }
 

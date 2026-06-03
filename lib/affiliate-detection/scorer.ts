@@ -53,6 +53,33 @@ const REVIEW_KEYWORDS = [
   'top 10',
   'top 25',
   'top 20',
+  // Localized review/comparison language for the Latin-script markets we
+  // actually scrape (de = AT, da = DK, no = NO, sv = SE). These are
+  // affiliate-*structural* phrases ("best casino", "casino review/test")
+  // that real casinos don't use about themselves, so they add recall on
+  // non-English review sites without skewing precision toward flagging
+  // genuine foreign casinos. Broader / non-Latin coverage (e.g. Arabic
+  // for AE) is left to the LLM tie-breaker, which is language-agnostic.
+  // de (German)
+  'bestes online casino',
+  'beste online casinos',
+  'casino test',
+  'casino bewertung',
+  'casino vergleich',
+  // da (Danish) — note both "casino" and the Danish "kasino" spelling
+  'bedste online casino',
+  'bedste casino',
+  'bedste online kasino',
+  'bedste kasino',
+  'casino anmeldelse',
+  'kasino anmeldelse',
+  // no (Norwegian)
+  'beste online casino',
+  'beste casino',
+  // sv (Swedish)
+  'bästa online casino',
+  'bästa casino',
+  'casino recension',
 ]
 
 const CTA_PATTERNS = [
@@ -142,7 +169,11 @@ function getDomain(urlString: string): string | null {
   }
 }
 
-function countCasinoOutboundLinks(html: string, currentUrl: string): number {
+function countCasinoOutboundLinks(
+  html: string,
+  currentUrl: string,
+  brandDomains: ReadonlySet<string> = new Set(),
+): number {
   let currentDomain = ''
   try {
     currentDomain = normaliseHost(new URL(currentUrl).hostname)
@@ -176,7 +207,19 @@ function countCasinoOutboundLinks(html: string, currentUrl: string): number {
     if (link.startsWith('http')) {
       const linkDomain = getDomain(link)
       if (linkDomain && linkDomain !== currentDomain) {
-        if (CASINO_KEYWORDS.some(kw => linkDomain.includes(kw) || linkLower.includes(kw))) {
+        // A direct link to a known Rooster brand domain is an
+        // unambiguous casino-outbound signal regardless of page
+        // language — the brand names (lucky7even, rollero, playmojo…)
+        // don't contain the English CASINO_KEYWORDS, so without this
+        // they slip past the keyword test and the primary decision
+        // factor under-counts on non-English affiliate sites.
+        const isBrandLink =
+          brandDomains.has(linkDomain) ||
+          [...brandDomains].some(b => linkDomain.endsWith('.' + b))
+        if (
+          isBrandLink ||
+          CASINO_KEYWORDS.some(kw => linkDomain.includes(kw) || linkLower.includes(kw))
+        ) {
           externalCasinoDomains.add(linkDomain)
         }
       }
@@ -186,8 +229,23 @@ function countCasinoOutboundLinks(html: string, currentUrl: string): number {
   return Math.max(externalCasinoDomains.size, casinoTrackingLinks.size)
 }
 
-export function scoreAffiliate(html: string, inputUrl: string): AffiliateScoreResult {
+export type ScoreAffiliateOptions = {
+  /** Known Rooster brand domains (lowercased, no leading www.). A direct
+   *  link to any of these counts as a casino-outbound link even when the
+   *  domain doesn't contain a CASINO_KEYWORD. Optional — omit for the
+   *  legacy keyword-only behaviour. */
+  brandDomains?: ReadonlyArray<string>
+}
+
+export function scoreAffiliate(
+  html: string,
+  inputUrl: string,
+  opts: ScoreAffiliateOptions = {},
+): AffiliateScoreResult {
   const text = html ? html.toLowerCase() : ''
+  const brandDomains = new Set(
+    (opts.brandDomains ?? []).map(d => d.toLowerCase().replace(/^www\./, '')),
+  )
 
   if (!html || html.length < 100) {
     return {
@@ -206,7 +264,7 @@ export function scoreAffiliate(html: string, inputUrl: string): AffiliateScoreRe
   let casinoScore = 0
   const indicators: string[] = []
 
-  const externalCasinoCount = countCasinoOutboundLinks(html, inputUrl)
+  const externalCasinoCount = countCasinoOutboundLinks(html, inputUrl, brandDomains)
 
   // === PRIMARY DECISION FACTOR: External Casino Links ===
   if (externalCasinoCount >= 5) {
