@@ -23,6 +23,7 @@ the scrape workers on 9222–9224.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -697,6 +698,52 @@ def _pick_stag_pages(html: str, base_url: str) -> list[str]:
     return _pick_pages(html, base_url, STAG_LIST_LINK_RE, STAG_PATH_FALLBACKS, MAX_EXTRA_PAGES)
 
 
+def _full_page_screenshot(driver: webdriver.Chrome) -> bytes | None:
+    """Capture the whole page top-to-bottom as PNG bytes.
+
+    Selenium's get_screenshot_as_png() only grabs the visible viewport, so
+    landing-page captures came out as just the hero section — and the
+    enrichment re-capture then overwrote the good full-page screenshot the
+    scraper takes at scrape time. Mirror that proven scrape-time approach
+    (scraper.py): scroll through to trigger lazy-loaded content, snap back
+    to the top, then use CDP Page.captureScreenshot with
+    captureBeyondViewport to render the full scroll height in one PNG.
+    Falls back to the viewport screenshot if CDP is unavailable.
+    """
+    try:
+        driver.execute_script(
+            """
+            return new Promise(resolve => {
+                const step = 600;
+                let y = 0;
+                const max = document.body.scrollHeight || 8000;
+                const tick = setInterval(() => {
+                    window.scrollBy(0, step);
+                    y += step;
+                    if (y >= max) {
+                        clearInterval(tick);
+                        window.scrollTo(0, 0);
+                        setTimeout(resolve, 250);
+                    }
+                }, 120);
+            });
+            """,
+        )
+        # Give lazy iframes / images one more beat to settle.
+        time.sleep(1.2)
+        cdp = driver.execute_cdp_cmd(
+            "Page.captureScreenshot",
+            {"captureBeyondViewport": True, "fromSurface": True},
+        )
+        return base64.b64decode(cdp["data"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("full-page screenshot failed (%s) — falling back to viewport", exc)
+        try:
+            return driver.get_screenshot_as_png()
+        except Exception:  # noqa: BLE001
+            return None
+
+
 def resolve_in_browser(driver: webdriver.Chrome, tracking_url: str
                        ) -> tuple[str | None, list[str], bytes | None]:
     """
@@ -797,7 +844,7 @@ def _open_and_fetch(
         screenshot_bytes: bytes | None = None
         if want_screenshot:
             try:
-                screenshot_bytes = driver.get_screenshot_as_png()
+                screenshot_bytes = _full_page_screenshot(driver)
             except Exception as exc:  # noqa: BLE001
                 log.warning("screenshot capture failed: %s", exc)
 
@@ -1049,7 +1096,7 @@ def run_full_browser_session(
         homepage_png: bytes | None = None
         if want_screenshot:
             try:
-                homepage_png = driver.get_screenshot_as_png()
+                homepage_png = _full_page_screenshot(driver)
             except Exception as exc:  # noqa: BLE001
                 log.warning("homepage screenshot failed: %s", exc)
 
