@@ -131,6 +131,20 @@ KICK_PROFILE_SCRAPE_PATH = os.environ.get(
     str(Path.home() / "kick_profile_scrape.py"),
 )
 KICK_PHASE2_TOP_N = int(os.environ.get("KICK_PHASE2_TOP_N", "25"))
+# X (x.com) is the BROWSER path for BOTH phases — unlike Kick/YouTube there's
+# no affordable search API, so Phase 1 also runs a real GoLogin/Selenium
+# session (an authenticated x.com/search?f=user scrape). Budget like a full
+# scrape, not the pure-HTTP Kick/YouTube Phase 1.
+X_SEARCH_PATH = os.environ.get(
+    "X_SEARCH_PATH",
+    str(Path.home() / "x_search.py"),
+)
+X_PROFILE_SCRAPE_PATH = os.environ.get(
+    "X_PROFILE_SCRAPE_PATH",
+    str(Path.home() / "x_profile_scrape.py"),
+)
+X_PHASE1_MAX_RESULTS = int(os.environ.get("X_PHASE1_MAX_RESULTS", "100"))
+X_PHASE2_TOP_N = int(os.environ.get("X_PHASE2_TOP_N", "25"))
 KILL_SCRIPT_PATH     = os.environ.get(
     "KILL_SCRIPT_PATH",
     str(Path.home() / "kill_gologin.py"),
@@ -1091,6 +1105,277 @@ def process_youtube_phase2_job(job: dict[str, Any]) -> None:
              payload.get("attempted") or 0, payload.get("failed") or 0)
 
 
+def run_x_search(
+    profile_id: str,
+    keyword: str,
+    country_code: str,
+    language: str,
+    job_id: str,
+    max_results: int,
+) -> tuple[int, str, Path, Path]:
+    """Invoke x_search.py (Phase 1) as a subprocess.
+
+    Unlike run_kick_search / run_youtube_search (pure HTTP), X Phase 1 is the
+    *browser* path — it needs the GoLogin profile + port like run_scrape,
+    because x.com has no affordable search API and gates logged-out scraping
+    behind a login wall. Captcha/login gating mirrors run_scrape: when the
+    solver is active, hand the child --interactive/--job-id and use the longer
+    interactive timeout so a paused (login-wall) job isn't TERM'd while a human
+    signs in through noVNC.
+
+    Returns: (exit_code, combined_log_text, json_output_path, log_path)
+    """
+    output_path = Path(RESULTS_DIR) / f"x_{WORKER_ID}_{GOLOGIN_PORT}.json"
+    log_path    = Path(RESULTS_DIR) / f"x_{WORKER_ID}_{GOLOGIN_PORT}.log"
+    output_path.unlink(missing_ok=True)
+    log_path.unlink(missing_ok=True)
+
+    cmd = [
+        "python3",
+        "-u",
+        X_SEARCH_PATH,
+        profile_id,
+        "--port", str(GOLOGIN_PORT),
+        "-k", keyword,
+        "--country-code", country_code,
+        "--language", language,
+        "--max-results", str(max_results),
+        "--job-id", job_id,
+        "--worker-id", WORKER_ID,
+        "--output", str(output_path),
+    ]
+    if captcha_solver_should_run():
+        cmd += ["--interactive"]
+
+    env = os.environ.copy()
+    log.info("launching x_search (port=%d profile=%s keyword=%r cc=%s max=%d log=%s)",
+             GOLOGIN_PORT, profile_id[:8], keyword, country_code, max_results, log_path)
+
+    timeout_s = INTERACTIVE_TIMEOUT_S if captcha_solver_should_run() else SCRAPE_TIMEOUT_S
+    with open(log_path, "w", encoding="utf-8") as log_f:
+        result = subprocess.run(
+            cmd, env=env, stdout=log_f, stderr=subprocess.STDOUT, timeout=timeout_s,
+        )
+
+    try:
+        combined = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        combined = ""
+    return result.returncode, combined, output_path, log_path
+
+
+def process_x_job(job: dict[str, Any]) -> None:
+    """Handle a scrape_queue row where search_engine='x'.
+
+    BOTH X phases are the browser path (no pure-HTTP branch like Kick/YouTube),
+    so this looks up the country's GoLogin profile and runs the browser
+    subprocess. The profile must be signed into a burner X account
+    (gologin_profiles.is_x_logged_in); when it isn't and the captcha solver is
+    on, the child parks on the noVNC login checkpoint.
+
+    Phase 2 jobs (operator-triggered ▶ profile enrichment) carry a
+    parent_scrape_job_id and route to process_x_phase2_job.
+    """
+    if job.get("parent_scrape_job_id"):
+        process_x_phase2_job(job)
+        return
+
+    job_id = job["id"]
+    country_code = job["country_code"]
+    keyword = job["keyword"]
+    language = (job.get("language") or "en").strip().lower() or "en"
+
+    log.info("claimed x job %s | country=%s keyword=%r lang=%s",
+             job_id, country_code, keyword, language)
+
+    profile = fetch_profile(country_code)
+    if not profile or not profile.get("gologin_profile_id"):
+        fail_job(job_id, f"No gologin_profile_id configured for country_code={country_code}")
+        return
+    profile_id = profile["gologin_profile_id"]
+
+    _kill_port()
+
+    try:
+        exit_code, combined_log, output_path, log_path = run_x_search(
+            profile_id=profile_id,
+            keyword=keyword,
+            country_code=country_code,
+            language=language,
+            job_id=job_id,
+            max_results=X_PHASE1_MAX_RESULTS,
+        )
+    except subprocess.TimeoutExpired:
+        _kill_port()
+        timeout_used = INTERACTIVE_TIMEOUT_S if CAPTCHA_SOLVER_MODE else SCRAPE_TIMEOUT_S
+        fail_job(job_id, f"X search took too long ({timeout_used // 60} min) and was stopped.")
+        return
+    except Exception as exc:  # noqa: BLE001
+        _kill_port()
+        fail_job(job_id, classify_failure(exit_code=None, error_text=str(exc), source="scraper"))
+        return
+
+    if "[RESULT] SUCCESS" not in combined_log:
+        _kill_port()
+        fail_job(job_id, classify_failure(exit_code=exit_code, error_text=combined_log, source="scraper"))
+        return
+
+    _kill_port()
+
+    if not output_path.exists():
+        fail_job(job_id, "X search finished but the results file is missing on disk.")
+        return
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        fail_job(job_id, "X search finished but the results file is corrupted — re-run usually fixes this.")
+        return
+
+    # Creators are already in public.x_creators (the child wrote them
+    # directly). Passing [] makes the leads-insert a no-op while the summary +
+    # status update fire and the active_profile_lock is released.
+    summary = {
+        "total_results": payload.get("total_results"),
+        "organic_results": payload.get("organic_results"),
+        "ppc_results": payload.get("ppc_results"),
+        "pages_scraped": payload.get("pages_scraped"),
+        "scraped_at": payload.get("timestamp"),
+        "is_logged_in": payload.get("is_logged_in"),
+        "view_mode": "desktop",   # X has no mobile/desktop split
+    }
+    try:
+        complete_job(job_id, [], summary)
+    except Exception as exc:  # noqa: BLE001
+        log.error("complete_scrape_job RPC failed for x job %s: %s", job_id, exc)
+        return
+
+    log.info("x job %s completed | %d creators", job_id, summary.get("total_results") or 0)
+
+
+def run_x_profile_scrape(
+    profile_id: str,
+    parent_job_id: str,
+    job_id: str,
+    top_n: int,
+    country_code: str,
+) -> tuple[int, str, Path, Path]:
+    """Invoke x_profile_scrape.py (Phase 2) as a subprocess. Browser path like
+    run_kick_profile_scrape / run_youtube_profile_scrape.
+
+    Returns: (exit_code, combined_log_text, json_output_path, log_path)
+    """
+    output_path = Path(RESULTS_DIR) / f"x_phase2_{WORKER_ID}_{GOLOGIN_PORT}.json"
+    log_path    = Path(RESULTS_DIR) / f"x_phase2_{WORKER_ID}_{GOLOGIN_PORT}.log"
+    output_path.unlink(missing_ok=True)
+    log_path.unlink(missing_ok=True)
+
+    cmd = [
+        "python3",
+        "-u",
+        X_PROFILE_SCRAPE_PATH,
+        profile_id,
+        "--port", str(GOLOGIN_PORT),
+        "--parent-job-id", parent_job_id,
+        "--top-n", str(top_n),
+        "--job-id", job_id,
+        "--worker-id", WORKER_ID,
+        "--country-code", country_code,
+        "--output", str(output_path),
+    ]
+    if captcha_solver_should_run():
+        cmd += ["--interactive"]
+
+    env = os.environ.copy()
+    log.info("launching x_profile_scrape (port=%d profile=%s parent=%s top_n=%d cc=%s log=%s)",
+             GOLOGIN_PORT, profile_id[:8], parent_job_id[:8], top_n, country_code, log_path)
+
+    timeout_s = INTERACTIVE_TIMEOUT_S if captcha_solver_should_run() else SCRAPE_TIMEOUT_S
+    with open(log_path, "w", encoding="utf-8") as log_f:
+        result = subprocess.run(
+            cmd, env=env, stdout=log_f, stderr=subprocess.STDOUT, timeout=timeout_s,
+        )
+
+    try:
+        combined = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        combined = ""
+    return result.returncode, combined, output_path, log_path
+
+
+def process_x_phase2_job(job: dict[str, Any]) -> None:
+    """Handle an X Phase-2 enrichment job (search_engine='x' with a
+    parent_scrape_job_id). Browser path: look up the country's GoLogin profile,
+    run x_profile_scrape.py over the parent job's top-N un-enriched creators,
+    then complete (creators are written directly to x_creators / x_links)."""
+    job_id = job["id"]
+    country_code = job["country_code"]
+    parent_job_id = job["parent_scrape_job_id"]
+
+    log.info("claimed x PHASE 2 job %s | parent=%s country=%s",
+             job_id, parent_job_id, country_code)
+
+    profile = fetch_profile(country_code)
+    if not profile or not profile.get("gologin_profile_id"):
+        fail_job(job_id, f"No gologin_profile_id configured for country_code={country_code}")
+        return
+    profile_id = profile["gologin_profile_id"]
+
+    _kill_port()
+
+    try:
+        exit_code, combined_log, output_path, log_path = run_x_profile_scrape(
+            profile_id=profile_id,
+            parent_job_id=parent_job_id,
+            job_id=job_id,
+            top_n=X_PHASE2_TOP_N,
+            country_code=country_code,
+        )
+    except subprocess.TimeoutExpired:
+        _kill_port()
+        timeout_used = INTERACTIVE_TIMEOUT_S if CAPTCHA_SOLVER_MODE else SCRAPE_TIMEOUT_S
+        fail_job(job_id, f"X profile enrichment took too long ({timeout_used // 60} min) and was stopped.")
+        return
+    except Exception as exc:  # noqa: BLE001
+        _kill_port()
+        fail_job(job_id, classify_failure(exit_code=None, error_text=str(exc), source="scraper"))
+        return
+
+    if "[RESULT] SUCCESS" not in combined_log:
+        _kill_port()
+        fail_job(job_id, classify_failure(exit_code=exit_code, error_text=combined_log, source="scraper"))
+        return
+
+    _kill_port()
+
+    if not output_path.exists():
+        fail_job(job_id, "X profile enrichment finished but the results file is missing on disk.")
+        return
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        fail_job(job_id, "X profile enrichment finished but the results file is corrupted — re-run usually fixes this.")
+        return
+
+    summary = {
+        "total_results": payload.get("total_results"),
+        "organic_results": payload.get("organic_results"),
+        "ppc_results": payload.get("ppc_results"),
+        "pages_scraped": payload.get("pages_scraped"),
+        "scraped_at": payload.get("timestamp"),
+        "is_logged_in": payload.get("is_logged_in"),
+        "view_mode": "desktop",
+    }
+    try:
+        complete_job(job_id, [], summary)
+    except Exception as exc:  # noqa: BLE001
+        log.error("complete_scrape_job RPC failed for x phase 2 job %s: %s", job_id, exc)
+        return
+
+    log.info("x phase 2 job %s completed | %d creators enriched (%d attempted, %d failed)",
+             job_id, payload.get("total_results") or 0,
+             payload.get("attempted") or 0, payload.get("failed") or 0)
+
+
 def process_job(job: dict[str, Any]) -> None:
     job_id = job["id"]
     country_code = job["country_code"]
@@ -1100,7 +1385,7 @@ def process_job(job: dict[str, Any]) -> None:
     # that pre-date the migration that added the column.
     language = (job.get("language") or "en").strip().lower() or "en"
     engine = (job.get("search_engine") or "google").strip().lower() or "google"
-    if engine not in ("google", "bing", "youtube", "kick"):
+    if engine not in ("google", "bing", "youtube", "kick", "x"):
         engine = "google"
 
     # YouTube and Kick jobs take a completely different path — pure
@@ -1112,6 +1397,13 @@ def process_job(job: dict[str, Any]) -> None:
         return
     if engine == "kick":
         process_kick_job(job)
+        return
+    # X is the browser path for BOTH phases (no affordable search API +
+    # login wall), so it does its OWN profile lookup + Chromium lifecycle
+    # inside process_x_job — branch out before the generic profile lookup
+    # below, same as Kick/YouTube.
+    if engine == "x":
+        process_x_job(job)
         return
 
     # view_mode controls whether scraper.py runs the desktop pass, the
