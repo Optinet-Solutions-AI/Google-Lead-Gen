@@ -319,13 +319,14 @@ export async function pushLeadToMonday(
   }
 
   // ----- Step 2: optional screenshot upload -----
-  // Prefer the SERP ad-card capture (serp_screenshot_path): it's taken at
-  // scrape time and is reliable. Fall back to the post-click landing
-  // capture (screenshot_content_link) only when no SERP card exists — that
-  // one can be a stale/wrong page when the ad redirector fails to load at
-  // enrichment time (the "screenshot of a Google results page" report).
+  // Prefer the post-click landing capture (screenshot_content_link): it's
+  // the full-page, top-to-bottom shot of the advertiser site that the
+  // reviewers want on the card. Now that the ad-redirector URL is decoded
+  // before enrichment, this reliably captures the real advertiser (not a
+  // stale results page). Fall back to the scrape-time SERP ad-card
+  // (serp_screenshot_path) only when no landing capture exists.
   let attachedFile = false
-  const screenshotPath = lead.serp_screenshot_path ?? lead.screenshot_content_link
+  const screenshotPath = lead.screenshot_content_link ?? lead.serp_screenshot_path
   if (screenshotPath) {
     try {
       const { data: blob, error: dlErr } = await svc.storage
