@@ -1132,10 +1132,11 @@ def _x_login_has_challenge(driver):
 
 
 def _x_click_text_button(driver, labels):
-    """Click the first button / role=button whose visible text matches one of
-    `labels` (case-insensitive). Returns True if one was clicked. X's Next /
-    Log in steps have no stable id on the Next button, so we match by text."""
-    wanted = [l.lower() for l in labels]
+    """Click the first visible button / role=button whose text EXACTLY matches
+    one of `labels` (case-insensitive). Exact match avoids clicking
+    'Continue with phone' / 'Continue with Apple' when we want the plain
+    'Continue' submit. Returns True if one was clicked."""
+    wanted = {l.lower() for l in labels}
     try:
         els = driver.find_elements(By.CSS_SELECTOR, 'button, [role="button"]')
     except Exception:  # noqa: BLE001
@@ -1143,15 +1144,23 @@ def _x_click_text_button(driver, labels):
     for el in els:
         try:
             txt = (el.text or "").strip().lower()
-        except Exception:  # noqa: BLE001
-            continue
-        if txt and any(w == txt or w in txt for w in wanted):
-            try:
+            if txt in wanted and el.is_displayed():
                 driver.execute_script("arguments[0].click();", el)
                 return True
-            except Exception:  # noqa: BLE001
-                continue
+        except Exception:  # noqa: BLE001
+            continue
     return False
+
+
+def _x_first_visible(driver, selector):
+    """First displayed + enabled element matching selector, or None."""
+    try:
+        for el in driver.find_elements(By.CSS_SELECTOR, selector):
+            if el.is_displayed() and el.is_enabled():
+                return el
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 def _x_dismiss_cookies(driver):
@@ -1246,6 +1255,27 @@ def attempt_x_login(driver, username, password):
     _x_dismiss_cookies(driver)
 
     next_labels = ("Next", "Continue", "Weiter", "Siguiente", "Suivant", "Fortfahren")
+    login_labels = ("Log in", "Login", "Anmelden", "Se connecter", "Continue")
+
+    def _type_into(el, text):
+        try:
+            el.click()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            el.clear()
+        except Exception:  # noqa: BLE001
+            pass
+        for ch in text:
+            el.send_keys(ch)
+            time.sleep(random.uniform(0.04, 0.14))
+
+    def _pwd_field():
+        for sel in ('input[name="password"]', 'input[autocomplete="current-password"]', 'input[type="password"]'):
+            el = _x_first_visible(driver, sel)
+            if el:
+                return el
+        return None
 
     # Username step ---------------------------------------------------------
     user_input = _x_find_username_input(driver, timeout_s=20)
@@ -1255,17 +1285,8 @@ def attempt_x_login(driver, username, password):
         _x_dump_login_diag(driver, "username-not-found")
         return "failed"
     try:
-        try:
-            user_input.click()
-        except Exception:  # noqa: BLE001
-            pass
-        user_input.clear()
-        for ch in username:
-            user_input.send_keys(ch)
-            time.sleep(random.uniform(0.04, 0.14))
-        time.sleep(0.5)
-        if not _x_click_text_button(driver, next_labels):
-            user_input.send_keys(Keys.RETURN)
+        _type_into(user_input, username)
+        time.sleep(0.6)
     except Exception as exc:  # noqa: BLE001
         if _x_login_has_challenge(driver):
             return "challenge"
@@ -1273,46 +1294,62 @@ def attempt_x_login(driver, username, password):
         _x_dump_login_diag(driver, "username-entry")
         return "failed"
 
-    time.sleep(3)
+    # Combined single-page form? (username + password together, e.g. the
+    # /i/jf/onboarding/web?mode=login surface). If the password field is
+    # already here, fill it on the same page; otherwise advance the two-step
+    # flow (click Next/Continue, handle the re-confirm interstitial, wait).
+    pwd = _pwd_field()
+    if pwd is None:
+        if not _x_click_text_button(driver, next_labels):
+            try:
+                user_input.send_keys(Keys.RETURN)
+            except Exception:  # noqa: BLE001
+                pass
+        time.sleep(3)
+        # Optional "enter your phone number or username" re-confirm step.
+        try:
+            verify = _x_first_visible(driver, 'input[data-testid="ocfEnterTextTextInput"]')
+            if verify:
+                _type_into(verify, username)
+                time.sleep(0.4)
+                if not _x_click_text_button(driver, next_labels):
+                    verify.send_keys(Keys.RETURN)
+                time.sleep(3)
+        except Exception:  # noqa: BLE001
+            pass
+        deadline = time.time() + 15
+        while time.time() < deadline and pwd is None:
+            pwd = _pwd_field()
+            if pwd is None:
+                if _x_login_has_challenge(driver):
+                    return "challenge"
+                time.sleep(1)
 
-    # Optional "enter your phone number or username" re-confirm interstitial.
-    try:
-        verify = driver.find_elements(By.CSS_SELECTOR, 'input[data-testid="ocfEnterTextTextInput"]')
-        if verify:
-            verify[0].clear()
-            for ch in username:
-                verify[0].send_keys(ch)
-                time.sleep(random.uniform(0.04, 0.12))
-            time.sleep(0.4)
-            if not _x_click_text_button(driver, next_labels):
-                verify[0].send_keys(Keys.RETURN)
-            time.sleep(3)
-    except Exception:  # noqa: BLE001
-        pass
+    if pwd is None:
+        if _x_login_has_challenge(driver):
+            return "challenge"
+        _x_dump_login_diag(driver, "password-not-found")
+        return "failed"
 
     # Password step ---------------------------------------------------------
     try:
-        pwd_input = WebDriverWait(driver, 15).until(
-            EC.element_to_be_clickable(
-                (By.CSS_SELECTOR,
-                 'input[name="password"], input[autocomplete="current-password"], input[type="password"]')
-            )
-        )
-        pwd_input.clear()
-        for ch in password:
-            pwd_input.send_keys(ch)
-            time.sleep(random.uniform(0.04, 0.14))
-        time.sleep(0.5)
+        _type_into(pwd, password)
+        time.sleep(0.6)
+        clicked = False
         try:
-            driver.find_element(By.CSS_SELECTOR, 'button[data-testid="LoginForm_Login_Button"]').click()
+            btn = driver.find_element(By.CSS_SELECTOR, 'button[data-testid="LoginForm_Login_Button"]')
+            if btn.is_displayed():
+                driver.execute_script("arguments[0].click();", btn)
+                clicked = True
         except Exception:  # noqa: BLE001
-            if not _x_click_text_button(driver, ("Log in", "Login", "Anmelden", "Se connecter")):
-                pwd_input.send_keys(Keys.RETURN)
+            pass
+        if not clicked and not _x_click_text_button(driver, login_labels):
+            pwd.send_keys(Keys.RETURN)
     except Exception as exc:  # noqa: BLE001
         if _x_login_has_challenge(driver):
             return "challenge"
-        print(f"[WARN] x login: password step failed: {exc}", file=sys.stderr)
-        _x_dump_login_diag(driver, "password")
+        print(f"[WARN] x login: password entry failed: {exc}", file=sys.stderr)
+        _x_dump_login_diag(driver, "password-entry")
         return "failed"
 
     # Wait for the post-login redirect to the app shell ---------------------
