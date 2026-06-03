@@ -11,7 +11,7 @@ import base64
 import re
 
 from gologin import GoLogin
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote_plus, unquote, urlparse
 from bs4 import BeautifulSoup
 
 from selenium import webdriver
@@ -2517,20 +2517,49 @@ def _bing_first_http_anchor(block):
     return None
 
 
-# Bing wraps every result href in https://www.bing.com/ck/a?…&u=<encoded>
-# (a click-tracker). The u-parameter is a 2-char type prefix (e.g. "a1")
-# followed by URL-safe base64 of the real target URL — either a relative
-# path like "/images/search?…" or an absolute "https://…".
+# Bing wraps result hrefs in click-trackers that carry the real target
+# URL inside a base64 `u=` param. Two shapes:
+#   /ck/a   (organic): u = 2-char type prefix (e.g. "a1") + URL-safe base64
+#                      of a plain URL (relative "/images/search?…" or
+#                      absolute "https://…"). No percent layer.
+#   /aclk, /aclick (PPC ads): u = URL-safe base64 of a *percent-encoded*
+#                      absolute URL, with NO 2-char prefix.
+# The TS twin of this decoder (lib/decode-ad-url.ts) runs at enrichment +
+# Monday-push time; this one runs at scrape time so the stored url/domain
+# are the advertiser, not bing.com.
 _BING_CK_U_RE = re.compile(r'[?&]u=([^&]+)')
 
 
 def _decode_bing_ck_url(href):
-    """Decode a bing.com/ck/a click-tracker into its real target URL.
+    """Decode a bing.com click-tracker (/ck/a, /aclk, /aclick) into its
+    real target URL.
 
-    Returns the input unchanged when href isn't a recognizable ck/a
-    redirect or the base64 payload can't be decoded.
+    Returns the input unchanged when href isn't a recognizable redirect
+    or the base64 payload can't be decoded.
     """
-    if not href or "/ck/a" not in href:
+    if not href:
+        return href
+
+    # PPC ad variants: no 2-char prefix, and the destination is
+    # percent-encoded inside the base64. Handle these first and leave the
+    # proven /ck/a path below untouched.
+    if "/aclick" in href or "/aclk" in href:
+        m = _BING_CK_U_RE.search(href)
+        if not m:
+            return href
+        body = m.group(1).replace('-', '+').replace('_', '/')
+        body += '=' * (-len(body) % 4)
+        try:
+            decoded = unquote(base64.b64decode(body).decode('utf-8'))
+        except Exception:
+            return href
+        if decoded.startswith('//'):
+            return 'https:' + decoded
+        if decoded.startswith('http'):
+            return decoded
+        return href
+
+    if "/ck/a" not in href:
         return href
     m = _BING_CK_U_RE.search(href)
     if not m:

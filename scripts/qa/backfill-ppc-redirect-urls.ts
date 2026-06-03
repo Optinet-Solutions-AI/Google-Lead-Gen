@@ -37,6 +37,18 @@ function isRedirector(u: string) {
   )
 }
 
+/** Derive the `domain` column value from a decoded URL, matching the
+ *  scraper's `full_url` format (`<scheme>://<host>`). Returns null if the
+ *  decoded URL doesn't parse. */
+function domainFromUrl(decoded: string): string | null {
+  try {
+    const u = new URL(decoded)
+    return `${u.protocol}//${u.host}`
+  } catch {
+    return null
+  }
+}
+
 async function main() {
   const apply = process.argv.includes('--apply')
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -48,23 +60,23 @@ async function main() {
   // — most redirector URLs we sampled were 1–6 weeks old.
   const pageSize = 1000
   let from = 0
-  const affected: Array<{ id: number; country_code: string | null; oldUrl: string; newUrl: string }> = []
+  const affected: Array<{ id: number; country_code: string | null; oldUrl: string; newUrl: string; oldDomain: string | null; newDomain: string | null }> = []
   while (true) {
     const { data, error } = await svc
       .from('google_lead_gen_table')
-      .select('id, country_code, url, is_not_relevant')
+      .select('id, country_code, url, domain, is_not_relevant')
       .eq('result_type', 'PPC')
       .order('id', { ascending: false })
       .range(from, from + pageSize - 1)
     if (error) throw error
-    const rows = (data ?? []) as Array<{ id: number; country_code: string | null; url: string | null; is_not_relevant: boolean | null }>
+    const rows = (data ?? []) as Array<{ id: number; country_code: string | null; url: string | null; domain: string | null; is_not_relevant: boolean | null }>
     if (rows.length === 0) break
     for (const r of rows) {
       if (!r.url || !r.country_code || r.is_not_relevant) continue
       if (!isRedirector(r.url)) continue
       const decoded = decodeAdUrl(r.url)
       if (decoded === r.url || !decoded.startsWith('http')) continue
-      affected.push({ id: r.id, country_code: r.country_code, oldUrl: r.url, newUrl: decoded })
+      affected.push({ id: r.id, country_code: r.country_code, oldUrl: r.url, newUrl: decoded, oldDomain: r.domain, newDomain: domainFromUrl(decoded) })
     }
     if (rows.length < pageSize) break
     from += pageSize
@@ -76,6 +88,7 @@ async function main() {
     console.log(`  id=${a.id}`)
     console.log(`    IN : ${a.oldUrl.slice(0, 120)}${a.oldUrl.length > 120 ? '…' : ''}`)
     console.log(`    OUT: ${a.newUrl.slice(0, 180)}`)
+    console.log(`    domain: ${a.oldDomain ?? '(null)'} → ${a.newDomain ?? '(unchanged)'}`)
   }
 
   if (!apply) {
@@ -94,9 +107,14 @@ async function main() {
   for (let i = 0; i < affected.length; i += BATCH) {
     const slice = affected.slice(i, i + BATCH)
     await Promise.all(slice.map(async a => {
+      // Update `domain` alongside `url` so the drawer + leads table show
+      // the advertiser host, not bing.com. Only overwrite domain when we
+      // could derive a real host from the decoded URL.
+      const patch: { url: string; domain?: string } = { url: a.newUrl }
+      if (a.newDomain) patch.domain = a.newDomain
       const { error: upErr } = await svc
         .from('google_lead_gen_table')
-        .update({ url: a.newUrl })
+        .update(patch)
         .eq('id', a.id)
       if (upErr) {
         console.error(`  url update failed for id=${a.id}: ${upErr.message}`)
