@@ -1078,6 +1078,175 @@ def attempt_google_login(driver, email, password):
     return "failed"
 
 
+# ---------------------------------------------------------------------------
+# X (x.com / twitter) auto-login. Mirrors attempt_google_login, but the burner
+# X credential lives in the VM env (X_LOGIN_USERNAME / X_LOGIN_PASSWORD) rather
+# than a per-country table — there's a single shared burner account, and the
+# interactive noVNC checkpoint is disabled in this deployment, so auto-login is
+# the primary path (an Arkose/FunCaptcha login challenge is handed to the same
+# attempt_auto_captcha_solve the other engines use). Additive — used only by
+# x_search.py / x_profile_scrape.py.
+# ---------------------------------------------------------------------------
+
+def _x_is_logged_in(driver):
+    """True when the session is signed into an X account (logged-in chrome
+    present, not on the login/landing wall)."""
+    try:
+        return bool(driver.execute_script(
+            """
+            const u = location.href || '';
+            if (/\\/(login|i\\/flow\\/login|account\\/access)/.test(u)) return false;
+            if (document.querySelector('[data-testid="loginButton"]')) return false;
+            return !!(
+              document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]') ||
+              document.querySelector('[data-testid="AppTabBar_Home_Link"]') ||
+              document.querySelector('[aria-label="Account menu"]')
+            );
+            """
+        ))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _x_login_has_challenge(driver):
+    """Detect an Arkose/FunCaptcha, a 2FA/email/phone verification code prompt,
+    or an 'unusual activity' interstitial on the X login flow — the states
+    auto-login can't clear on its own (the captcha is handed to 2Captcha; a
+    code prompt is a hard stop)."""
+    try:
+        if driver.find_elements(By.CSS_SELECTOR,
+                                'iframe[src*="arkoselabs"], iframe[src*="funcaptcha"], iframe[title*="arkose" i]'):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        page = (driver.page_source or "").lower()
+    except Exception:  # noqa: BLE001
+        page = ""
+    markers = (
+        "check your email", "we sent you a code", "enter the code",
+        "verify your identity", "confirm your identity", "unusual login activity",
+        "help us keep your account safe", "enter your phone number or email",
+    )
+    return any(m in page for m in markers)
+
+
+def _x_click_text_button(driver, labels):
+    """Click the first button / role=button whose visible text matches one of
+    `labels` (case-insensitive). Returns True if one was clicked. X's Next /
+    Log in steps have no stable id on the Next button, so we match by text."""
+    wanted = [l.lower() for l in labels]
+    try:
+        els = driver.find_elements(By.CSS_SELECTOR, 'button, [role="button"]')
+    except Exception:  # noqa: BLE001
+        return False
+    for el in els:
+        try:
+            txt = (el.text or "").strip().lower()
+        except Exception:  # noqa: BLE001
+            continue
+        if txt and any(w == txt or w in txt for w in wanted):
+            try:
+                driver.execute_script("arguments[0].click();", el)
+                return True
+            except Exception:  # noqa: BLE001
+                continue
+    return False
+
+
+def attempt_x_login(driver, username, password):
+    """
+    Drive x.com's sign-in form. Returns:
+      'success'   — signed into X after login
+      'challenge' — X showed an Arkose captcha / 2FA / email-or-phone code we
+                    can't fully auto-clear (caller may hand it to 2Captcha)
+      'failed'    — wrong credentials / blocked / unknown error
+    No DB side effects (single shared burner credential from the VM env).
+    """
+    print(f"[INFO] x login: attempting auto sign-in as {username}")
+    try:
+        driver.get("https://x.com/i/flow/login")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] x login: navigation failed: {exc}", file=sys.stderr)
+        return "failed"
+    time.sleep(4)  # client-rendered SPA flow
+
+    # Username step ---------------------------------------------------------
+    try:
+        user_input = WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, 'input[autocomplete="username"]'))
+        )
+        user_input.clear()
+        for ch in username:
+            user_input.send_keys(ch)
+            time.sleep(random.uniform(0.04, 0.14))
+        time.sleep(0.5)
+        if not _x_click_text_button(driver, ("Next", "Weiter", "Siguiente", "Suivant")):
+            user_input.send_keys(Keys.RETURN)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] x login: username step failed: {exc}", file=sys.stderr)
+        if _x_login_has_challenge(driver):
+            return "challenge"
+        return "failed"
+
+    time.sleep(3)
+
+    # Optional "enter your phone number or username" re-confirm interstitial
+    # (X shows this on a fresh/unusual login). Feed the username again.
+    try:
+        verify = driver.find_elements(By.CSS_SELECTOR, 'input[data-testid="ocfEnterTextTextInput"]')
+        if verify:
+            verify[0].clear()
+            for ch in username:
+                verify[0].send_keys(ch)
+                time.sleep(random.uniform(0.04, 0.12))
+            time.sleep(0.4)
+            if not _x_click_text_button(driver, ("Next", "Weiter", "Siguiente", "Suivant")):
+                verify[0].send_keys(Keys.RETURN)
+            time.sleep(3)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Password step ---------------------------------------------------------
+    try:
+        pwd_input = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable(
+                (By.CSS_SELECTOR, 'input[name="password"], input[autocomplete="current-password"]')
+            )
+        )
+        pwd_input.clear()
+        for ch in password:
+            pwd_input.send_keys(ch)
+            time.sleep(random.uniform(0.04, 0.14))
+        time.sleep(0.5)
+        try:
+            driver.find_element(By.CSS_SELECTOR, 'button[data-testid="LoginForm_Login_Button"]').click()
+        except Exception:  # noqa: BLE001
+            if not _x_click_text_button(driver, ("Log in", "Login", "Anmelden", "Se connecter")):
+                pwd_input.send_keys(Keys.RETURN)
+    except Exception as exc:  # noqa: BLE001
+        if _x_login_has_challenge(driver):
+            return "challenge"
+        print(f"[WARN] x login: password step failed: {exc}", file=sys.stderr)
+        return "failed"
+
+    # Wait for the post-login redirect to the app shell ---------------------
+    deadline = time.time() + 25
+    while time.time() < deadline:
+        time.sleep(1.5)
+        if _x_is_logged_in(driver):
+            time.sleep(1.0)
+            return "success"
+        if _x_login_has_challenge(driver):
+            return "challenge"
+
+    if _x_is_logged_in(driver):
+        return "success"
+    if _x_login_has_challenge(driver):
+        return "challenge"
+    return "failed"
+
+
 def _request_login_checkpoint(driver):
     """Park the scrape at a Captcha solver checkpoint with reason='google_login_required'.
     Auto-refreshes + re-parks up to CHECKPOINT_MAX_REFRESH_ATTEMPTS times if

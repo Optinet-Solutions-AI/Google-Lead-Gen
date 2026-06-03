@@ -102,6 +102,10 @@ def _is_logged_in_to_x(driver) -> bool:
 
 def ensure_logged_in(driver, scraper_mod, *, interactive: bool, job_id: str | None,
                      worker_id: str | None, worker_port: int) -> bool:
+    """Tries, in order: (1) the existing session, (2) auto-login from the
+    X_LOGIN_USERNAME / X_LOGIN_PASSWORD env credentials (Arkose login captcha
+    handed to 2Captcha), (3) the noVNC checkpoint (disabled in this deployment).
+    Returns True when logged in."""
     try:
         driver.get(f"{X_BASE}/home")
     except Exception as exc:  # noqa: BLE001
@@ -109,26 +113,56 @@ def ensure_logged_in(driver, scraper_mod, *, interactive: bool, job_id: str | No
     time.sleep(3)
     if _is_logged_in_to_x(driver):
         return True
-    print("[INFO] X session is logged OUT — login wall hit", file=sys.stderr)
-    if not (interactive and job_id):
-        print("[ERROR] profile is not logged into X and --interactive is off — "
-              "sign the GoLogin profile into the burner X account (set is_x_logged_in).",
+
+    print("[INFO] X session is logged OUT — attempting auto-login", file=sys.stderr)
+
+    username = os.environ.get("X_LOGIN_USERNAME")
+    password = os.environ.get("X_LOGIN_PASSWORD")
+    if username and password:
+        try:
+            outcome = scraper_mod.attempt_x_login(driver, username, password)
+        except scraper_mod.InteractiveCancelException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] x auto-login crashed: {exc}", file=sys.stderr)
+            outcome = "failed"
+        if outcome == "challenge":
+            print("[INFO] x login: challenge detected — handing to 2Captcha")
+            try:
+                if scraper_mod.attempt_auto_captcha_solve(driver):
+                    time.sleep(3)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[WARN] x login: auto-captcha crashed: {exc}", file=sys.stderr)
+        try:
+            driver.get(f"{X_BASE}/home")
+            time.sleep(3)
+        except Exception:  # noqa: BLE001
+            pass
+        if _is_logged_in_to_x(driver):
+            print("[INFO] x login: auto-login succeeded")
+            return True
+        print(f"[ERROR] x login: auto-login did not produce a signed-in session (outcome={outcome}). "
+              "If X is demanding an email/SMS code or an unsolvable captcha, the burner account "
+              "needs a manual first login / warming.", file=sys.stderr)
+    else:
+        print("[ERROR] X_LOGIN_USERNAME / X_LOGIN_PASSWORD not set in the VM env — cannot auto-login.",
               file=sys.stderr)
-        return False
-    try:
-        solved = scraper_mod.request_interactive_checkpoint(
-            driver, job_id=job_id, worker_id=worker_id,
-            worker_port=worker_port, reason="x_login",
-        )
-    except scraper_mod.InteractiveCancelException:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        print(f"[WARN] X login checkpoint crashed: {exc}", file=sys.stderr)
-        solved = False
-    if not solved:
-        return False
-    time.sleep(2)
-    return _is_logged_in_to_x(driver)
+
+    if interactive and job_id:
+        try:
+            solved = scraper_mod.request_interactive_checkpoint(
+                driver, job_id=job_id, worker_id=worker_id,
+                worker_port=worker_port, reason="x_login",
+            )
+        except scraper_mod.InteractiveCancelException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] X login checkpoint crashed: {exc}", file=sys.stderr)
+            solved = False
+        if solved:
+            time.sleep(2)
+            return _is_logged_in_to_x(driver)
+    return False
 
 
 # ---------------------------------------------------------------------------
