@@ -4,8 +4,13 @@ import { revalidatePath } from 'next/cache'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
-import { scoreKickStreamer, type KickScoreLink } from '@/lib/affiliate-detection/kick-scorer'
+import {
+  scoreKickStreamer,
+  isAffiliateCasinoLink,
+  type KickScoreLink,
+} from '@/lib/affiliate-detection/kick-scorer'
 import { scoreYoutubeChannel, type YoutubeScoreLink } from '@/lib/affiliate-detection/youtube-scorer'
+import { scoreXCreator, type XScoreLink } from '@/lib/affiliate-detection/x-scorer'
 import { extractContacts } from '@/lib/affiliate-detection/kick-contacts'
 import { needsResolution, resolveShorteners } from '@/lib/affiliate-detection/resolve-links'
 import {
@@ -14,6 +19,7 @@ import {
   twoHopStags,
   type ResolvedLink,
 } from '@/lib/affiliate-detection/youtube-links'
+import { parseStagFromUrl, guessBrandFromUrl } from '@/lib/stag-extraction/extract'
 import { logActivity } from '@/lib/activity-log'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
 import { translateKeywordsToEnglish } from '@/lib/translate'
@@ -123,7 +129,7 @@ export async function enqueueScrape(
   // 'youtube' is a separate path (Data API, channel results into
   // youtube_channels) and intentionally NOT included in "both" — the
   // output shape is too different to bundle into a SERP comparison.
-  const enginesToRun: Array<'google' | 'bing' | 'youtube' | 'twitch' | 'kick'> =
+  const enginesToRun: Array<'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x'> =
     engineRaw === 'both'
       ? ['google', 'bing']
       : engineRaw === 'bing'
@@ -134,7 +140,9 @@ export async function enqueueScrape(
             ? ['twitch']
             : engineRaw === 'kick'
               ? ['kick']
-              : ['google']
+              : engineRaw === 'x'
+                ? ['x']
+                : ['google']
   // view_mode controls whether the scraper runs desktop, mobile (iPhone
   // UA + 375x812 viewport via CDP), or both passes. 'both' is the
   // default — catches mobile-only PPC ads + mobile-ranked organic that
@@ -1412,6 +1420,350 @@ export async function runYoutubeChannelAnalysis(
   return {
     status: 'ok',
     message: `Scored ${scored} channel${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}${affiliateLinks > 0 ? `, ${affiliateLinks} affiliate link${affiliateLinks === 1 ? '' : 's'} captured` : ''}.`,
+  }
+}
+
+// ============================================================
+// X (x.com) Phase 2 — profile enrichment (operator-triggered ▶)
+//
+// Queues a browser scrape_queue job (search_engine='x' + parent_scrape_job_id)
+// that a GoLogin worker claims and runs x_profile_scrape.py over: it renders
+// each discovered x.com/{username} and backfills follower counts, bio, pinned
+// tweet, website, socials, and the bio/pinned/website affiliate links. Mirrors
+// runKickProfileEnrichment — same in-flight guard + lineage carry-over — but
+// also pre-checks that the parent job's country profile is signed into X (both
+// X phases run behind the login wall), so we don't burn a session that would
+// just park on the login checkpoint.
+// ============================================================
+export async function runXProfileEnrichment(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const jobId = jobIdFrom(fd) // the parent Phase-1 X job
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+
+  const { data: job, error: readErr } = await svc
+    .from('scrape_queue')
+    .select(
+      'keyword, country_code, language, search_engine, created_by_email, created_by_username, created_by_display, created_by_is_shadow',
+    )
+    .eq('id', jobId)
+    .maybeSingle()
+  if (readErr) return { status: 'error', error: safeError(readErr, 'Failed to load the source job.') }
+  if (!job) return { status: 'error', error: 'Job not found.' }
+  const j = job as {
+    keyword: string
+    country_code: string
+    language: string | null
+    search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | null
+    created_by_email: string | null
+    created_by_username: string | null
+    created_by_display: string | null
+    created_by_is_shadow: boolean | null
+  }
+  if ((j.search_engine ?? '') !== 'x') {
+    return { status: 'error', error: 'Profile enrichment only applies to X scrape jobs.' }
+  }
+
+  // Creators that haven't had their profile page scraped yet.
+  const { count: pending, error: cntErr } = await svc
+    .from('x_creators')
+    .select('id', { count: 'exact', head: true })
+    .eq('scrape_queue_id', jobId)
+    .is('about_scraped_at', null)
+  if (cntErr) return { status: 'error', error: safeError(cntErr, 'Failed to count discovered creators.') }
+  if (!pending || pending === 0) {
+    revalidatePath(`/scrape/${jobId}`)
+    return {
+      status: 'ok',
+      message: 'No creators left to enrich — every discovered profile already scraped.',
+    }
+  }
+
+  // Don't stack Phase 2 jobs: bail if one is already queued/running for this
+  // parent so a double-click doesn't burn two GoLogin sessions.
+  const { count: inflight, error: ifErr } = await svc
+    .from('scrape_queue')
+    .select('id', { count: 'exact', head: true })
+    .eq('parent_scrape_job_id', jobId)
+    .in('status', ['pending', 'running'])
+  if (ifErr) return { status: 'error', error: safeError(ifErr, 'Failed to check for an in-flight enrichment job.') }
+  if (inflight && inflight > 0) {
+    return { status: 'error', error: 'A profile-enrichment run is already queued or running for this job.' }
+  }
+
+  // Both X phases run behind the login wall, so the country's GoLogin profile
+  // must be signed into the burner X account. Pre-check so we fail fast with a
+  // clear message instead of enqueuing a job that just parks on the login
+  // checkpoint. Phase 1 already ran under this country, so it's the right one.
+  const { data: prof, error: profErr } = await svc
+    .from('gologin_profiles')
+    .select('is_x_logged_in')
+    .eq('country_code', j.country_code)
+    .eq('is_active', true)
+    .not('gologin_profile_id', 'is', null)
+    .maybeSingle()
+  if (profErr) return { status: 'error', error: safeError(profErr, 'Failed to look up the X profile.') }
+  if (!prof || (prof as { is_x_logged_in: boolean | null }).is_x_logged_in !== true) {
+    return {
+      status: 'error',
+      error: `The ${j.country_code} GoLogin profile isn't signed into X — log the burner X account in via noVNC and set is_x_logged_in, then re-run.`,
+    }
+  }
+
+  const { error: insertError } = await svc.from('scrape_queue').insert({
+    keyword: j.keyword,
+    country_code: j.country_code,
+    search_engine: 'x',
+    parent_scrape_job_id: jobId,
+    language: j.language,
+    priority: 0,
+    with_enrichment: false,
+    created_by_email: j.created_by_email,
+    created_by_username: j.created_by_username,
+    created_by_display: j.created_by_display,
+    created_by_is_shadow: j.created_by_is_shadow ?? false,
+  })
+  if (insertError) return { status: 'error', error: safeError(insertError, 'Failed to queue profile enrichment.') }
+
+  await logActivity({
+    action: 'enrichment.x_profile',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { pending_creators: pending },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: `Queued profile enrichment. A VM worker will open the discovered profiles through GoLogin and backfill follower counts, bio, pinned tweet, website, socials, and affiliate links. ${pending} creator${pending === 1 ? '' : 's'} still pending.`,
+  }
+}
+
+// ============================================================
+// X (x.com) Phase 3 — affiliate scoring + S-tag / new-vs-known check
+//
+// Pure data work (+ light HTTP to resolve shorteners / redirect chains), so it
+// runs INLINE like runKickStreamerAnalysis / runYoutubeChannelAnalysis. For
+// each creator it resolves the bio/pinned/website links Phase 2 captured,
+// parses any affiliate S-tag (or falls back to the operator brand), checks each
+// against Monday (search_s_tag_on_monday), scores affiliate likelihood, and
+// mines outreach contacts. A creator is flagged is_new_lead_candidate when it's
+// a likely affiliate carrying ≥1 affiliate ID NOT on Monday, OR whose @handle
+// isn't on Monday (X links are often redirectors with no in-URL stag — same
+// stag-later design as YouTube). No leads are created — operator reviews them.
+// ============================================================
+export async function runXCreatorAnalysis(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+
+  const { data: job, error: jobErr } = await svc
+    .from('scrape_queue')
+    .select('search_engine')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (jobErr) return { status: 'error', error: safeError(jobErr, 'Failed to load the job.') }
+  if (!job) return { status: 'error', error: 'Job not found.' }
+  if (((job as { search_engine: string | null }).search_engine ?? '') !== 'x') {
+    return { status: 'error', error: 'Scoring only applies to X scrape jobs.' }
+  }
+
+  type CreatorRow = {
+    id: string
+    username: string | null
+    display_name: string | null
+    bio: string | null
+    pinned_tweet_text: string | null
+    instagram_handle: string | null
+    youtube_handle: string | null
+    tiktok_handle: string | null
+    facebook_handle: string | null
+  }
+  const { data: creators, error: cErr } = await svc
+    .from('x_creators')
+    .select(
+      'id, username, display_name, bio, pinned_tweet_text, ' +
+        'instagram_handle, youtube_handle, tiktok_handle, facebook_handle',
+    )
+    .eq('scrape_queue_id', jobId)
+  if (cErr) return { status: 'error', error: safeError(cErr, 'Failed to load creators.') }
+  const rows = (creators ?? []) as unknown as CreatorRow[]
+  if (rows.length === 0) {
+    return { status: 'ok', message: 'No creators to score yet — run the X scrape first.' }
+  }
+  const creatorIds = rows.map(r => r.id)
+
+  type LinkRow = {
+    id: string
+    x_creator_id: string
+    url: string
+    resolved_url: string | null
+    source: string
+    s_tag: string | null
+    brand: string | null
+    is_known_on_monday: boolean | null
+  }
+  const { data: links, error: lErr } = await svc
+    .from('x_links')
+    .select('id, x_creator_id, url, resolved_url, source, s_tag, brand, is_known_on_monday')
+    .in('x_creator_id', creatorIds)
+  if (lErr) return { status: 'error', error: safeError(lErr, 'Failed to load creator links.') }
+  const allLinks = (links ?? []) as unknown as LinkRow[]
+
+  // Casino-operator domain set (host suffixes) for affiliate-link scoring.
+  const { data: denyRows } = await svc.from('operator_domains_denylist').select('host_suffix')
+  const denylist = new Set(
+    (denyRows ?? []).map(r => (r as { host_suffix: string }).host_suffix.toLowerCase()),
+  )
+
+  // 1. Resolve shortener-like links (bio/pinned links are usually t.co — a
+  //    real shortener — so this expands them to the operator destination).
+  const toResolve = allLinks
+    .filter(l => !l.resolved_url && needsResolution(l.url))
+    .map(l => l.url)
+  let linksResolved = 0
+  if (toResolve.length > 0) {
+    const resolvedMap = await resolveShorteners(toResolve)
+    const nowIso = new Date().toISOString()
+    for (const l of allLinks) {
+      const resolved = resolvedMap.get(l.url)
+      if (!resolved) continue
+      l.resolved_url = resolved // reflect locally so scoring/parsing sees it
+      const { error: upErr } = await svc
+        .from('x_links')
+        .update({ resolved_url: resolved, resolved_at: nowIso })
+        .eq('id', l.id)
+      if (!upErr) linksResolved++
+    }
+  }
+
+  // Monday "have we seen this affiliate ID / operator?" check, memoized so the
+  // same key across creators costs one RPC.
+  const mondayCache = new Map<string, { kind: string; item_id: string } | null>()
+  async function checkMonday(key0: string): Promise<{ kind: string; item_id: string } | null> {
+    const key = key0.toLowerCase()
+    if (mondayCache.has(key)) return mondayCache.get(key) ?? null
+    const { data } = await svc.rpc('search_s_tag_on_monday', { p_tag: key0 })
+    const hit = (Array.isArray(data) ? data[0] : data) as { kind: string; item_id: string } | null | undefined
+    const val = hit?.item_id ? hit : null
+    mondayCache.set(key, val)
+    return val
+  }
+
+  // 2. Parse S-tag / brand for each casino link + check it against Monday,
+  //    persisting the verdict on the x_links row (mirrors youtube_channel_links).
+  const linksByCreator = new Map<string, LinkRow[]>()
+  for (const l of allLinks) {
+    const arr = linksByCreator.get(l.x_creator_id) ?? []
+    arr.push(l)
+    linksByCreator.set(l.x_creator_id, arr)
+  }
+  let affiliateLinks = 0
+  for (const l of allLinks) {
+    const dest = l.resolved_url ?? l.url
+    const parsed = parseStagFromUrl(dest)
+    const isCasino = !!parsed || isAffiliateCasinoLink(dest, denylist)
+    if (!isCasino) continue
+    affiliateLinks++
+    const brand = guessBrandFromUrl(dest)
+    const checkKey = parsed?.tag || brand || ''
+    let hit: { kind: string; item_id: string } | null = null
+    if (checkKey) hit = await checkMonday(checkKey)
+    const update = {
+      s_tag: parsed?.tag ?? null,
+      s_tag_param: parsed?.param ?? null,
+      brand,
+      is_known_on_monday: checkKey ? !!hit : null,
+      monday_match_kind: hit?.kind ?? null,
+      monday_match_item_id: hit?.item_id ?? null,
+    }
+    const { error: upErr } = await svc.from('x_links').update(update).eq('id', l.id)
+    if (!upErr) {
+      l.s_tag = update.s_tag
+      l.brand = update.brand
+      l.is_known_on_monday = update.is_known_on_monday
+    }
+  }
+
+  // 3. Score each creator + derive contacts + new-vs-known verdict.
+  let scored = 0
+  let likelyAffiliates = 0
+  let newCandidates = 0
+  let withContacts = 0
+  for (const c of rows) {
+    const creatorLinks = linksByCreator.get(c.id) ?? []
+    const scoreLinks: XScoreLink[] = creatorLinks.map(l => ({ url: l.url, resolved_url: l.resolved_url }))
+    const result = scoreXCreator(
+      { display_name: c.display_name, username: c.username, bio: c.bio, pinned_tweet_text: c.pinned_tweet_text },
+      scoreLinks,
+      denylist,
+    )
+
+    // Contacts from bio + pinned text + the captured link URLs (resolved first
+    // so a t.co that expanded to a t.me/discord invite still counts). X exposes
+    // no email, so this is mostly Telegram › Discord › socials.
+    const linkUrls = creatorLinks.flatMap(l => [l.resolved_url, l.url].filter((u): u is string => !!u))
+    const contacts = extractContacts([c.bio ?? '', c.pinned_tweet_text ?? ''], linkUrls)
+
+    // New-lead check: a casino link whose affiliate ID/operator isn't on
+    // Monday, OR the @handle itself isn't on Monday (only for likely affiliates).
+    const hasNewTag = creatorLinks.some(l => l.is_known_on_monday === false)
+    let handleIsNew = false
+    if (result.isLikelyAffiliate) {
+      const handle = (c.username ?? '').replace(/^@/, '').trim()
+      if (handle.length >= 2) {
+        const known = await checkMonday(handle)
+        handleIsNew = !known
+      }
+    }
+    const isNewCandidate = result.isLikelyAffiliate && (hasNewTag || handleIsNew)
+
+    const update: Record<string, unknown> = {
+      is_likely_affiliate: result.isLikelyAffiliate,
+      niche_score: result.nicheScore,
+      is_new_lead_candidate: isNewCandidate,
+      is_known_on_monday: result.isLikelyAffiliate ? !handleIsNew : null,
+      contact_email: contacts.email,
+      telegram_url: contacts.telegram_url,
+      discord_url: contacts.discord_url,
+    }
+    // Fill only socials Phase 2 missed — never clobber a handle the profile
+    // scrape already captured.
+    if (!c.instagram_handle && contacts.socials.instagram) update.instagram_handle = contacts.socials.instagram
+    if (!c.youtube_handle && contacts.socials.youtube) update.youtube_handle = contacts.socials.youtube
+    if (!c.tiktok_handle && contacts.socials.tiktok) update.tiktok_handle = contacts.socials.tiktok
+    if (!c.facebook_handle && contacts.socials.facebook) update.facebook_handle = contacts.socials.facebook
+
+    const { error: upErr } = await svc.from('x_creators').update(update).eq('id', c.id)
+    if (upErr) continue
+    scored++
+    if (result.isLikelyAffiliate) likelyAffiliates++
+    if (isNewCandidate) newCandidates++
+    if (contacts.email || contacts.telegram_url || contacts.discord_url) withContacts++
+  }
+
+  await logActivity({
+    action: 'enrichment.x_score',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { scored, likelyAffiliates, newCandidates, affiliateLinks, linksResolved, withContacts },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: `Scored ${scored} creator${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}, ${withContacts} with contact${withContacts === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
   }
 }
 

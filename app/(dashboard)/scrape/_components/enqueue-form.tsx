@@ -178,7 +178,7 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
           <select
             name="search_engine"
             defaultValue="google"
-            title="Google/Bing scrape SERPs and produce URL leads (same downstream enrichment). 'Both' queues a Google job + a Bing job per keyword. YouTube and Kick use platform APIs to find affiliate channels — results land in youtube_channels / kick_streamers, not the leads table, and the enrichment pipeline is bypassed."
+            title="Google/Bing scrape SERPs and produce URL leads (same downstream enrichment). 'Both' queues a Google job + a Bing job per keyword. YouTube, Kick, and X find affiliate creators — results land in youtube_channels / kick_streamers / x_creators, not the leads table, and the enrichment pipeline is bypassed. X needs the country's GoLogin profile signed into a burner X account (login wall)."
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
           >
             <option value="google">Google</option>
@@ -190,6 +190,7 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
             {/* <option value="twitch">Twitch</option> */}
             <option value="kick">Kick</option>
             <option value="youtube">YouTube</option>
+            <option value="x">X (Twitter)</option>
           </select>
         </label>
 

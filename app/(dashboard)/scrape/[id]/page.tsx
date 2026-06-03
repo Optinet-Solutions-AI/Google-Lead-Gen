@@ -22,10 +22,14 @@ import { KickStreamersPanel } from '../_components/kick-streamers-panel'
 import { KickStreamersTable } from '../_components/kick-streamers-table'
 import { YoutubeChannelsPanel } from '../_components/youtube-channels-panel'
 import { YoutubeChannelsTable } from '../_components/youtube-channels-table'
+import { XCreatorsPanel } from '../_components/x-creators-panel'
+import { XCreatorsTable } from '../_components/x-creators-table'
 import {
   fetchKickStreamerRows,
   fetchKickStreamerSummary,
   fetchStageSummary,
+  fetchXCreatorRows,
+  fetchXCreatorSummary,
   fetchYoutubeChannelRows,
   fetchYoutubeChannelSummary,
 } from '../_lib/queries'
@@ -51,7 +55,7 @@ type Job = {
   completed_at: string | null
   error_message: string | null
   result_summary: Record<string, unknown> | null
-  search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | null
+  search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | null
   view_mode: 'desktop' | 'mobile' | 'both' | null
   language: string | null
   created_at: string
@@ -167,10 +171,11 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
 
   const isKick = job.search_engine === 'kick'
   const isYoutube = job.search_engine === 'youtube'
-  // Kick streamers and YouTube channels live in their own tables/panels —
-  // neither produces leads, so the lead filters + table + enrichment stages
-  // don't apply to them.
-  const noLeadsEngine = isKick || isYoutube
+  const isX = job.search_engine === 'x'
+  // Kick streamers, YouTube channels, and X creators live in their own
+  // tables/panels — none produces leads, so the lead filters + table +
+  // enrichment stages don't apply to them.
+  const noLeadsEngine = isKick || isYoutube || isX
 
   const [
     { rows, total },
@@ -181,6 +186,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
     kickRows,
     youtubeSummary,
     youtubeRows,
+    xSummary,
+    xRows,
   ] = await Promise.all([
       queryLeads({
         page,
@@ -207,6 +214,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       isKick ? fetchKickStreamerRows(id) : Promise.resolve(null),
       isYoutube ? fetchYoutubeChannelSummary(id) : Promise.resolve(null),
       isYoutube ? fetchYoutubeChannelRows(id) : Promise.resolve(null),
+      isX ? fetchXCreatorSummary(id) : Promise.resolve(null),
+      isX ? fetchXCreatorRows(id) : Promise.resolve(null),
     ])
 
   const toggleHref = (() => {
@@ -319,6 +328,11 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
           {youtubeSummary && <YoutubeChannelsPanel jobId={job.id} summary={youtubeSummary} />}
           {youtubeRows && youtubeRows.length > 0 && <YoutubeChannelsTable rows={youtubeRows} />}
         </>
+      ) : isX ? (
+        <>
+          {xSummary && <XCreatorsPanel jobId={job.id} summary={xSummary} />}
+          {xRows && xRows.length > 0 && <XCreatorsTable rows={xRows} />}
+        </>
       ) : (
         stageSummary && <EnrichmentStages jobId={job.id} summary={stageSummary} />
       )}
@@ -357,7 +371,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   )
 }
 
-function EngineBadge({ engine }: { engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | null }) {
+function EngineBadge({ engine }: { engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | null }) {
   const e = engine ?? 'google'
   const styles =
     e === 'bing'
@@ -368,8 +382,10 @@ function EngineBadge({ engine }: { engine: 'google' | 'bing' | 'youtube' | 'twit
           ? 'bg-purple-100 text-purple-800'
           : e === 'kick'
             ? 'bg-green-100 text-green-800'
-            : 'bg-blue-100 text-blue-800'
-  const label = e === 'youtube' ? 'YouTube' : e === 'bing' ? 'Bing' : e === 'twitch' ? 'Twitch' : e === 'kick' ? 'Kick' : 'Google'
+            : e === 'x'
+              ? 'bg-slate-200 text-slate-900'
+              : 'bg-blue-100 text-blue-800'
+  const label = e === 'youtube' ? 'YouTube' : e === 'bing' ? 'Bing' : e === 'twitch' ? 'Twitch' : e === 'kick' ? 'Kick' : e === 'x' ? 'X' : 'Google'
   return (
     <span
       title={`Scraped on ${label}`}
