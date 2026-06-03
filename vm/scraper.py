@@ -1271,10 +1271,17 @@ def attempt_x_login(driver, username, password):
             time.sleep(random.uniform(0.04, 0.14))
 
     def _pwd_field():
+        # Visibility ONLY — X's combined form reports the password input as
+        # not-"enabled" until the username validates, so is_enabled() wrongly
+        # skips a perfectly fillable field. Return the last displayed match
+        # (X renders a hidden duplicate form first in DOM order).
         for sel in ('input[name="password"]', 'input[autocomplete="current-password"]', 'input[type="password"]'):
-            el = _x_first_visible(driver, sel)
-            if el:
-                return el
+            try:
+                found = [el for el in driver.find_elements(By.CSS_SELECTOR, sel) if el.is_displayed()]
+                if found:
+                    return found[-1]
+            except Exception:  # noqa: BLE001
+                continue
         return None
 
     # Username step ---------------------------------------------------------
@@ -1329,6 +1336,13 @@ def attempt_x_login(driver, username, password):
         if _x_login_has_challenge(driver):
             return "challenge"
         _x_dump_login_diag(driver, "password-not-found")
+        # Per-password-field Selenium state, to disambiguate displayed/enabled.
+        try:
+            pw_els = driver.find_elements(By.CSS_SELECTOR, 'input[type="password"]')
+            states = [f"displayed={e.is_displayed()},enabled={e.is_enabled()}" for e in pw_els]
+            print(f"[DIAG] x login: {len(pw_els)} password input(s): {states}", file=sys.stderr)
+        except Exception:  # noqa: BLE001
+            pass
         return "failed"
 
     # Password step ---------------------------------------------------------
