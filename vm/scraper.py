@@ -1163,6 +1163,29 @@ def _x_first_visible(driver, selector):
     return None
 
 
+def _x_js_fill(driver, el, value):
+    """Set a React-controlled input's value via the native setter + input/change
+    events, so React's state updates even when the field is Selenium-hidden
+    (X wraps the password field in a transition container that reports
+    is_displayed()=False). Returns True on success."""
+    try:
+        driver.execute_script(
+            """
+            const el = arguments[0], val = arguments[1];
+            const proto = window.HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+            setter.call(el, val);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            """,
+            el, value,
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] x login: JS-fill failed: {exc}", file=sys.stderr)
+        return False
+
+
 def _x_dismiss_cookies(driver):
     """Dismiss X's cookie-consent banner if present — it overlays the lower
     page and can intercept clicks on the login form."""
@@ -1301,18 +1324,37 @@ def attempt_x_login(driver, username, password):
         _x_dump_login_diag(driver, "username-entry")
         return "failed"
 
-    # Combined single-page form? (username + password together, e.g. the
-    # /i/jf/onboarding/web?mode=login surface). If the password field is
-    # already here, fill it on the same page; otherwise advance the two-step
-    # flow (click Next/Continue, handle the re-confirm interstitial, wait).
+    try:
+        print(f"[INFO] x login: username field value={user_input.get_attribute('value')!r}")
+    except Exception:  # noqa: BLE001
+        pass
+
+    def _submit_login():
+        """Click the password-form submit (testid → exact Log in/Continue →
+        Enter on whatever's focused)."""
+        try:
+            btn = driver.find_element(By.CSS_SELECTOR, 'button[data-testid="LoginForm_Login_Button"]')
+            if btn.is_displayed():
+                driver.execute_script("arguments[0].click();", btn)
+                return
+        except Exception:  # noqa: BLE001
+            pass
+        _x_click_text_button(driver, login_labels)
+
+    # Advance the username step. X keeps the password field in a Selenium-
+    # hidden transition wrapper until the username step is submitted — ENTER in
+    # the field is the most reliable trigger on the React form; the plain
+    # Continue/Next button is the backup.
     pwd = _pwd_field()
     if pwd is None:
-        if not _x_click_text_button(driver, next_labels):
-            try:
-                user_input.send_keys(Keys.RETURN)
-            except Exception:  # noqa: BLE001
-                pass
-        time.sleep(3)
+        try:
+            user_input.send_keys(Keys.RETURN)
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(2)
+        if _pwd_field() is None:
+            _x_click_text_button(driver, next_labels)
+            time.sleep(2)
         # Optional "enter your phone number or username" re-confirm step.
         try:
             verify = _x_first_visible(driver, 'input[data-testid="ocfEnterTextTextInput"]')
@@ -1324,47 +1366,52 @@ def attempt_x_login(driver, username, password):
                 time.sleep(3)
         except Exception:  # noqa: BLE001
             pass
-        deadline = time.time() + 15
+        deadline = time.time() + 18
         while time.time() < deadline and pwd is None:
             pwd = _pwd_field()
             if pwd is None:
                 if _x_login_has_challenge(driver):
                     return "challenge"
-                time.sleep(1)
-
-    if pwd is None:
-        if _x_login_has_challenge(driver):
-            return "challenge"
-        _x_dump_login_diag(driver, "password-not-found")
-        # Per-password-field Selenium state, to disambiguate displayed/enabled.
-        try:
-            pw_els = driver.find_elements(By.CSS_SELECTOR, 'input[type="password"]')
-            states = [f"displayed={e.is_displayed()},enabled={e.is_enabled()}" for e in pw_els]
-            print(f"[DIAG] x login: {len(pw_els)} password input(s): {states}", file=sys.stderr)
-        except Exception:  # noqa: BLE001
-            pass
-        return "failed"
+                time.sleep(1.5)
 
     # Password step ---------------------------------------------------------
-    try:
-        _type_into(pwd, password)
-        time.sleep(0.6)
-        clicked = False
+    if pwd is not None:
+        # Field is displayed — type it normally.
         try:
-            btn = driver.find_element(By.CSS_SELECTOR, 'button[data-testid="LoginForm_Login_Button"]')
-            if btn.is_displayed():
-                driver.execute_script("arguments[0].click();", btn)
-                clicked = True
+            _type_into(pwd, password)
+            time.sleep(0.6)
+            _submit_login()
+        except Exception as exc:  # noqa: BLE001
+            if _x_login_has_challenge(driver):
+                return "challenge"
+            print(f"[WARN] x login: password entry failed: {exc}", file=sys.stderr)
+            _x_dump_login_diag(driver, "password-entry")
+            return "failed"
+    else:
+        # Password never became Selenium-visible. If an enabled password input
+        # exists in the DOM (X's hidden transition wrapper), fill it via JS and
+        # submit — last resort before declaring a challenge/verification block.
+        pw_els = []
+        try:
+            pw_els = driver.find_elements(By.CSS_SELECTOR, 'input[type="password"]')
         except Exception:  # noqa: BLE001
             pass
-        if not clicked and not _x_click_text_button(driver, login_labels):
-            pwd.send_keys(Keys.RETURN)
-    except Exception as exc:  # noqa: BLE001
-        if _x_login_has_challenge(driver):
-            return "challenge"
-        print(f"[WARN] x login: password entry failed: {exc}", file=sys.stderr)
-        _x_dump_login_diag(driver, "password-entry")
-        return "failed"
+        if pw_els:
+            print("[INFO] x login: password hidden to Selenium — JS-filling the enabled field")
+            _x_js_fill(driver, pw_els[-1], password)
+            time.sleep(0.6)
+            _submit_login()
+        else:
+            if _x_login_has_challenge(driver):
+                return "challenge"
+            _x_dump_login_diag(driver, "password-not-found")
+            try:
+                states = [f"displayed={e.is_displayed()},enabled={e.is_enabled()}"
+                          for e in driver.find_elements(By.CSS_SELECTOR, 'input[type="password"]')]
+                print(f"[DIAG] x login: password input states: {states}", file=sys.stderr)
+            except Exception:  # noqa: BLE001
+                pass
+            return "failed"
 
     # Wait for the post-login redirect to the app shell ---------------------
     deadline = time.time() + 25
