@@ -2,6 +2,7 @@ import 'server-only'
 import { createServiceClient } from '@/lib/supabase/service'
 import { MondayApiError, mondayGQL } from '@/lib/monday/graphql'
 import { MAX_OPERATOR_NOTE_LEN } from '@/lib/monday/push-constants'
+import { decodeAdUrl } from '@/lib/decode-ad-url'
 
 export { MAX_OPERATOR_NOTE_LEN }
 
@@ -65,6 +66,11 @@ export type PreparedPushPayload = {
     id: number
     url: string | null
     domain: string | null
+    /** Reliable scrape-time capture of the SERP ad card. Attached to the
+     *  Monday item in preference to screenshot_content_link, which is the
+     *  post-click landing capture and can be a stale/wrong page when the
+     *  ad redirector fails to load at enrichment time. */
+    serp_screenshot_path: string | null
     screenshot_content_link: string | null
   }
   stags: Array<{ s_tag: string; brand: string | null }>
@@ -96,7 +102,7 @@ export async function prepareLeadPushPayload(
     .select(
       [
         'id, url, domain, keyword, country_code, result_type',
-        'brand, screenshot_content_link',
+        'brand, screenshot_content_link, serp_screenshot_path',
         'pushed_to_monday_at, monday_pushed_item_id',
       ].join(', '),
     )
@@ -114,6 +120,7 @@ export async function prepareLeadPushPayload(
     result_type: string | null
     brand: string | null
     screenshot_content_link: string | null
+    serp_screenshot_path: string | null
     pushed_to_monday_at: string | null
     monday_pushed_item_id: string | null
   }
@@ -145,7 +152,15 @@ export async function prepareLeadPushPayload(
     ((contactRes.data as { emails: string[] | null } | null)?.emails ?? [])[0] ?? ''
   const stags = (stagsRes.data ?? []) as Array<{ s_tag: string; brand: string | null }>
 
-  const cleanDomain = stripDomain(l.domain ?? l.url ?? '')
+  // PPC leads whose scrape-time click-through failed are stored with the
+  // raw Google/Bing ad redirector as `url` (and `bing.com`/`google.com` as
+  // `domain`). Decode it to the real advertiser destination so the URL
+  // column and the item name reflect the advertiser, not the click-tracker.
+  // For SEO leads (and any URL we don't recognize) decodeAdUrl is a no-op,
+  // so `wasRedirector` is false and the stored domain is kept as before.
+  const decodedUrl = decodeAdUrl(l.url ?? '')
+  const wasRedirector = decodedUrl !== (l.url ?? '')
+  const cleanDomain = stripDomain(wasRedirector ? decodedUrl : (l.domain ?? l.url ?? ''))
   const source: 'PPC' | 'SEO' = l.result_type === 'PPC' ? 'PPC' : 'SEO'
   const todayIso = new Date().toISOString().slice(0, 10)
   // "Comments" (text82) is a single-line short-text column, so flatten any
@@ -169,7 +184,7 @@ export async function prepareLeadPushPayload(
     status_1: { label: source },
     text0: sanitize(l.country_code ?? ''),
     date: { date: todayIso },
-    text1: sanitize(l.url ?? ''),
+    text1: sanitize(decodedUrl),
     // Comments column — only set when the operator actually typed something,
     // so a blank push doesn't overwrite the column with an empty string.
     ...(operatorNote ? { text82: operatorNote } : {}),
@@ -201,8 +216,11 @@ export async function prepareLeadPushPayload(
       },
       lead: {
         id: l.id,
-        url: l.url,
-        domain: l.domain,
+        // Decoded so the attached file is named after the advertiser
+        // (topbonuserdk.com.png) rather than the click-tracker (bing.com.png).
+        url: decodedUrl || l.url,
+        domain: cleanDomain || l.domain,
+        serp_screenshot_path: l.serp_screenshot_path,
         screenshot_content_link: l.screenshot_content_link,
       },
       stags,
@@ -301,12 +319,18 @@ export async function pushLeadToMonday(
   }
 
   // ----- Step 2: optional screenshot upload -----
+  // Prefer the SERP ad-card capture (serp_screenshot_path): it's taken at
+  // scrape time and is reliable. Fall back to the post-click landing
+  // capture (screenshot_content_link) only when no SERP card exists — that
+  // one can be a stale/wrong page when the ad redirector fails to load at
+  // enrichment time (the "screenshot of a Google results page" report).
   let attachedFile = false
-  if (lead.screenshot_content_link) {
+  const screenshotPath = lead.serp_screenshot_path ?? lead.screenshot_content_link
+  if (screenshotPath) {
     try {
       const { data: blob, error: dlErr } = await svc.storage
         .from('lead-screenshots')
-        .download(lead.screenshot_content_link)
+        .download(screenshotPath)
       if (!dlErr && blob) {
         await uploadFileToMondayColumn(createdItemId, 'files', blob, fileNameFor(lead))
         attachedFile = true

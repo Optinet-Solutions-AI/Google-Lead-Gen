@@ -20,6 +20,7 @@ import {
   type ResolvedLink,
 } from '@/lib/affiliate-detection/youtube-links'
 import { parseStagFromUrl, guessBrandFromUrl } from '@/lib/stag-extraction/extract'
+import { decodeAdUrl } from '@/lib/decode-ad-url'
 import { logActivity } from '@/lib/activity-log'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
 import { translateKeywordsToEnglish } from '@/lib/translate'
@@ -442,7 +443,13 @@ export async function runAffiliateDetection(
     enqueueable.push({
       lead_id: lead.id,
       country_code: lead.country_code,
-      url,
+      // Decode Google aclk / Bing aclick click-tracker URLs so the worker
+      // fetches the real advertiser landing page instead of the redirector
+      // (which often expires and bounces to a stale Bing/Google results
+      // page — the "screenshot of a Google results page" report). Mirrors
+      // the auto-enrichment path in app/api/scheduler/tick (commit 10ab2f4),
+      // which this manual ▶ re-run path was missing.
+      url: decodeAdUrl(url),
       want_html: true,
       // Per user policy: PPC rows always get a screenshot for verification.
       want_screenshot: lead.result_type === 'PPC',
