@@ -131,6 +131,8 @@ const ADMIN_NAV_ITEMS = [
     href: '/admin/feedback',
     icon: MessageCircle,
     match: (p: string) => p.startsWith('/admin/feedback'),
+    // Carries the unresolved-feedback count badge.
+    badge: 'openFeedback' as const,
   },
   {
     label: 'System (Admin)',
@@ -145,6 +147,7 @@ type Props = {
   username: string
   isAdmin?: boolean
   proxyBandwidth?: ProxyBandwidth | null
+  openFeedbackCount?: number
 }
 
 export function DashboardShell({
@@ -152,6 +155,7 @@ export function DashboardShell({
   username,
   isAdmin = false,
   proxyBandwidth = null,
+  openFeedbackCount = 0,
 }: Props) {
   const pathname = usePathname()
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -219,26 +223,46 @@ export function DashboardShell({
           {[...NAV_ITEMS, ...(isAdmin ? ADMIN_NAV_ITEMS : [])].map(item => {
             const active = item.match(pathname)
             const Icon = item.icon
+            const badgeCount =
+              'badge' in item && item.badge === 'openFeedback' ? openFeedbackCount : 0
             return (
               <Link
                 key={item.label}
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
                 className={[
-                  'group flex items-center gap-3 rounded-md px-2 py-2 text-[13px] transition-colors',
+                  'group relative flex items-center gap-3 rounded-md px-2 py-2 text-[13px] transition-colors',
                   active
                     ? 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-primary)]'
                     : 'text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]',
                 ].join(' ')}
-                title={showLabels ? undefined : item.label}
+                title={
+                  showLabels
+                    ? undefined
+                    : badgeCount > 0
+                      ? `${item.label} — ${badgeCount} unresolved`
+                      : item.label
+                }
               >
-                <Icon
-                  className={[
-                    'h-4 w-4 shrink-0',
-                    active ? 'text-[color:var(--color-accent-hover)]' : '',
-                  ].join(' ')}
-                />
+                <span className="relative shrink-0">
+                  <Icon
+                    className={[
+                      'h-4 w-4 shrink-0',
+                      active ? 'text-[color:var(--color-accent-hover)]' : '',
+                    ].join(' ')}
+                  />
+                  {/* Collapsed sidebar: a small dot on the icon stands in
+                      for the count, which has no room to render. */}
+                  {!showLabels && badgeCount > 0 && (
+                    <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-[color:var(--color-bg-primary)]" />
+                  )}
+                </span>
                 {showLabels && <span>{item.label}</span>}
+                {showLabels && badgeCount > 0 && (
+                  <span className="ml-auto inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                    {badgeCount > 99 ? '99+' : badgeCount}
+                  </span>
+                )}
               </Link>
             )
           })}

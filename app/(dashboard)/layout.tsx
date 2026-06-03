@@ -30,6 +30,20 @@ export default async function DashboardLayout({
     isAdmin = data === true
   }
 
+  // Count of unresolved QA feedback so the sidebar can badge the
+  // "QA Feedback (Admin)" link — lets admins see from any page that
+  // there's something waiting to triage. Admin-only query; skipped for
+  // everyone else since they don't see the link.
+  let openFeedbackCount = 0
+  if (isAdmin) {
+    const svc = createServiceClient()
+    const { count } = await svc
+      .from('qa_feedback')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'open')
+    openFeedbackCount = count ?? 0
+  }
+
   // Maintenance gate. If the flag is ON and the caller is not an admin,
   // redirect to /maintenance regardless of which dashboard page they hit.
   // Admins keep full access so they can deploy / migrate / debug.
@@ -48,7 +62,12 @@ export default async function DashboardLayout({
   const proxyBandwidth = await loadProxyBandwidth()
 
   return (
-    <DashboardShell username={username} isAdmin={isAdmin} proxyBandwidth={proxyBandwidth}>
+    <DashboardShell
+      username={username}
+      isAdmin={isAdmin}
+      proxyBandwidth={proxyBandwidth}
+      openFeedbackCount={openFeedbackCount}
+    >
       <InteractiveBanner />
       {children}
     </DashboardShell>
