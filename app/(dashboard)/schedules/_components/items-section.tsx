@@ -167,6 +167,7 @@ export function ItemsSection({ setId, items, countries }: Props) {
                       <button
                         type="submit"
                         title="Remove"
+                        aria-label={`Remove "${it.keyword}" from this schedule`}
                         className="text-red-700 hover:text-red-900"
                       >
                         <Trash2 className="h-3.5 w-3.5" />

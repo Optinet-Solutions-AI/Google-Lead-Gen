@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   AlertTriangle,
   Bell,
@@ -169,6 +169,16 @@ export function DashboardShell({
 
   const showLabels = expanded || mobileOpen
 
+  // Close the mobile drawer on Escape (backdrop click already closes it).
+  useEffect(() => {
+    if (!mobileOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [mobileOpen])
+
   return (
     <div className="flex min-h-screen bg-[color:var(--color-bg-secondary)]">
       {/* Mobile backdrop */}
@@ -204,7 +214,7 @@ export function DashboardShell({
           )}
           <button
             type="button"
-            aria-label="Toggle menu"
+            aria-label={mobileOpen ? 'Close menu' : expanded ? 'Collapse sidebar' : 'Expand sidebar'}
             className="text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
             onClick={() => {
               if (mobileOpen) setMobileOpen(false)

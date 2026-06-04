@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 import {
   CheckCircle2,
   ChevronDown,
@@ -63,6 +63,10 @@ export function FeedbackRow({ row, focused, expanded, onToggleExpand, onFocus }:
     setFeedbackStatusAction,
     initialMut,
   )
+  // Which status button was clicked, so the spinner shows on THAT button
+  // (not on all the others). No reset needed: the spinner only renders
+  // while statusPending is true, and a fresh submit overwrites this first.
+  const [pendingKey, setPendingKey] = useState<Status | null>(null)
   const [deleteState, deleteAction, deletePending] = useActionState(
     deleteFeedbackAction,
     initialMut,
@@ -167,7 +171,7 @@ export function FeedbackRow({ row, focused, expanded, onToggleExpand, onFocus }:
             {STATUS_OPTIONS.map(opt => {
               const active = row.status === opt.key
               return (
-                <form key={opt.key} action={statusAction}>
+                <form key={opt.key} action={statusAction} onSubmit={() => setPendingKey(opt.key)}>
                   <input type="hidden" name="id" value={row.id} />
                   <input type="hidden" name="status" value={opt.key} />
                   <button
@@ -181,7 +185,7 @@ export function FeedbackRow({ row, focused, expanded, onToggleExpand, onFocus }:
                     ].join(' ')}
                     title={`Mark as ${opt.label}`}
                   >
-                    {statusPending && !active ? (
+                    {statusPending && pendingKey === opt.key ? (
                       <Loader2 className="h-2.5 w-2.5 animate-spin" />
                     ) : opt.key === 'resolved' ? (
                       <CheckCircle2 className="h-2.5 w-2.5" />

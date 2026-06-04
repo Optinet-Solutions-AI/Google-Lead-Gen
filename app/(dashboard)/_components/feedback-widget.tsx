@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useEffect, useState } from 'react'
+import { useActionState, useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import {
   CheckCircle2,
@@ -28,6 +28,22 @@ export function FeedbackWidget() {
   const [open, setOpen] = useState(false)
   const [state, action, pending] = useActionState(submitFeedbackAction, initial)
   const pathname = usePathname()
+  const launcherRef = useRef<HTMLButtonElement>(null)
+
+  // Escape closes the dialog; on close, focus returns to the launcher so
+  // keyboard users aren't dropped at the top of the page.
+  useEffect(() => {
+    if (!open) return
+    const launcher = launcherRef.current // capture for the cleanup
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      launcher?.focus()
+    }
+  }, [open])
 
   // Pre-fill the URL field with the current page's full URL so the
   // tester only has to type the message in the common case.
@@ -66,6 +82,7 @@ export function FeedbackWidget() {
     <>
       {/* Floating launcher button */}
       <button
+        ref={launcherRef}
         type="button"
         onClick={() => setOpen(o => !o)}
         aria-label={open ? 'Close feedback' : 'Send QA feedback'}
@@ -86,6 +103,7 @@ export function FeedbackWidget() {
       {open && (
         <div
           role="dialog"
+          aria-modal="true"
           aria-label="QA feedback"
           className="fixed bottom-36 right-4 z-50 flex w-[min(380px,calc(100vw-2rem))] flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 shadow-xl"
         >

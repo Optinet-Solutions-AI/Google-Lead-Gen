@@ -79,10 +79,17 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
   // bounce through this intermediate state.
   useEffect(() => {
     const want = sp.get('open')
-    if (!want || rows.length === 0) return
+    if (!want) return
+    const params = new URLSearchParams(sp.toString())
+    // No rows on this page — the sentinel can never resolve to a lead here,
+    // so strip it rather than leaving ?open=… orphaned in the URL.
+    if (rows.length === 0) {
+      params.delete('open')
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+      return
+    }
     const target = want === 'last' ? rows[rows.length - 1] : rows[0]
     if (!target) return
-    const params = new URLSearchParams(sp.toString())
     params.delete('open')
     params.set('lead', String(target.id))
     router.replace(`${pathname}?${params.toString()}`, { scroll: false })
@@ -707,6 +714,7 @@ function SeenOnBadge({ seenOn }: { seenOn?: string | null | undefined }) {
   return (
     <span
       className="rounded-full bg-[color:var(--color-bg-secondary)] px-1.5 py-0.5 text-[9px] font-medium text-[color:var(--color-text-secondary)]"
+      aria-label="View not recorded"
       title="seen_on not recorded — row likely predates the mobile-pass feature."
     >
       —
