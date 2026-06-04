@@ -115,6 +115,12 @@ const NAV_ITEMS = [
 
 const ADMIN_NAV_ITEMS = [
   {
+    label: 'Ops (Admin)',
+    href: '/admin/ops',
+    icon: Gauge,
+    match: (p: string) => p.startsWith('/admin/ops'),
+  },
+  {
     label: 'Users (Admin)',
     href: '/admin/users',
     icon: Users,
