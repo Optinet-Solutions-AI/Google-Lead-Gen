@@ -192,7 +192,10 @@ export default async function AdminOpsPage() {
         />
       </div>
 
-      <Card title="Worker liveness" hint="Per worker that has claimed a job in the last 30 days. Stalest first — a worker with an old last-claim and 0 recent jobs is the silent-death tell.">
+      <Card
+        title="Worker liveness"
+        hint={`Per worker that has claimed a job in the last 30 days, stalest first. A worker is only flagged ⚠ stale when it's been quiet >2h AND its queue has pending work — idle workers during a quiet period aren't a fault. Pending now: ${ops.scrape.by_status.pending ?? 0} scrape · ${ops.enrichment.by_status.pending ?? 0} enrichment.`}
+      >
         {workers.length === 0 ? (
           <p className="text-[11px] text-[color:var(--color-text-secondary)]">No worker activity recorded.</p>
         ) : (
@@ -210,7 +213,14 @@ export default async function AdminOpsPage() {
               <tbody className="divide-y divide-[color:var(--color-border)]">
                 {workers.map((w) => {
                   const lastMs = w.last_claim ? new Date(now).getTime() - new Date(w.last_claim).getTime() : Infinity
-                  const stale = lastMs > STALE_MS
+                  // Idle ≠ dead: only flag a worker that's gone quiet AND has
+                  // pending work of its kind it should be claiming. When the
+                  // queue is empty, every worker is legitimately idle.
+                  const pendingForKind =
+                    w.kind === 'scrape'
+                      ? (ops.scrape.by_status.pending ?? 0)
+                      : (ops.enrichment.by_status.pending ?? 0)
+                  const stale = lastMs > STALE_MS && pendingForKind > 0
                   return (
                     <tr key={`${w.kind}:${w.worker_id}`} className={stale ? 'text-red-600 dark:text-red-400' : ''}>
                       <td className="py-1.5 pr-4 font-medium">{w.worker_id}</td>
@@ -219,7 +229,9 @@ export default async function AdminOpsPage() {
                       <td className="py-1.5 pr-4 tabular-nums">{w.jobs_24h}</td>
                       <td className="py-1.5 pr-4 tabular-nums">
                         {w.last_claim ? relTime(now, w.last_claim) : '—'}
-                        {stale ? <span className="ml-1.5 font-semibold">⚠ stale</span> : null}
+                        {stale ? (
+                          <span className="ml-1.5 font-semibold">⚠ stale (queue backed up)</span>
+                        ) : null}
                       </td>
                     </tr>
                   )
