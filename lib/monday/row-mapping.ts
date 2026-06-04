@@ -31,7 +31,14 @@ export type MondayUpdate = {
   creator: { id: string; name: string; email: string | null } | null
 }
 
-export function mapItemToRow(item: MondayItem, board: BoardConfig): Record<string, unknown> {
+export function mapItemToRow(
+  item: MondayItem,
+  board: BoardConfig,
+  // One timestamp per batch keeps synced_at uniform across a page of
+  // upserts instead of smearing it across per-item now() calls. Defaults
+  // to now() for single-item callers (the webhook handler).
+  syncedAt: string = new Date().toISOString(),
+): Record<string, unknown> {
   const row: Record<string, unknown> = {
     monday_item_id: item.id,
     name: item.name,
@@ -40,7 +47,7 @@ export function mapItemToRow(item: MondayItem, board: BoardConfig): Record<strin
     raw_column_values: item.column_values,
     monday_created_at: item.created_at,
     monday_updated_at: item.updated_at,
-    synced_at: new Date().toISOString(),
+    synced_at: syncedAt,
   }
 
   // Initialize all mapped columns to null so the upsert payload is
@@ -63,6 +70,7 @@ export function mapItemToRow(item: MondayItem, board: BoardConfig): Record<strin
 export function mapUpdateToRow(
   update: MondayUpdate,
   mondayItemId: string,
+  syncedAt: string = new Date().toISOString(),
 ): Record<string, unknown> {
   return {
     monday_update_id: update.id,
@@ -73,6 +81,6 @@ export function mapUpdateToRow(
     creator_name: update.creator?.name ?? null,
     creator_email: update.creator?.email ?? null,
     monday_created_at: update.created_at,
-    synced_at: new Date().toISOString(),
+    synced_at: syncedAt,
   }
 }

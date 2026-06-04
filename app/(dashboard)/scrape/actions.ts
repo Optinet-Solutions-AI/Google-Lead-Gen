@@ -2165,10 +2165,11 @@ export async function pauseEnrichmentForJob(
   if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
-  const { data: leadRows } = await svc
+  const { data: leadRows, error: leadErr } = await svc
     .from('google_lead_gen_table')
     .select('id')
     .eq('scrape_job_id', jobId)
+  if (leadErr) return { status: 'error', error: safeError(leadErr, 'Failed to load leads for this job.') }
   const leadIds = ((leadRows ?? []) as { id: number }[]).map(r => r.id)
   if (leadIds.length === 0) {
     return { status: 'ok', message: 'No leads on this job — nothing to pause.' }
@@ -2235,10 +2236,11 @@ export async function resumeEnrichmentForJob(
   if (!access.ok) return { status: 'error', error: access.error }
 
   const svc = createServiceClient()
-  const { data: leadRows } = await svc
+  const { data: leadRows, error: leadErr } = await svc
     .from('google_lead_gen_table')
     .select('id')
     .eq('scrape_job_id', jobId)
+  if (leadErr) return { status: 'error', error: safeError(leadErr, 'Failed to load leads for this job.') }
   const leadIds = ((leadRows ?? []) as { id: number }[]).map(r => r.id)
   if (leadIds.length === 0) {
     return { status: 'ok', message: 'No leads on this job.' }

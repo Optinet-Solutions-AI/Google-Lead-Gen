@@ -54,7 +54,7 @@ export async function POST(req: Request): Promise<Response> {
   const leadId = Number(body.lead_id)
   const stage = String(body.stage ?? '').trim()
   const extras = body.extras ?? null
-  if (!Number.isFinite(leadId)) return NextResponse.json({ error: 'lead_id missing' }, { status: 400 })
+  if (!Number.isInteger(leadId) || leadId <= 0) return NextResponse.json({ error: 'lead_id missing' }, { status: 400 })
   if (!stage) return NextResponse.json({ error: 'stage missing' }, { status: 400 })
 
   const svc = createServiceClient()

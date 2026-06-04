@@ -21,16 +21,30 @@ export function validatePhones(
     ? (countryCode as CountryCode)
     : undefined
 
+  // Signal that the page uses international (+) formatting: if any candidate
+  // is E.164-prefixed, bare digit runs are more likely real phone numbers
+  // that simply lost their '+' in extraction than incidental SKUs/dates.
+  const sawIntl = candidates.some(c => typeof c === 'string' && c.trim().startsWith('+'))
+
   const valid = new Set<string>()
   for (const raw of candidates) {
     if (!raw) continue
-    const trimmed = raw.trim()
-    // Without a country anchor, only accept E.164-prefixed candidates.
-    // Otherwise libphonenumber will happily classify any 10-digit run
-    // (product SKUs, dates, order numbers) as a valid US/CA number.
-    if (!country && !trimmed.startsWith('+')) continue
+    let candidate = raw.trim()
+    if (!country && !candidate.startsWith('+')) {
+      // No country anchor. A bare run is ambiguous — libphonenumber would
+      // call any 10-digit run a valid US/CA number. Only attempt it when the
+      // page shows international formatting elsewhere AND the run is long
+      // enough (≥11 digits) to already carry a country code. Prefix '+' and
+      // let isValid() reject wrong guesses (national numbers with a trunk
+      // '0' → invalid country code → dropped). Genuine national-format
+      // numbers without a country code still need country_code set — that's
+      // the proper fix for those, not a guess here.
+      const digits = candidate.replace(/\D/g, '')
+      if (!sawIntl || digits.length < 11) continue
+      candidate = '+' + digits
+    }
     try {
-      const parsed = parsePhoneNumberFromString(trimmed, country)
+      const parsed = parsePhoneNumberFromString(candidate, country)
       if (parsed && parsed.isValid()) {
         valid.add(parsed.formatInternational())
       }

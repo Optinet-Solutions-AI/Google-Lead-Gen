@@ -16,7 +16,10 @@
 // `.xn--p1ai` (`.рф`) and `.xn--80akhbyknj4f` are rejected, so domains
 // under those TLDs yield zero emails from the regex tier and fall
 // straight to the LLM/Hunter fallback.
-const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z][A-Z0-9-]{1,62}/gi
+// Local part must start with an alphanumeric/`_%+` char (no leading `.` or
+// `-`), capped at 64 chars (RFC 5321). Consecutive/trailing dots are caught
+// in isPlausibleEmail. Prevents `.foo@`, `-bar@`, `foo..bar@` false matches.
+const EMAIL_RE = /[A-Z0-9_%+][A-Z0-9._%+-]{0,63}@[A-Z0-9.-]+\.[A-Z][A-Z0-9-]{1,62}/gi
 const MAILTO_RE = /href=["']mailto:([^"'?]+)/gi
 const TEL_RE = /href=["']tel:([^"']+)/gi
 // Dropped `.` from the separator class — without it, version strings
@@ -115,7 +118,6 @@ export function extractContacts(html: string, baseUrl: string): ContactResult {
 
   for (const m of decoded.matchAll(MAILTO_RE)) {
     if (!m[1]) continue
-    mailtoCount++
     // RFC 6068: mailto local-parts may be percent-encoded (`User%40…`
     // for `@`) and multiple recipients are comma- or semicolon-
     // separated. Without decoding, an encoded `%40` capture has no `@`
@@ -128,10 +130,19 @@ export function extractContacts(html: string, baseUrl: string): ContactResult {
     } catch {
       decodedHref = m[1]
     }
+    // Only count a mailto once at least one segment yields a plausible
+    // email. Downstream reads `mailtoCount > 0` as "we have emails, skip
+    // the LLM" — an encoded `User%40` that decodes to nothing valid must
+    // not trip that skip.
+    let foundPlausible = false
     for (const raw of decodedHref.split(/[,;]/)) {
       const e = raw.trim().toLowerCase()
-      if (e && isPlausibleEmail(e)) emails.add(e)
+      if (e && isPlausibleEmail(e)) {
+        emails.add(e)
+        foundPlausible = true
+      }
     }
+    if (foundPlausible) mailtoCount++
   }
 
   // Plain-text emails — strip script/style/comment chunks first to cut noise
@@ -177,7 +188,12 @@ export function extractContacts(html: string, baseUrl: string): ContactResult {
 function isPlausibleEmail(e: string): boolean {
   const parts = e.split('@')
   if (parts.length !== 2) return false
-  const [, dom] = parts as [string, string]
+  const [local, dom] = parts as [string, string]
+  // Reject RFC-invalid local parts the greedy regex or a raw mailto can
+  // still yield: empty, leading/trailing dot, or consecutive dots.
+  if (!local || local.startsWith('.') || local.endsWith('.') || local.includes('..')) {
+    return false
+  }
   const tld = dom.split('.').pop()?.toLowerCase()
   if (!tld || EXCLUDED_EMAIL_TLDS.has(tld)) return false
   if (COMMON_NOISE_DOMAINS.some(n => dom.includes(n))) return false

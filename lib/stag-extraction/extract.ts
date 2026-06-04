@@ -110,8 +110,11 @@ export function parseStagFromUrl(rawUrl: string): { tag: string; param: string }
     return null
   }
   for (const key of STAG_PARAM_ORDER) {
-    const v = u.searchParams.get(key)
-    if (v && v.length > 0) return { tag: v, param: key }
+    // Trim before the emptiness check: a `?btag=%20%20%20` yields a
+    // whitespace-only value that would otherwise propagate to the s_tag
+    // column, the Monday push body, and the dedupe Set as a blank tag.
+    const t = u.searchParams.get(key)?.trim()
+    if (t) return { tag: t, param: key }
   }
   return null
 }
@@ -136,7 +139,10 @@ export function guessBrandFromUrl(rawUrl: string): string | null {
       parts.length >= 3 && last.length === 2 && SECOND_LEVEL_TLDS.has(penult) ? 2 : 1
     const brandParts = parts.slice(0, parts.length - tldDepth)
     if (brandParts.length === 0) return null
-    return brandParts.join('.') || null
+    // Return just the registrable label (eTLD+1): foo.bar.casino.co.uk →
+    // "casino". A dotted brand survives display but breaks whitespace-
+    // splitting downstream parsers and brandsByDomain rooster matching.
+    return brandParts[brandParts.length - 1] ?? null
   } catch {
     return null
   }

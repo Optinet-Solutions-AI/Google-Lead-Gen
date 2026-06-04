@@ -16,7 +16,7 @@ export async function GET(
 
   const { id } = await ctx.params
   const leadId = Number.parseInt(id, 10)
-  if (!Number.isFinite(leadId)) {
+  if (!Number.isInteger(leadId) || leadId <= 0) {
     return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   }
 

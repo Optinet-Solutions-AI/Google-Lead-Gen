@@ -139,11 +139,14 @@ async function syncBoard(
     let page = await fetchFirstPage(board.monday_board_id)
     while (true) {
       pageNumber++
-      const itemRows = page.items.map(item => mapItemToRow(item, board))
+      // One sync timestamp per page so a 25-item batch shares a single
+      // synced_at rather than per-item now() drift.
+      const syncedAt = new Date().toISOString()
+      const itemRows = page.items.map(item => mapItemToRow(item, board, syncedAt))
       const updateRows: Record<string, unknown>[] = []
       for (const item of page.items) {
         for (const upd of item.updates ?? []) {
-          updateRows.push(mapUpdateToRow(upd, item.id))
+          updateRows.push(mapUpdateToRow(upd, item.id, syncedAt))
         }
       }
 

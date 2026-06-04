@@ -44,7 +44,11 @@ export async function mondayGQL<T = unknown>(
   })
 
   if (res.status === 429 && attempt < 5) {
-    const waitSeconds = Number(res.headers.get('retry-after') ?? 10)
+    // Retry-After is a delay in seconds OR an HTTP-date (RFC 7231). For the
+    // date form Number(...) is NaN, which would make setTimeout fire
+    // immediately and hot-loop the retry up to 5× — fall back to 10s.
+    const parsed = Number(res.headers.get('retry-after'))
+    const waitSeconds = Number.isFinite(parsed) && parsed >= 0 ? parsed : 10
     await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000))
     return mondayGQL<T>(query, variables, attempt + 1)
   }
