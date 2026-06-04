@@ -76,6 +76,17 @@ function hostOf(url: string): string {
   }
 }
 
+// Affiliate referral / campaign codes that ride in the URL *path* (not as
+// query-param stags, so parseStagFromUrl never sees them). Two shapes seen in
+// the AU Facebook gambling network:
+//   - explicit referral codes on the operator: .../RFOGAD007, .../RF030AFB08S
+//   - masked campaign codes inside the shortener: tny.sh/AU40326002-FC,
+//     tny.sh/au306253codb  (2 letters + 6+ digits)
+// AFFILIATE_REF_RE is distinctive enough to count anywhere; CAMPAIGN_CODE_RE is
+// looser, so it only counts on a shortener link (the masking IS the tell).
+const AFFILIATE_REF_RE = /\/RF[A-Z0-9]{4,}/i
+const CAMPAIGN_CODE_RE = /\/[A-Za-z]{2}\d{6,}/
+
 export function scoreFbAdvertiser(
   advertiser: FbScoreAdvertiser,
   links: FbScoreLink[],
@@ -93,6 +104,7 @@ export function scoreFbAdvertiser(
   const casinoHosts = new Set<string>()
   const hubHosts = new Set<string>()
   let shortenerHit = false
+  let affiliatePathHit = false
   for (const l of links) {
     const url = dest(l)
     const host = hostOf(url)
@@ -101,7 +113,14 @@ export function scoreFbAdvertiser(
     // whether or not it resolved. (Keying on the resolved host instead would
     // DROP the signal exactly when resolution succeeds and lands on an obscure
     // operator that isn't in the casino denylist — e.g. tny.sh → iplay77.com.)
-    if (SHORTENER_HOSTS.has(hostOf(l.url))) shortenerHit = true
+    const urlIsShort = SHORTENER_HOSTS.has(hostOf(l.url))
+    if (urlIsShort) shortenerHit = true
+    // Affiliate referral / campaign code in the path of the original OR resolved
+    // URL — a self-standing affiliate tell that needs no ad-copy keywords.
+    for (const p of [l.url, l.resolved_url]) {
+      if (!p) continue
+      if (AFFILIATE_REF_RE.test(p) || (urlIsShort && CAMPAIGN_CODE_RE.test(p))) affiliatePathHit = true
+    }
     if (!isAffiliateCasinoLink(url, casinoDenylist)) continue
     try {
       casinoHosts.add(new URL(url).hostname.toLowerCase().replace(/^www\./, ''))
@@ -165,14 +184,24 @@ export function scoreFbAdvertiser(
     indicators.push('casino tracking / shortener link')
   }
 
+  // An affiliate referral/campaign code in a link path is a self-standing tell —
+  // it flags even when the sampled ad copy carried no gambling keyword (the
+  // thin-copy stragglers whose only signal is the resolved .../RF… casino link).
+  if (affiliatePathHit) {
+    score += 25
+    indicators.push('affiliate referral code in link path')
+  }
+
   const nicheScore = Math.min(Math.round(score * 100) / 100, 100)
   // Affiliate if it points an ad at a casino at all, funnels through an
-  // affiliate hub / masked shortener with gambling context, OR clears the
-  // threshold on the softer signals (name + keywords).
+  // affiliate hub / masked shortener with gambling context, carries an
+  // affiliate referral code in a link path, OR clears the threshold on the
+  // softer signals (name + keywords).
   const isLikelyAffiliate =
     casinoHosts.size > 0 ||
     (hubHosts.size > 0 && hasGamblingContext) ||
     (shortenerHit && hasGamblingContext) ||
+    affiliatePathHit ||
     nicheScore >= AFFILIATE_THRESHOLD
 
   return { isLikelyAffiliate, nicheScore, indicators }
