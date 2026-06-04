@@ -2133,7 +2133,7 @@ def _is_captcha_silent(driver) -> bool:
 # ---------------------------
 # Google scraping
 # ---------------------------
-def get_google_results_selenium(driver, keyword, country, page=0, language="en", wait_for_sponsored=True, silent_captcha=False):
+def get_google_results_selenium(driver, keyword, country, page=0, language="en", wait_for_sponsored=True, silent_captcha=False, result_type_filter=None):
     """Fetch + parse one Google SERP page.
 
     silent_captcha=False (default): on captcha, escalates via check_for_captcha
@@ -2204,6 +2204,10 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
     landing_screenshots: dict = {}
     resolved_ppc_urls: dict = {}
     for idx, (ppc_url, anchor) in enumerate(sponsored_map.items()):
+        # Organic-only jobs discard PPC rows at insert time (complete_scrape_job),
+        # so skip the costly per-ad click-through + screenshots (~15s each).
+        if result_type_filter == "Organic":
+            break
         out_path = f"/tmp/serp_ad_{int(time.time() * 1000)}_{page}_{idx}.png"
         if capture_serp_card_screenshot(driver, anchor, out_path):
             serp_screenshots[ppc_url] = out_path
@@ -2282,6 +2286,9 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
 
     # --- PPC results not included in organic ---
     for ppc_url in sponsored_urls:
+        # Organic-only jobs: no PPC rows wanted (discarded downstream anyway).
+        if result_type_filter == "Organic":
+            break
         # Skip if we already emitted a row for this ad (matched by the
         # full resolved URL OR the bare data-pcu — either way it's the
         # same ad and we avoid duplicating it).
@@ -2330,6 +2337,7 @@ def scrape_google_search(
     max_pages=5, delay_min=2, delay_max=5,
     language="en",
     view_mode="both",
+    result_type_filter=None,
 ):
     """
     Per-job view_mode: 'desktop' (legacy), 'mobile' (iPhone-only), or 'both'.
@@ -2361,6 +2369,7 @@ def scrape_google_search(
         for page in range(max_pages):
             page_results = get_google_results_selenium(
                 driver, keyword, country, page, language=language,
+                result_type_filter=result_type_filter,
             )
             # Stamp every desktop-pass row up front. The mobile pass below
             # flips overlapping rows to 'both' and tags new ones as 'mobile'.
@@ -2401,6 +2410,7 @@ def scrape_google_search(
                     page_results = get_google_results_selenium(
                         driver, keyword, country, page, language=language,
                         silent_captcha=not mobile_is_primary,
+                        result_type_filter=result_type_filter,
                     )
                 except CaptchaDetectedException:
                     # Only raised in primary-mobile mode (Captcha solver path) — let
@@ -3070,6 +3080,8 @@ def main():
     parser.add_argument("--webhook", default=None, help="Optional webhook URL to POST results to (not used by the Supabase worker)")
     parser.add_argument("--language", default="en", help="Search language code (en, ar, de, …)")
     parser.add_argument("--engine", default="google", choices=["google", "bing"], help="Which search engine to scrape")
+    parser.add_argument("--result-type-filter", dest="result_type_filter", default=None, choices=["PPC", "Organic"],
+                        help="When 'Organic', skip the PPC click-through + screenshots (those rows are discarded at insert time anyway).")
     parser.add_argument(
         "--view-mode",
         choices=["desktop", "mobile", "both"],
@@ -3196,6 +3208,7 @@ def main():
                     max_pages=args.pages,
                     language=args.language,
                     view_mode=args.view_mode,
+                    result_type_filter=args.result_type_filter,
                 )
 
             save_to_file(data, args.output)

@@ -482,6 +482,7 @@ def run_scrape(
     country_code: str | None = None,
     requires_google_login: bool = False,
     view_mode: str = "both",
+    result_type_filter: str | None = None,
 ) -> tuple[int, str, Path, Path]:
     """
     Invoke the scraper as a subprocess.
@@ -515,6 +516,10 @@ def run_scrape(
         cmd += ["--country-code", country_code]
     if requires_google_login:
         cmd += ["--requires-google-login"]
+    # Organic-only jobs: tell the scraper so it skips the PPC click-through
+    # work up front (the rows would be discarded at insert time anyway).
+    if result_type_filter in ("PPC", "Organic"):
+        cmd += ["--result-type-filter", result_type_filter]
     # view_mode is per-job (form dropdown) but the worker-level env var
     # MOBILE_PASS_ENABLED=off acts as a hard downgrade to desktop-only.
     # Useful when one country is captcha-prone enough that the extra
@@ -1564,6 +1569,8 @@ def process_job(job: dict[str, Any]) -> None:
     view_mode = (job.get("view_mode") or "both").strip().lower() or "both"
     if view_mode not in ("desktop", "mobile", "both"):
         view_mode = "both"
+    # Per-job PPC/Organic filter (scrape_queue.result_type_filter): NULL = both.
+    result_type_filter = (job.get("result_type_filter") or "").strip() or None
 
     log.info("claimed job %s | country=%s keyword=%r pages=%d lang=%s engine=%s view=%s",
              job_id, country_code, keyword, pages, language, engine, view_mode)
@@ -1590,6 +1597,7 @@ def process_job(job: dict[str, Any]) -> None:
             country_code=country_code,
             requires_google_login=requires_google_login,
             view_mode=view_mode,
+            result_type_filter=result_type_filter,
         )
     except subprocess.TimeoutExpired:
         _kill_port()
