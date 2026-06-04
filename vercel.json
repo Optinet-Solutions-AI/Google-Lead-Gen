@@ -22,6 +22,22 @@
       "schedule": "30 23 * * *"
     },
     {
+      "path": "/api/monday/sync?board=leads&full=1",
+      "schedule": "0 21 * * 0"
+    },
+    {
+      "path": "/api/monday/sync?board=affiliates&full=1",
+      "schedule": "15 21 * * 0"
+    },
+    {
+      "path": "/api/monday/sync?board=not_relevant_leads&full=1",
+      "schedule": "30 21 * * 0"
+    },
+    {
+      "path": "/api/monday/sync?board=email_undelivered_leads&full=1",
+      "schedule": "45 21 * * 0"
+    },
+    {
       "path": "/api/proxy/bandwidth/refresh",
       "schedule": "*/5 * * * *"
     }

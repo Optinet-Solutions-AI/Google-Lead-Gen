@@ -16,6 +16,12 @@ const UPDATES_PER_ITEM = 100
 const BATCH_UPSERT_SIZE = 200
 const SLEEP_BETWEEN_REQUESTS_MS = 700
 
+// Incremental sync re-pulls only items updated since the newest one already
+// in the replica. The overlap margin re-fetches a slice on either side of the
+// boundary so an item updated mid-run (or with slight clock skew) can't slip
+// through the crack between two runs. Re-upserting a few rows is idempotent.
+const HIGH_WATER_OVERLAP_MS = 60 * 60 * 1000 // 1 hour
+
 type MondayItemWithUpdates = MondayItem & { updates: MondayUpdate[] }
 type ItemsPage = { cursor: string | null; items: MondayItemWithUpdates[] }
 
@@ -26,11 +32,18 @@ const ITEM_FIELDS_WITH_UPDATES = `
   }
 `
 
+// Always order newest-updated first. For a full sync this is harmless; for an
+// incremental sync it's what lets us stop early at the high-water mark. The
+// "__last_updated__" system column is confirmed working on this account
+// (API 2025-07). The cursor returned by an ordered items_page carries the
+// ordering forward, so next_items_page needs no query_params of its own.
+const ITEMS_ORDER_BY = `query_params: { order_by: [{ column_id: "__last_updated__", direction: desc }] }`
+
 async function fetchFirstPage(boardId: string): Promise<ItemsPage> {
   const data = await mondayGQL<{ boards: Array<{ items_page: ItemsPage }> }>(
     `query ($id: [ID!], $limit: Int!) {
       boards(ids: $id) {
-        items_page(limit: $limit) {
+        items_page(limit: $limit, ${ITEMS_ORDER_BY}) {
           cursor
           items { ${ITEM_FIELDS_WITH_UPDATES} }
         }
@@ -78,6 +91,7 @@ async function upsertBatch(
 export type SyncBoardResult = {
   board: string
   board_id: string
+  mode: 'full' | 'incremental'
   pages: number
   items: number
   updates: number
@@ -85,12 +99,38 @@ export type SyncBoardResult = {
   error?: string
 }
 
+/**
+ * Newest item already in the replica, as epoch ms, minus the overlap margin.
+ * This is the incremental high-water mark — items updated after it are the
+ * only ones we need to re-pull. Returns null when the table is empty (or the
+ * timestamp is unreadable), signalling a full backfill.
+ */
+async function getHighWaterMark(
+  supabase: SupabaseClient,
+  board: BoardConfig,
+): Promise<number | null> {
+  const { data, error } = await supabase
+    .from(board.items_table)
+    .select('monday_updated_at')
+    .not('monday_updated_at', 'is', null)
+    .order('monday_updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error || !data) return null
+  const raw = (data as { monday_updated_at: string | null }).monday_updated_at
+  const t = raw ? Date.parse(raw) : NaN
+  return Number.isFinite(t) ? t - HIGH_WATER_OVERLAP_MS : null
+}
+
 async function syncBoard(
   supabase: SupabaseClient,
   board: BoardConfig,
-  onProgress?: (msg: string) => void,
+  opts?: { since?: number | undefined; onProgress?: ((msg: string) => void) | undefined },
 ): Promise<SyncBoardResult> {
   const startedAt = Date.now()
+  const since = opts?.since
+  const onProgress = opts?.onProgress
+  const mode: 'full' | 'incremental' = since != null ? 'incremental' : 'full'
   let pageNumber = 0
   let totalItems = 0
   let totalUpdates = 0
@@ -115,8 +155,20 @@ async function syncBoard(
       totalItems += itemRows.length
       totalUpdates += updateRows.length
       onProgress?.(
-        `[${board.monday_board_name}] page ${pageNumber}: ${itemRows.length} items (+${updateRows.length} updates) — total items ${totalItems}`,
+        `[${board.monday_board_name}] ${mode} page ${pageNumber}: ${itemRows.length} items (+${updateRows.length} updates) — total items ${totalItems}`,
       )
+
+      // Incremental early-stop: pages arrive newest-updated first, so once a
+      // page reaches an item at/older than the high-water mark, every
+      // remaining page is older still — all changes are covered. We process
+      // the whole boundary page (idempotent) before stopping.
+      if (since != null) {
+        const crossedBoundary = page.items.some(it => {
+          const t = it.updated_at ? Date.parse(it.updated_at) : NaN
+          return Number.isFinite(t) && t <= since
+        })
+        if (crossedBoundary) break
+      }
 
       // Only `null`/`undefined` signals "no more pages". An empty
       // string is a valid (if unusual) cursor — treating it as
@@ -129,6 +181,7 @@ async function syncBoard(
     return {
       board: board.monday_board_name,
       board_id: board.monday_board_id,
+      mode,
       pages: pageNumber,
       items: totalItems,
       updates: totalUpdates,
@@ -138,6 +191,7 @@ async function syncBoard(
     return {
       board: board.monday_board_name,
       board_id: board.monday_board_id,
+      mode,
       pages: pageNumber,
       items: totalItems,
       updates: totalUpdates,
@@ -168,13 +222,23 @@ function defaultSupabase(): SupabaseClient {
  *
  *  Pass `boardKey` to sync a single board — used by Vercel crons that
  *  split the four boards across separate invocations so each gets its
- *  own 300s function budget (the combined sync was running out of time
- *  on the leads board and starving affiliates/not_relevant/email_undelivered).
+ *  own 300s function budget.
+ *
+ *  Incremental by default: only items updated since the newest one already
+ *  in the replica are re-pulled (see getHighWaterMark / the newest-first
+ *  early-stop in syncBoard). This is what keeps the leads board inside the
+ *  300s budget. An empty replica table falls back to a full backfill.
+ *
+ *  Pass `full: true` for a complete re-pull — used by a weekly self-heal
+ *  cron to catch drift an updated_at-incremental can't see (new entries in
+ *  the Updates feed that don't bump the item's updated_at). Real-time
+ *  webhooks cover those between full runs.
  */
 export async function runMondaySync(opts?: {
   supabase?: SupabaseClient
   onProgress?: (msg: string) => void
   boardKey?: BoardKey
+  full?: boolean
 }): Promise<SyncRunResult> {
   const supabase = opts?.supabase ?? defaultSupabase()
   const startedAt = Date.now()
@@ -183,7 +247,9 @@ export async function runMondaySync(opts?: {
     ? BOARDS.filter(b => b.key === opts.boardKey)
     : BOARDS
   for (const board of boards) {
-    const r = await syncBoard(supabase, board, opts?.onProgress)
+    // null high-water mark (empty table) → full backfill regardless of flag.
+    const since = opts?.full ? undefined : (await getHighWaterMark(supabase, board)) ?? undefined
+    const r = await syncBoard(supabase, board, { since, onProgress: opts?.onProgress })
     results.push(r)
   }
   return {

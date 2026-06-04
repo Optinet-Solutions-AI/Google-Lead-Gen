@@ -16,8 +16,14 @@ export async function GET(request: NextRequest) {
  * webhooks. Triggered by Vercel cron (see vercel.json) once per board per
  * night, staggered 10 minutes apart so each board gets its own 300s budget.
  *
- * Query: `?board=<key>` syncs a single board (one of the BoardKey values).
- * Omit the param for a full all-boards sync — used for manual catch-ups.
+ * Query:
+ *   `?board=<key>` — sync a single board (one of the BoardKey values).
+ *                    Omit to sync all boards.
+ *   `?full=1` (or `?mode=full`) — force a complete re-pull. Default is
+ *                    incremental: only items updated since the newest one
+ *                    already in the replica. Incremental is what keeps the
+ *                    leads board inside the 300s budget; `full` is for the
+ *                    weekly self-heal cron and manual catch-ups.
  *
  * Auth: requires `Authorization: Bearer <CRON_SECRET>` if CRON_SECRET is
  * configured (Vercel cron sends this automatically).
@@ -43,7 +49,14 @@ export async function POST(request: NextRequest) {
     boardKey = match.key
   }
 
-  const result = await runMondaySync(boardKey ? { boardKey } : undefined)
+  const fullParam = (
+    request.nextUrl.searchParams.get('full') ??
+    request.nextUrl.searchParams.get('mode') ??
+    ''
+  ).toLowerCase()
+  const full = fullParam === '1' || fullParam === 'true' || fullParam === 'full'
+
+  const result = await runMondaySync({ ...(boardKey ? { boardKey } : {}), full })
 
   return Response.json(
     {
