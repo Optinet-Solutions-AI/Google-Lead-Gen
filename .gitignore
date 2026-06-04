@@ -48,6 +48,14 @@ next-env.d.ts
 supabase/.temp/
 BUGS.md
 
+# internal docs — call-prep / handoff / reports leak stakeholder names; keep out of git
+*_CALL_PREP.md
+*_HANDOFF.md
+WORK_LOG_*
+MONTHLY_REPORT_*
+INFRA_*
+*_cp_*.png
+
 # script output (may contain sensitive data dumps)
 scripts/**/output/
 
