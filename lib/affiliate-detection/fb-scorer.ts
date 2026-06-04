@@ -97,9 +97,11 @@ export function scoreFbAdvertiser(
     const url = dest(l)
     const host = hostOf(url)
     if (AGGREGATOR_HOSTS.has(host)) hubHosts.add(host)
-    // A shortener that's still a shortener here means it never resolved to a
-    // casino (blocked / not followed) — flag it as a masked redirect candidate.
-    if (SHORTENER_HOSTS.has(hostOf(l.url)) && SHORTENER_HOSTS.has(host)) shortenerHit = true
+    // Funnelling an ad through a shortener is the affiliate behaviour — count it
+    // whether or not it resolved. (Keying on the resolved host instead would
+    // DROP the signal exactly when resolution succeeds and lands on an obscure
+    // operator that isn't in the casino denylist — e.g. tny.sh → iplay77.com.)
+    if (SHORTENER_HOSTS.has(hostOf(l.url))) shortenerHit = true
     if (!isAffiliateCasinoLink(url, casinoDenylist)) continue
     try {
       casinoHosts.add(new URL(url).hostname.toLowerCase().replace(/^www\./, ''))
