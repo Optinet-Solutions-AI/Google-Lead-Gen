@@ -2220,12 +2220,15 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
     results = []
     position = 1
     overall_position = 1
+    seen_links: set[str] = set()
 
     # --- Organic results ---
     # Desktop SERPs wrap each result title in <h3>; mobile SERPs wrap it
     # in <div role="heading"> instead. Both live under #rso and both are
     # nested inside the result anchor. Iterate the union so the parser
-    # works regardless of which layout Google serves the session.
+    # works regardless of which layout Google serves the session. An anchor
+    # that carries BOTH heading types (or two headings) would otherwise be
+    # emitted twice for the same URL — dedupe by href to keep one row.
     for h3 in soup.select("#rso a h3") + soup.select("#rso a div[role='heading']"):
         a = h3.find_parent("a")
         if not a:
@@ -2234,6 +2237,9 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
         link = a.get("href")
         if not link or not link.startswith("http"):
             continue
+        if link in seen_links:
+            continue
+        seen_links.add(link)
 
         result_type = "PPC" if link in sponsored_urls else "Organic"
 
