@@ -43,7 +43,12 @@ export function findRoosterBrandLinks(
   const brandsByDomain = new Map<string, { brand_name: string | null; monday_item_id: string | null }>()
   // Index keyed by both the brand_name (for alt-attr match) and the
   // domain stem (for image-filename token match). Lowercased.
-  const brandsByToken = new Map<string, BrandRow>()
+  // Two separate indexes so a brand whose NAME equals another brand's
+  // domain STEM can't clobber it in a single shared map (e.g. brand "Spin"
+  // vs the stem of spin.com — one would silently overwrite the other and
+  // drop it from token matching). Both maps are consulted in signals 2 & 3.
+  const brandsByName = new Map<string, BrandRow>()
+  const brandsByStem = new Map<string, BrandRow>()
   for (const b of brandList) {
     if (!b.domain) continue
     // Strip a leading `www.` so brands stored as `www.spinjo.com` are
@@ -54,13 +59,12 @@ export function findRoosterBrandLinks(
     brandsByDomain.set(dom, { brand_name: b.brand_name, monday_item_id: b.monday_item_id })
     if (b.brand_name) {
       const name = b.brand_name.trim().toLowerCase()
-      if (name.length >= MIN_STEM) brandsByToken.set(name, b)
+      if (name.length >= MIN_STEM) brandsByName.set(name, b)
     }
-    // Strip a leading `www.` so the stem reflects the brand, not the
-    // subdomain — otherwise every `www.<anything>.com` brand collapses
-    // to the single token "www".
-    const stem = dom.replace(/^www\./, '').split('.')[0] ?? ''
-    if (stem.length >= MIN_STEM) brandsByToken.set(stem, b)
+    // `dom` is already www-stripped, so the stem reflects the brand, not
+    // the subdomain (avoids every `www.<x>.com` collapsing to "www").
+    const stem = dom.split('.')[0] ?? ''
+    if (stem.length >= MIN_STEM) brandsByStem.set(stem, b)
   }
 
   const found = new Map<string, RoosterMatch>()
@@ -89,13 +93,14 @@ export function findRoosterBrandLinks(
   for (const m of html.matchAll(ALT_RE)) {
     const alt = m[1]?.trim().toLowerCase()
     if (!alt || alt.length < MIN_STEM) continue
-    const hit = brandsByToken.get(alt)
-    if (hit && !found.has(hit.domain)) {
-      found.set(hit.domain, {
-        domain: hit.domain,
-        brand_name: hit.brand_name,
-        monday_item_id: hit.monday_item_id,
-      })
+    for (const hit of [brandsByName.get(alt), brandsByStem.get(alt)]) {
+      if (hit && !found.has(hit.domain)) {
+        found.set(hit.domain, {
+          domain: hit.domain,
+          brand_name: hit.brand_name,
+          monday_item_id: hit.monday_item_id,
+        })
+      }
     }
   }
 
@@ -106,13 +111,14 @@ export function findRoosterBrandLinks(
     // "logo-spinjo.svg" → tokens ["logo", "spinjo", "svg"]
     const tokens = src.split(/[^a-z0-9]+/).filter(t => t.length >= MIN_STEM)
     for (const tok of tokens) {
-      const hit = brandsByToken.get(tok)
-      if (hit && !found.has(hit.domain)) {
-        found.set(hit.domain, {
-          domain: hit.domain,
-          brand_name: hit.brand_name,
-          monday_item_id: hit.monday_item_id,
-        })
+      for (const hit of [brandsByStem.get(tok), brandsByName.get(tok)]) {
+        if (hit && !found.has(hit.domain)) {
+          found.set(hit.domain, {
+            domain: hit.domain,
+            brand_name: hit.brand_name,
+            monday_item_id: hit.monday_item_id,
+          })
+        }
       }
     }
   }
