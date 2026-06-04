@@ -16,6 +16,10 @@ const SHORTENER_HOSTS = new Set([
   'bit.ly', 't.co', 'tinyurl.com', 'cutt.ly', 'ow.ly', 'buff.ly',
   'rebrand.ly', 'shorturl.at', 'rb.gy', 'is.gd', 'snip.ly', 'lnk.to',
   'tiny.cc', 'shrtco.de', 'short.gy', 'trib.al',
+  // Heavily used by gambling-affiliate ads (esp. AU Facebook Ad Library):
+  // tny.sh carries affiliate campaign codes in the path (e.g.
+  // tny.sh/AU390425001-FT) and 30x-redirects to the operator with the stag.
+  'tny.sh', 't.ly', 's.id', 'v.gd', 'soo.gd', 'clck.ru',
 ])
 
 function hostOf(u: string): string {

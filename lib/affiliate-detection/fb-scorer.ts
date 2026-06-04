@@ -48,6 +48,34 @@ const AFFILIATE_THRESHOLD = 30
 // because names use gambl/pokies/wager/stake that the link-keyword list omits.
 const NAME_GAMBLING_RE = /casino|slots?|pokies?|gambl|\bbet(ting)?\b|roulette|blackjack|poker|jackpot|wager|stake|bonus/i
 
+// Link-aggregator "hub" pages — an advertiser funnelling traffic through one of
+// these (heylink/linktree-style) is the signature of an affiliate marketer, not
+// a direct operator. These are 200-OK pages (not 30x), so the resolver can't
+// expand them; we score the *presence* of the hub instead. Only counts when the
+// Page also shows gambling context (so we don't flag every creator on heylink).
+const AGGREGATOR_HOSTS = new Set([
+  'heylink.me', 'linktr.ee', 'beacons.ai', 'bio.link', 'lnk.bio', 'linkr.bio',
+  'allmylinks.com', 'linkin.bio', 'solo.to', 'tap.bio', 'msha.ke', 'about.me',
+])
+
+// URL shorteners commonly used to mask the affiliate redirect. When one of these
+// appears on a gambling-context Page but DIDN'T resolve to a casino (blocked /
+// not followed), treat it as a likely casino-affiliate redirect. Mirrors the
+// resolver's SHORTENER_HOSTS (kept local so the scorer stays pure/no server-only).
+const SHORTENER_HOSTS = new Set([
+  'tny.sh', 'bit.ly', 't.co', 'tinyurl.com', 'cutt.ly', 'ow.ly', 'rb.gy',
+  'is.gd', 'short.gy', 'shorturl.at', 'rebrand.ly', 't.ly', 's.id', 'v.gd',
+  'soo.gd', 'clck.ru', 'tiny.cc',
+])
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '')
+  } catch {
+    return ''
+  }
+}
+
 export function scoreFbAdvertiser(
   advertiser: FbScoreAdvertiser,
   links: FbScoreLink[],
@@ -58,10 +86,20 @@ export function scoreFbAdvertiser(
 
   const dest = (l: FbScoreLink) => l.resolved_url ?? l.url
   // Distinct casino/affiliate destinations (dedupe by host so an advertiser
-  // who points many ads at the same operator isn't double-counted).
+  // who points many ads at the same operator isn't double-counted). Along the
+  // way, note whether the Page funnels traffic through an affiliate link-hub or
+  // a (still-unresolved) shortener — both are strong affiliate tells once the
+  // Page also shows gambling context (checked below).
   const casinoHosts = new Set<string>()
+  const hubHosts = new Set<string>()
+  let shortenerHit = false
   for (const l of links) {
     const url = dest(l)
+    const host = hostOf(url)
+    if (AGGREGATOR_HOSTS.has(host)) hubHosts.add(host)
+    // A shortener that's still a shortener here means it never resolved to a
+    // casino (blocked / not followed) — flag it as a masked redirect candidate.
+    if (SHORTENER_HOSTS.has(hostOf(l.url)) && SHORTENER_HOSTS.has(host)) shortenerHit = true
     if (!isAffiliateCasinoLink(url, casinoDenylist)) continue
     try {
       casinoHosts.add(new URL(url).hostname.toLowerCase().replace(/^www\./, ''))
@@ -90,7 +128,8 @@ export function scoreFbAdvertiser(
     indicators.push(`casino keywords: ${kwHits.join(', ')}`)
   }
 
-  if (BONUS_COMPARISON_KEYWORDS.some(k => text.includes(k))) {
+  const bonusHit = BONUS_COMPARISON_KEYWORDS.some(k => text.includes(k))
+  if (bonusHit) {
     score += 5
     indicators.push('bonus / free-spins language')
   }
@@ -107,10 +146,32 @@ export function scoreFbAdvertiser(
     indicators.push(`gambling name: ${nameHit}`)
   }
 
+  // Whether the Page shows ANY gambling context — gates the hub/shortener
+  // signals so we don't flag generic creators who merely use heylink/bit.ly.
+  const hasGamblingContext = kwHits.length > 0 || bonusHit || !!nameHit
+
+  // An affiliate link-hub (heylink/linktree-style) on a gambling-context Page is
+  // the classic affiliate-marketer signature — strong enough to flag on its own.
+  if (hubHosts.size > 0 && hasGamblingContext) {
+    score += 30
+    indicators.push(`affiliate link hub: ${[...hubHosts].join(', ')}`)
+  }
+  // A still-unresolved shortener on a gambling-context Page is almost always a
+  // masked casino-affiliate redirect (e.g. tny.sh/AU…-FT, rb.gy/…).
+  if (shortenerHit && hasGamblingContext) {
+    score += 22
+    indicators.push('casino tracking / shortener link')
+  }
+
   const nicheScore = Math.min(Math.round(score * 100) / 100, 100)
-  // Affiliate if it points an ad at a casino at all, OR clears the threshold
-  // on the softer signals (name + keywords + a resolved promo destination).
-  const isLikelyAffiliate = casinoHosts.size > 0 || nicheScore >= AFFILIATE_THRESHOLD
+  // Affiliate if it points an ad at a casino at all, funnels through an
+  // affiliate hub / masked shortener with gambling context, OR clears the
+  // threshold on the softer signals (name + keywords).
+  const isLikelyAffiliate =
+    casinoHosts.size > 0 ||
+    (hubHosts.size > 0 && hasGamblingContext) ||
+    (shortenerHit && hasGamblingContext) ||
+    nicheScore >= AFFILIATE_THRESHOLD
 
   return { isLikelyAffiliate, nicheScore, indicators }
 }
