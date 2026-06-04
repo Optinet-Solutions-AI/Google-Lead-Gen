@@ -11,6 +11,7 @@ import {
 } from '@/lib/affiliate-detection/kick-scorer'
 import { scoreYoutubeChannel, type YoutubeScoreLink } from '@/lib/affiliate-detection/youtube-scorer'
 import { scoreXCreator, type XScoreLink } from '@/lib/affiliate-detection/x-scorer'
+import { scoreFbAdvertiser, type FbScoreLink } from '@/lib/affiliate-detection/fb-scorer'
 import { extractContacts } from '@/lib/affiliate-detection/kick-contacts'
 import { needsResolution, resolveShorteners } from '@/lib/affiliate-detection/resolve-links'
 import {
@@ -130,7 +131,7 @@ export async function enqueueScrape(
   // 'youtube' is a separate path (Data API, channel results into
   // youtube_channels) and intentionally NOT included in "both" — the
   // output shape is too different to bundle into a SERP comparison.
-  const enginesToRun: Array<'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x'> =
+  const enginesToRun: Array<'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook'> =
     engineRaw === 'both'
       ? ['google', 'bing']
       : engineRaw === 'bing'
@@ -143,7 +144,9 @@ export async function enqueueScrape(
               ? ['kick']
               : engineRaw === 'x'
                 ? ['x']
-                : ['google']
+                : engineRaw === 'facebook'
+                  ? ['facebook']
+                  : ['google']
   // view_mode controls whether the scraper runs desktop, mobile (iPhone
   // UA + 375x812 viewport via CDP), or both passes. 'both' is the
   // default — catches mobile-only PPC ads + mobile-ranked organic that
@@ -1771,6 +1774,218 @@ export async function runXCreatorAnalysis(
   return {
     status: 'ok',
     message: `Scored ${scored} creator${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}, ${withContacts} with contact${withContacts === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
+  }
+}
+
+// ============================================================
+// Facebook Ad Library Phase 3 — affiliate scoring + S-tag / new-vs-known check
+//
+// Pure data work (+ light HTTP to resolve shorteners), so it runs INLINE like
+// runXCreatorAnalysis. For each advertiser it resolves the ad landing links
+// the discovery scrape captured, parses any affiliate S-tag (or falls back to the operator
+// brand), checks each against Monday (search_s_tag_on_monday), scores affiliate
+// likelihood from the casino links + ad copy + Page name, and mines outreach
+// contacts. An advertiser is flagged is_new_lead_candidate when it's a likely
+// affiliate carrying ≥1 affiliate ID NOT on Monday, OR whose page_name isn't on
+// Monday. No leads are created — the operator reviews them.
+// ============================================================
+export async function runFbAdvertiserAnalysis(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+
+  const { data: job, error: jobErr } = await svc
+    .from('scrape_queue')
+    .select('search_engine')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (jobErr) return { status: 'error', error: safeError(jobErr, 'Failed to load the job.') }
+  if (!job) return { status: 'error', error: 'Job not found.' }
+  if (((job as { search_engine: string | null }).search_engine ?? '') !== 'facebook') {
+    return { status: 'error', error: 'Scoring only applies to Facebook scrape jobs.' }
+  }
+
+  type AdvertiserRow = {
+    id: string
+    page_name: string | null
+    page_category: string | null
+    ad_text_sample: string | null
+    page_website_url: string | null
+    page_transparency: string | null
+  }
+  const { data: advertisers, error: aErr } = await svc
+    .from('fb_advertisers')
+    .select('id, page_name, page_category, ad_text_sample, page_website_url, page_transparency')
+    .eq('scrape_queue_id', jobId)
+  if (aErr) return { status: 'error', error: safeError(aErr, 'Failed to load advertisers.') }
+  const rows = (advertisers ?? []) as unknown as AdvertiserRow[]
+  if (rows.length === 0) {
+    return { status: 'ok', message: 'No advertisers to score yet — run the Facebook scrape first.' }
+  }
+  const advertiserIds = rows.map(r => r.id)
+
+  type LinkRow = {
+    id: string
+    fb_advertiser_id: string
+    url: string
+    resolved_url: string | null
+    source: string
+    s_tag: string | null
+    brand: string | null
+    is_known_on_monday: boolean | null
+  }
+  const { data: links, error: lErr } = await svc
+    .from('fb_links')
+    .select('id, fb_advertiser_id, url, resolved_url, source, s_tag, brand, is_known_on_monday')
+    .in('fb_advertiser_id', advertiserIds)
+  if (lErr) return { status: 'error', error: safeError(lErr, 'Failed to load advertiser links.') }
+  const allLinks = (links ?? []) as unknown as LinkRow[]
+
+  // Casino-operator domain set (host suffixes) for affiliate-link scoring.
+  const { data: denyRows } = await svc.from('operator_domains_denylist').select('host_suffix')
+  const denylist = new Set(
+    (denyRows ?? []).map(r => (r as { host_suffix: string }).host_suffix.toLowerCase()),
+  )
+
+  // 1. Resolve shortener-like links (FB ad CTAs frequently point at bit.ly /
+  //    the affiliate /go/ redirector — expand to the operator destination).
+  const toResolve = allLinks
+    .filter(l => !l.resolved_url && needsResolution(l.url))
+    .map(l => l.url)
+  let linksResolved = 0
+  if (toResolve.length > 0) {
+    const resolvedMap = await resolveShorteners(toResolve)
+    const nowIso = new Date().toISOString()
+    for (const l of allLinks) {
+      const resolved = resolvedMap.get(l.url)
+      if (!resolved) continue
+      l.resolved_url = resolved // reflect locally so scoring/parsing sees it
+      const { error: upErr } = await svc
+        .from('fb_links')
+        .update({ resolved_url: resolved, resolved_at: nowIso })
+        .eq('id', l.id)
+      if (!upErr) linksResolved++
+    }
+  }
+
+  // Monday "have we seen this affiliate ID / operator?" check, memoized so the
+  // same key across advertisers costs one RPC.
+  const mondayCache = new Map<string, { kind: string; item_id: string } | null>()
+  async function checkMonday(key0: string): Promise<{ kind: string; item_id: string } | null> {
+    const key = key0.toLowerCase()
+    if (mondayCache.has(key)) return mondayCache.get(key) ?? null
+    const { data } = await svc.rpc('search_s_tag_on_monday', { p_tag: key0 })
+    const hit = (Array.isArray(data) ? data[0] : data) as { kind: string; item_id: string } | null | undefined
+    const val = hit?.item_id ? hit : null
+    mondayCache.set(key, val)
+    return val
+  }
+
+  // 2. Parse S-tag / brand for each casino link + check it against Monday,
+  //    persisting the verdict on the fb_links row (mirrors x_links).
+  const linksByAdvertiser = new Map<string, LinkRow[]>()
+  for (const l of allLinks) {
+    const arr = linksByAdvertiser.get(l.fb_advertiser_id) ?? []
+    arr.push(l)
+    linksByAdvertiser.set(l.fb_advertiser_id, arr)
+  }
+  let affiliateLinks = 0
+  for (const l of allLinks) {
+    const dest = l.resolved_url ?? l.url
+    const parsed = parseStagFromUrl(dest)
+    const isCasino = !!parsed || isAffiliateCasinoLink(dest, denylist)
+    if (!isCasino) continue
+    affiliateLinks++
+    const brand = guessBrandFromUrl(dest)
+    const checkKey = parsed?.tag || brand || ''
+    let hit: { kind: string; item_id: string } | null = null
+    if (checkKey) hit = await checkMonday(checkKey)
+    const update = {
+      s_tag: parsed?.tag ?? null,
+      s_tag_param: parsed?.param ?? null,
+      brand,
+      is_known_on_monday: checkKey ? !!hit : null,
+      monday_match_kind: hit?.kind ?? null,
+      monday_match_item_id: hit?.item_id ?? null,
+    }
+    const { error: upErr } = await svc.from('fb_links').update(update).eq('id', l.id)
+    if (!upErr) {
+      l.s_tag = update.s_tag
+      l.brand = update.brand
+      l.is_known_on_monday = update.is_known_on_monday
+    }
+  }
+
+  // 3. Score each advertiser + derive contacts + new-vs-known verdict.
+  let scored = 0
+  let likelyAffiliates = 0
+  let newCandidates = 0
+  let withContacts = 0
+  for (const a of rows) {
+    const advLinks = linksByAdvertiser.get(a.id) ?? []
+    const scoreLinks: FbScoreLink[] = advLinks.map(l => ({ url: l.url, resolved_url: l.resolved_url }))
+    const result = scoreFbAdvertiser(
+      { page_name: a.page_name, page_category: a.page_category, ad_text_sample: a.ad_text_sample },
+      scoreLinks,
+      denylist,
+    )
+
+    // Contacts from the sampled ad copy + transparency blob + captured link
+    // URLs (resolved first so a redirector that expanded to a t.me/discord
+    // invite still counts).
+    const linkUrls = advLinks.flatMap(l => [l.resolved_url, l.url].filter((u): u is string => !!u))
+    if (a.page_website_url) linkUrls.push(a.page_website_url)
+    const contacts = extractContacts([a.ad_text_sample ?? '', a.page_transparency ?? ''], linkUrls)
+
+    // New-lead check: a casino link whose affiliate ID/operator isn't on
+    // Monday, OR the page_name itself isn't on Monday (only for likely
+    // affiliates — Page-level redirector links often carry no in-URL stag).
+    const hasNewTag = advLinks.some(l => l.is_known_on_monday === false)
+    let nameIsNew = false
+    if (result.isLikelyAffiliate) {
+      const name = (a.page_name ?? '').trim()
+      if (name.length >= 2) {
+        const known = await checkMonday(name)
+        nameIsNew = !known
+      }
+    }
+    const isNewCandidate = result.isLikelyAffiliate && (hasNewTag || nameIsNew)
+
+    const update: Record<string, unknown> = {
+      is_likely_affiliate: result.isLikelyAffiliate,
+      niche_score: result.nicheScore,
+      is_new_lead_candidate: isNewCandidate,
+      is_known_on_monday: result.isLikelyAffiliate ? !nameIsNew : null,
+      contact_email: contacts.email,
+      telegram_url: contacts.telegram_url,
+      discord_url: contacts.discord_url,
+    }
+
+    const { error: upErr } = await svc.from('fb_advertisers').update(update).eq('id', a.id)
+    if (upErr) continue
+    scored++
+    if (result.isLikelyAffiliate) likelyAffiliates++
+    if (isNewCandidate) newCandidates++
+    if (contacts.email || contacts.telegram_url || contacts.discord_url) withContacts++
+  }
+
+  await logActivity({
+    action: 'enrichment.fb_score',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { scored, likelyAffiliates, newCandidates, affiliateLinks, linksResolved, withContacts },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: `Scored ${scored} advertiser${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}, ${withContacts} with contact${withContacts === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
   }
 }
 

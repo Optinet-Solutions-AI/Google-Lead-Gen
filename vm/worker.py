@@ -145,6 +145,17 @@ X_PROFILE_SCRAPE_PATH = os.environ.get(
 )
 X_PHASE1_MAX_RESULTS = int(os.environ.get("X_PHASE1_MAX_RESULTS", "100"))
 X_PHASE2_TOP_N = int(os.environ.get("X_PHASE2_TOP_N", "25"))
+# Facebook Ad Library is the browser path like X, but NO-LOGIN-FIRST: the
+# public Ad Library is browseable logged-out, so there's no login wall / burner
+# account / is_*_logged_in flag. Single-phase: the keyword-search scraper
+# captures advertisers AND their ad landing links in one pass (the per-page
+# view_all_page_id enrichment was dropped — FB's profile id != the Ad Library
+# page id, so that view returns no ads; see fb_adlibrary_search.py).
+FB_SEARCH_PATH = os.environ.get(
+    "FB_SEARCH_PATH",
+    str(Path.home() / "fb_adlibrary_search.py"),
+)
+FB_PHASE1_MAX_RESULTS = int(os.environ.get("FB_PHASE1_MAX_RESULTS", "100"))
 KILL_SCRIPT_PATH     = os.environ.get(
     "KILL_SCRIPT_PATH",
     str(Path.home() / "kill_gologin.py"),
@@ -1376,6 +1387,141 @@ def process_x_phase2_job(job: dict[str, Any]) -> None:
              payload.get("attempted") or 0, payload.get("failed") or 0)
 
 
+def run_fb_adlibrary_search(
+    profile_id: str,
+    keyword: str,
+    country_code: str,
+    language: str,
+    job_id: str,
+    max_results: int,
+) -> tuple[int, str, Path, Path]:
+    """Invoke fb_adlibrary_search.py (Phase 1) as a subprocess.
+
+    Browser path like run_x_search — GoLogin profile + port — but the public
+    Ad Library needs NO login, so there's no login-wall pause; the only
+    interactive case is a Facebook checkpoint, gated by captcha_solver_should_run().
+
+    Returns: (exit_code, combined_log_text, json_output_path, log_path)
+    """
+    output_path = Path(RESULTS_DIR) / f"fb_{WORKER_ID}_{GOLOGIN_PORT}.json"
+    log_path    = Path(RESULTS_DIR) / f"fb_{WORKER_ID}_{GOLOGIN_PORT}.log"
+    output_path.unlink(missing_ok=True)
+    log_path.unlink(missing_ok=True)
+
+    cmd = [
+        "python3",
+        "-u",
+        FB_SEARCH_PATH,
+        profile_id,
+        "--port", str(GOLOGIN_PORT),
+        "-k", keyword,
+        "--country-code", country_code,
+        "--language", language,
+        "--max-results", str(max_results),
+        "--job-id", job_id,
+        "--worker-id", WORKER_ID,
+        "--output", str(output_path),
+    ]
+    if captcha_solver_should_run():
+        cmd += ["--interactive"]
+
+    env = os.environ.copy()
+    log.info("launching fb_adlibrary_search (port=%d profile=%s keyword=%r cc=%s max=%d log=%s)",
+             GOLOGIN_PORT, profile_id[:8], keyword, country_code, max_results, log_path)
+
+    timeout_s = INTERACTIVE_TIMEOUT_S if captcha_solver_should_run() else SCRAPE_TIMEOUT_S
+    with open(log_path, "w", encoding="utf-8") as log_f:
+        result = subprocess.run(
+            cmd, env=env, stdout=log_f, stderr=subprocess.STDOUT, timeout=timeout_s,
+        )
+
+    try:
+        combined = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        combined = ""
+    return result.returncode, combined, output_path, log_path
+
+
+def process_fb_job(job: dict[str, Any]) -> None:
+    """Handle a scrape_queue row where search_engine='facebook'.
+
+    Single-phase browser path (like X's discovery, but no login): looks up the
+    country's GoLogin profile and runs fb_adlibrary_search.py, which writes both
+    fb_advertisers and their ad landing links (fb_links) in one pass. There is
+    no Phase-2 enrichment job for Facebook.
+    """
+    job_id = job["id"]
+    country_code = job["country_code"]
+    keyword = job["keyword"]
+    language = (job.get("language") or "en").strip().lower() or "en"
+
+    log.info("claimed facebook job %s | country=%s keyword=%r lang=%s",
+             job_id, country_code, keyword, language)
+
+    profile = fetch_profile(country_code)
+    if not profile or not profile.get("gologin_profile_id"):
+        fail_job(job_id, f"No gologin_profile_id configured for country_code={country_code}")
+        return
+    profile_id = profile["gologin_profile_id"]
+
+    _kill_port()
+
+    try:
+        exit_code, combined_log, output_path, log_path = run_fb_adlibrary_search(
+            profile_id=profile_id,
+            keyword=keyword,
+            country_code=country_code,
+            language=language,
+            job_id=job_id,
+            max_results=FB_PHASE1_MAX_RESULTS,
+        )
+    except subprocess.TimeoutExpired:
+        _kill_port()
+        timeout_used = INTERACTIVE_TIMEOUT_S if CAPTCHA_SOLVER_MODE else SCRAPE_TIMEOUT_S
+        fail_job(job_id, f"Facebook Ad Library search took too long ({timeout_used // 60} min) and was stopped.")
+        return
+    except Exception as exc:  # noqa: BLE001
+        _kill_port()
+        fail_job(job_id, classify_failure(exit_code=None, error_text=str(exc), source="scraper"))
+        return
+
+    if "[RESULT] SUCCESS" not in combined_log:
+        _kill_port()
+        fail_job(job_id, classify_failure(exit_code=exit_code, error_text=combined_log, source="scraper"))
+        return
+
+    _kill_port()
+
+    if not output_path.exists():
+        fail_job(job_id, "Facebook search finished but the results file is missing on disk.")
+        return
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        fail_job(job_id, "Facebook search finished but the results file is corrupted — re-run usually fixes this.")
+        return
+
+    # Advertisers are already in public.fb_advertisers (the child wrote them
+    # directly). Passing [] makes the leads-insert a no-op while the summary +
+    # status update fire and the active_profile_lock is released.
+    summary = {
+        "total_results": payload.get("total_results"),
+        "organic_results": payload.get("organic_results"),
+        "ppc_results": payload.get("ppc_results"),
+        "pages_scraped": payload.get("pages_scraped"),
+        "scraped_at": payload.get("timestamp"),
+        "is_logged_in": payload.get("is_logged_in"),
+        "view_mode": "desktop",   # Ad Library has no mobile/desktop split
+    }
+    try:
+        complete_job(job_id, [], summary)
+    except Exception as exc:  # noqa: BLE001
+        log.error("complete_scrape_job RPC failed for facebook job %s: %s", job_id, exc)
+        return
+
+    log.info("facebook job %s completed | %d advertisers", job_id, summary.get("total_results") or 0)
+
+
 def process_job(job: dict[str, Any]) -> None:
     job_id = job["id"]
     country_code = job["country_code"]
@@ -1385,7 +1531,7 @@ def process_job(job: dict[str, Any]) -> None:
     # that pre-date the migration that added the column.
     language = (job.get("language") or "en").strip().lower() or "en"
     engine = (job.get("search_engine") or "google").strip().lower() or "google"
-    if engine not in ("google", "bing", "youtube", "kick", "x"):
+    if engine not in ("google", "bing", "youtube", "kick", "x", "facebook"):
         engine = "google"
 
     # YouTube and Kick jobs take a completely different path — pure
@@ -1404,6 +1550,12 @@ def process_job(job: dict[str, Any]) -> None:
     # below, same as Kick/YouTube.
     if engine == "x":
         process_x_job(job)
+        return
+    # Facebook Ad Library is the browser path for BOTH phases like X (no
+    # affordable API), but with NO login wall — process_fb_job does its own
+    # profile lookup + Chromium lifecycle.
+    if engine == "facebook":
+        process_fb_job(job)
         return
 
     # view_mode controls whether scraper.py runs the desktop pass, the

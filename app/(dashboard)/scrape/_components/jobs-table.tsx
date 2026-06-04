@@ -202,8 +202,10 @@ function EngineBadge({ engine }: { engine: ScrapeJob['search_engine'] }) {
             ? 'bg-green-100 text-green-800'
             : e === 'x'
               ? 'bg-slate-200 text-slate-900'
-              : 'bg-blue-100 text-blue-800'
-  const label = e === 'youtube' ? 'YouTube' : e === 'bing' ? 'Bing' : e === 'twitch' ? 'Twitch' : e === 'kick' ? 'Kick' : e === 'x' ? 'X' : 'Google'
+              : e === 'facebook'
+                ? 'bg-indigo-100 text-indigo-800'
+                : 'bg-blue-100 text-blue-800'
+  const label = e === 'youtube' ? 'YouTube' : e === 'bing' ? 'Bing' : e === 'twitch' ? 'Twitch' : e === 'kick' ? 'Kick' : e === 'x' ? 'X' : e === 'facebook' ? 'FB' : 'Google'
   return (
     <span
       title={`Scraped on ${label}`}

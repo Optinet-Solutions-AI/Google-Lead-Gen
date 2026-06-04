@@ -636,6 +636,123 @@ export async function fetchXCreatorRows(jobId: string): Promise<XCreatorRow[]> {
     .map(r => ({ ...r, links: linksByCreator.get(r.id) ?? [] }))
 }
 
+// ============================================================
+// Facebook Ad Library advertiser queries (mirror the X creator queries above;
+// fb_advertisers + fb_links instead of x_creators + x_links).
+// ============================================================
+export type FbAdvertiserSummary = {
+  /** Advertiser Pages discovered (the scrape captured them + their links). */
+  discovered: number
+  /** Pages with a niche_score (Phase 3 "Score & check" has run). */
+  scored: number
+  /** Pages not yet scored — drives the Score button state. */
+  unscored: number
+  likelyAffiliates: number
+  /** Likely affiliates with an unknown S-tag/operator or page_name not on Monday. */
+  newCandidates: number
+}
+
+export async function fetchFbAdvertiserSummary(jobId: string): Promise<FbAdvertiserSummary> {
+  const svc = createServiceClient()
+  const [discoveredRes, scoredRes, affiliateRes, newRes] = await Promise.all([
+    svc.from('fb_advertisers').select('id', { count: 'exact', head: true }).eq('scrape_queue_id', jobId),
+    svc
+      .from('fb_advertisers')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .not('niche_score', 'is', null),
+    svc
+      .from('fb_advertisers')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .eq('is_likely_affiliate', true),
+    svc
+      .from('fb_advertisers')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .eq('is_new_lead_candidate', true),
+  ])
+
+  const discovered = discoveredRes.count ?? 0
+  const scored = scoredRes.count ?? 0
+  return {
+    discovered,
+    scored,
+    unscored: Math.max(0, discovered - scored),
+    likelyAffiliates: affiliateRes.count ?? 0,
+    newCandidates: newRes.count ?? 0,
+  }
+}
+
+export type FbLinkRow = {
+  url: string
+  resolved_url: string | null
+  source: 'ad_landing' | 'ad_cta' | 'page_website'
+  brand: string | null
+  is_known_on_monday: boolean | null
+}
+
+export type FbAdvertiserRow = {
+  id: string
+  page_id: string | null
+  page_name: string
+  page_url: string
+  page_category: string | null
+  ad_count: number | null
+  total_active_ads: number | null
+  page_website_url: string | null
+  contact_email: string | null
+  telegram_url: string | null
+  discord_url: string | null
+  is_likely_affiliate: boolean | null
+  niche_score: number | null
+  is_new_lead_candidate: boolean | null
+  about_scraped_at: string | null
+  links: FbLinkRow[]
+}
+
+/** Per-advertiser rows for the Facebook results table: new candidates first,
+ *  then affiliates, then niche_score desc, then active-ad count — with each
+ *  Page's ad landing/CTA/website links attached. */
+export async function fetchFbAdvertiserRows(jobId: string): Promise<FbAdvertiserRow[]> {
+  const svc = createServiceClient()
+  const { data: advertisers, error } = await svc
+    .from('fb_advertisers')
+    .select(
+      'id, page_id, page_name, page_url, page_category, ad_count, total_active_ads, page_website_url, ' +
+        'contact_email, telegram_url, discord_url, ' +
+        'is_likely_affiliate, niche_score, is_new_lead_candidate, about_scraped_at',
+    )
+    .eq('scrape_queue_id', jobId)
+  if (error) throw error
+  const rows = (advertisers ?? []) as unknown as Omit<FbAdvertiserRow, 'links'>[]
+  if (rows.length === 0) return []
+
+  const { data: links } = await svc
+    .from('fb_links')
+    .select('fb_advertiser_id, url, resolved_url, source, brand, is_known_on_monday')
+    .in('fb_advertiser_id', rows.map(r => r.id))
+  const linksByAdvertiser = new Map<string, FbLinkRow[]>()
+  for (const l of (links ?? []) as unknown as Array<FbLinkRow & { fb_advertiser_id: string }>) {
+    const arr = linksByAdvertiser.get(l.fb_advertiser_id) ?? []
+    arr.push({ url: l.url, resolved_url: l.resolved_url, source: l.source, brand: l.brand, is_known_on_monday: l.is_known_on_monday })
+    linksByAdvertiser.set(l.fb_advertiser_id, arr)
+  }
+
+  return rows
+    .slice()
+    .sort((a, b) => {
+      const nw = Number(b.is_new_lead_candidate ?? false) - Number(a.is_new_lead_candidate ?? false)
+      if (nw !== 0) return nw
+      const aff = Number(b.is_likely_affiliate ?? false) - Number(a.is_likely_affiliate ?? false)
+      if (aff !== 0) return aff
+      const ns = Number(b.niche_score ?? -1) - Number(a.niche_score ?? -1)
+      if (ns !== 0) return ns
+      return (b.total_active_ads ?? b.ad_count ?? 0) - (a.total_active_ads ?? a.ad_count ?? 0)
+    })
+    .map(r => ({ ...r, links: linksByAdvertiser.get(r.id) ?? [] }))
+}
+
 export async function listRecentJobs(limit = 30): Promise<ScrapeJob[]> {
   return queryJobs({ limit, page: 1, size: limit }).then(r => r.rows)
 }

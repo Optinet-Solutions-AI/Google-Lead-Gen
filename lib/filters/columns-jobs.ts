@@ -21,6 +21,9 @@ const SEARCH_ENGINE_OPTIONS = [
   { value: 'google', label: 'Google' },
   { value: 'bing', label: 'Bing' },
   { value: 'youtube', label: 'YouTube' },
+  { value: 'kick', label: 'Kick' },
+  { value: 'x', label: 'X (Twitter)' },
+  { value: 'facebook', label: 'Facebook' },
 ] as const
 
 const VIEW_MODE_OPTIONS = [

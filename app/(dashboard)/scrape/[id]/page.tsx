@@ -24,7 +24,11 @@ import { YoutubeChannelsPanel } from '../_components/youtube-channels-panel'
 import { YoutubeChannelsTable } from '../_components/youtube-channels-table'
 import { XCreatorsPanel } from '../_components/x-creators-panel'
 import { XCreatorsTable } from '../_components/x-creators-table'
+import { FbAdvertisersPanel } from '../_components/fb-advertisers-panel'
+import { FbAdvertisersTable } from '../_components/fb-advertisers-table'
 import {
+  fetchFbAdvertiserRows,
+  fetchFbAdvertiserSummary,
   fetchKickStreamerRows,
   fetchKickStreamerSummary,
   fetchStageSummary,
@@ -55,7 +59,7 @@ type Job = {
   completed_at: string | null
   error_message: string | null
   result_summary: Record<string, unknown> | null
-  search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | null
+  search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook' | null
   view_mode: 'desktop' | 'mobile' | 'both' | null
   language: string | null
   created_at: string
@@ -172,10 +176,11 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const isKick = job.search_engine === 'kick'
   const isYoutube = job.search_engine === 'youtube'
   const isX = job.search_engine === 'x'
-  // Kick streamers, YouTube channels, and X creators live in their own
-  // tables/panels — none produces leads, so the lead filters + table +
-  // enrichment stages don't apply to them.
-  const noLeadsEngine = isKick || isYoutube || isX
+  const isFacebook = job.search_engine === 'facebook'
+  // Kick streamers, YouTube channels, X creators, and Facebook advertisers all
+  // live in their own tables/panels — none produces leads, so the lead filters
+  // + table + enrichment stages don't apply to them.
+  const noLeadsEngine = isKick || isYoutube || isX || isFacebook
 
   const [
     { rows, total },
@@ -188,6 +193,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
     youtubeRows,
     xSummary,
     xRows,
+    fbSummary,
+    fbRows,
   ] = await Promise.all([
       queryLeads({
         page,
@@ -216,6 +223,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       isYoutube ? fetchYoutubeChannelRows(id) : Promise.resolve(null),
       isX ? fetchXCreatorSummary(id) : Promise.resolve(null),
       isX ? fetchXCreatorRows(id) : Promise.resolve(null),
+      isFacebook ? fetchFbAdvertiserSummary(id) : Promise.resolve(null),
+      isFacebook ? fetchFbAdvertiserRows(id) : Promise.resolve(null),
     ])
 
   const toggleHref = (() => {
@@ -333,6 +342,11 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
           {xSummary && <XCreatorsPanel jobId={job.id} summary={xSummary} />}
           {xRows && xRows.length > 0 && <XCreatorsTable rows={xRows} />}
         </>
+      ) : isFacebook ? (
+        <>
+          {fbSummary && <FbAdvertisersPanel jobId={job.id} summary={fbSummary} />}
+          {fbRows && fbRows.length > 0 && <FbAdvertisersTable rows={fbRows} />}
+        </>
       ) : (
         stageSummary && <EnrichmentStages jobId={job.id} summary={stageSummary} />
       )}
@@ -360,6 +374,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
           // job — keep refreshing while it's queued/running so counts update live.
           kickSummary?.inflight === true ||
           youtubeSummary?.inflight === true ||
+          xSummary?.inflight === true ||
           (stageSummary != null &&
             (stageSummary.affiliate.inflight_pending + stageSummary.affiliate.inflight_running > 0 ||
               stageSummary.rooster.inflight_pending + stageSummary.rooster.inflight_running > 0 ||
@@ -371,7 +386,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   )
 }
 
-function EngineBadge({ engine }: { engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | null }) {
+function EngineBadge({ engine }: { engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook' | null }) {
   const e = engine ?? 'google'
   const styles =
     e === 'bing'
@@ -384,8 +399,10 @@ function EngineBadge({ engine }: { engine: 'google' | 'bing' | 'youtube' | 'twit
             ? 'bg-green-100 text-green-800'
             : e === 'x'
               ? 'bg-slate-200 text-slate-900'
-              : 'bg-blue-100 text-blue-800'
-  const label = e === 'youtube' ? 'YouTube' : e === 'bing' ? 'Bing' : e === 'twitch' ? 'Twitch' : e === 'kick' ? 'Kick' : e === 'x' ? 'X' : 'Google'
+              : e === 'facebook'
+                ? 'bg-indigo-100 text-indigo-800'
+                : 'bg-blue-100 text-blue-800'
+  const label = e === 'youtube' ? 'YouTube' : e === 'bing' ? 'Bing' : e === 'twitch' ? 'Twitch' : e === 'kick' ? 'Kick' : e === 'x' ? 'X' : e === 'facebook' ? 'Facebook' : 'Google'
   return (
     <span
       title={`Scraped on ${label}`}
