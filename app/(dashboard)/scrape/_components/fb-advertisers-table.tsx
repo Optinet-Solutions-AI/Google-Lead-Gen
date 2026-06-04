@@ -20,6 +20,7 @@ export function FbAdvertisersTable({ rows }: { rows: FbAdvertiserRow[] }) {
       <table className="w-full border-collapse text-[12px]">
         <thead className="bg-[color:var(--color-bg-secondary)]">
           <tr className="text-left text-[11px] text-[color:var(--color-text-secondary)] [&>th]:sticky [&>th]:top-0 [&>th]:z-20 [&>th]:border-b [&>th]:border-[color:var(--color-border)] [&>th]:bg-[color:var(--color-bg-secondary)]">
+            <th className="px-3 py-2 font-medium text-right tabular-nums">#</th>
             <th className="px-3 py-2 font-medium">Advertiser</th>
             <th
               className="cursor-help px-3 py-2 font-medium"
@@ -39,8 +40,8 @@ export function FbAdvertisersTable({ rows }: { rows: FbAdvertiserRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map(r => (
-            <FbAdvertiserRowView key={r.id} r={r} />
+          {rows.map((r, i) => (
+            <FbAdvertiserRowView key={r.id} r={r} n={i + 1} />
           ))}
         </tbody>
       </table>
@@ -48,12 +49,13 @@ export function FbAdvertisersTable({ rows }: { rows: FbAdvertiserRow[] }) {
   )
 }
 
-function FbAdvertiserRowView({ r }: { r: FbAdvertiserRow }) {
+function FbAdvertiserRowView({ r, n }: { r: FbAdvertiserRow; n: number }) {
   const niche = r.niche_score == null ? null : Number(r.niche_score)
   const adCount = r.total_active_ads ?? r.ad_count
 
   return (
     <tr className="border-b border-[color:var(--color-border)] last:border-0 align-top">
+      <td className="px-3 py-2 text-right tabular-nums text-[color:var(--color-text-secondary)]">{n}</td>
       <td className="px-3 py-2">
         <a
           href={r.page_url}
