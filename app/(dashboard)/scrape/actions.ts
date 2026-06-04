@@ -2521,15 +2521,18 @@ export async function deleteScrapeJob(_prev: JobActionState, fd: FormData): Prom
 
   const svc = createServiceClient()
 
-  // Pull screenshot paths first; storage cleanup is best-effort.
-  const { data: shotRows } = await svc
+  // Pull lead ids + screenshot paths in one query; both cleanups reuse it
+  // (storage cleanup is best-effort). Previously this ran two separate
+  // SELECTs against google_lead_gen_table for the same job.
+  const { data: leadRows } = await svc
     .from('google_lead_gen_table')
-    .select('screenshot_content_link')
+    .select('id, screenshot_content_link')
     .eq('scrape_job_id', jobId)
-    .not('screenshot_content_link', 'is', null)
-  const screenshotPaths = ((shotRows ?? []) as { screenshot_content_link: string }[])
+  const rows = (leadRows ?? []) as { id: number; screenshot_content_link: string | null }[]
+  const leadIds = rows.map(r => r.id)
+  const screenshotPaths = rows
     .map(r => r.screenshot_content_link)
-    .filter(p => typeof p === 'string' && p.length > 0)
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
   if (screenshotPaths.length > 0) {
     try {
       await svc.storage.from('lead-screenshots').remove(screenshotPaths)
@@ -2538,28 +2541,24 @@ export async function deleteScrapeJob(_prev: JobActionState, fd: FormData): Prom
     }
   }
 
-  // Also clean up s-tag screenshots if any.
-  const { data: stagShots } = await svc
-    .from('s_tags_table')
-    .select('screenshot_path')
-    .in(
-      'lead_id',
-      ((
-        await svc
-          .from('google_lead_gen_table')
-          .select('id')
-          .eq('scrape_job_id', jobId)
-      ).data ?? []).map((r: { id: number }) => r.id),
-    )
-    .not('screenshot_path', 'is', null)
-  const stagPaths = ((stagShots ?? []) as { screenshot_path: string }[])
-    .map(r => r.screenshot_path)
-    .filter(p => typeof p === 'string' && p.length > 0)
-  if (stagPaths.length > 0) {
-    try {
-      await svc.storage.from('lead-screenshots').remove(stagPaths)
-    } catch {
-      /* best-effort */
+  // Also clean up s-tag screenshots if any (all leads on the job, not just
+  // those that carried a lead screenshot).
+  let stagPaths: string[] = []
+  if (leadIds.length > 0) {
+    const { data: stagShots } = await svc
+      .from('s_tags_table')
+      .select('screenshot_path')
+      .in('lead_id', leadIds)
+      .not('screenshot_path', 'is', null)
+    stagPaths = ((stagShots ?? []) as { screenshot_path: string }[])
+      .map(r => r.screenshot_path)
+      .filter(p => typeof p === 'string' && p.length > 0)
+    if (stagPaths.length > 0) {
+      try {
+        await svc.storage.from('lead-screenshots').remove(stagPaths)
+      } catch {
+        /* best-effort */
+      }
     }
   }
 

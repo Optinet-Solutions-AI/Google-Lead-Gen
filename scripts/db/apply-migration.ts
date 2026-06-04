@@ -45,6 +45,14 @@ if (args.length === 0) {
 
 const endpoint = `https://api.supabase.com/v1/projects/${PROJECT_ID}/database/query`
 
+// CREATE INDEX CONCURRENTLY can't run inside a transaction block. The
+// Supabase Management API /database/query endpoint may wrap statements in
+// one, in which case such a migration fails opaquely. Detect + warn so the
+// operator knows to run that statement on its own via the SQL editor.
+function hasConcurrentIndex(sql: string): boolean {
+  return /create\s+(?:unique\s+)?index\s+concurrently/i.test(sql)
+}
+
 function previewSql(sql: string, maxLines = 20): string {
   const lines = sql.split('\n')
   if (lines.length <= maxLines) return lines.map(l => `    ${l}`).join('\n')
@@ -61,6 +69,14 @@ async function main() {
   let failures = 0
   for (const path of args) {
     const sql = readFileSync(resolve(path), 'utf-8')
+
+    if (hasConcurrentIndex(sql)) {
+      console.warn(
+        `  ⚠ ${path} uses CREATE INDEX CONCURRENTLY, which cannot run inside a ` +
+          `transaction. If the Management API wraps this query in one it will ` +
+          `fail — run that statement on its own via the Supabase SQL editor.`,
+      )
+    }
 
     if (!APPLY) {
       console.log(`--- ${path} (${sql.length} chars) ---`)

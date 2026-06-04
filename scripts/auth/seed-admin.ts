@@ -85,11 +85,13 @@ async function main() {
     auth: { autoRefreshToken: false, persistSession: false },
   })
 
-  // Look for an existing user by email. Supabase's listUsers is
-  // paginated; we walk all pages to be safe.
+  // Look for an existing user by email. Supabase's listUsers is paginated;
+  // we walk all pages. MAX_PAGES caps the walk at 10k users — far above any
+  // real fleet — so a change in pagination semantics can't spin forever.
+  const MAX_PAGES = 50
   let page = 1
   let existing: { id: string; email?: string } | null = null
-  while (true) {
+  while (page <= MAX_PAGES) {
     const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 200 })
     if (error) throw error
     const hit = data.users.find(u => (u.email ?? '').toLowerCase() === email)
@@ -99,6 +101,12 @@ async function main() {
     }
     if (data.users.length < 200) break
     page += 1
+  }
+  if (page > MAX_PAGES) {
+    throw new Error(
+      `seed-admin: walked ${MAX_PAGES} pages (${MAX_PAGES * 200}+ users) without ` +
+        `finding ${email} — aborting to avoid an unbounded loop.`,
+    )
   }
 
   if (existing) {
