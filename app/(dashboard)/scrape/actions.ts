@@ -12,6 +12,7 @@ import {
 import { scoreYoutubeChannel, type YoutubeScoreLink } from '@/lib/affiliate-detection/youtube-scorer'
 import { scoreXCreator, type XScoreLink } from '@/lib/affiliate-detection/x-scorer'
 import { scoreFbAdvertiser, AGGREGATOR_HOSTS, type FbScoreLink } from '@/lib/affiliate-detection/fb-scorer'
+import { scoreTiktokCreator, type TiktokScoreLink } from '@/lib/affiliate-detection/tiktok-scorer'
 import { extractContacts } from '@/lib/affiliate-detection/kick-contacts'
 import { extractContacts as extractContactsFromHtml } from '@/lib/contact-extraction/extract'
 import { fetchPagesHtml } from '@/lib/contact-extraction/fetch-html'
@@ -133,7 +134,7 @@ export async function enqueueScrape(
   // 'youtube' is a separate path (Data API, channel results into
   // youtube_channels) and intentionally NOT included in "both" — the
   // output shape is too different to bundle into a SERP comparison.
-  const enginesToRun: Array<'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook'> =
+  const enginesToRun: Array<'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook' | 'tiktok'> =
     engineRaw === 'both'
       ? ['google', 'bing']
       : engineRaw === 'bing'
@@ -148,7 +149,9 @@ export async function enqueueScrape(
                 ? ['x']
                 : engineRaw === 'facebook'
                   ? ['facebook']
-                  : ['google']
+                  : engineRaw === 'tiktok'
+                    ? ['tiktok']
+                    : ['google']
   // view_mode controls whether the scraper runs desktop, mobile (iPhone
   // UA + 375x812 viewport via CDP), or both passes. 'both' is the
   // default — catches mobile-only PPC ads + mobile-ranked organic that
@@ -1767,6 +1770,315 @@ export async function runXCreatorAnalysis(
 
   await logActivity({
     action: 'enrichment.x_score',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { scored, likelyAffiliates, newCandidates, affiliateLinks, linksResolved, withContacts },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: `Scored ${scored} creator${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}, ${withContacts} with contact${withContacts === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
+  }
+}
+
+// ============================================================
+// TikTok Phase 2 — operator-triggered profile enrichment.
+//
+// Mirrors runXProfileEnrichment but with NO login pre-check: TikTok serves
+// profiles logged-out, so there's no burner-account / is_*_logged_in gate.
+// Queues a child 'tiktok' job carrying parent_scrape_job_id; the VM worker
+// renders each discovered profile and backfills bio / bio-link / followers /
+// captions into tiktok_creators + tiktok_links.
+// ============================================================
+export async function runTiktokProfileEnrichment(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const jobId = jobIdFrom(fd) // the parent Phase-1 TikTok job
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+
+  const { data: job, error: readErr } = await svc
+    .from('scrape_queue')
+    .select(
+      'keyword, country_code, language, search_engine, created_by_email, created_by_username, created_by_display, created_by_is_shadow',
+    )
+    .eq('id', jobId)
+    .maybeSingle()
+  if (readErr) return { status: 'error', error: safeError(readErr, 'Failed to load the source job.') }
+  if (!job) return { status: 'error', error: 'Job not found.' }
+  const j = job as {
+    keyword: string
+    country_code: string
+    language: string | null
+    search_engine: string | null
+    created_by_email: string | null
+    created_by_username: string | null
+    created_by_display: string | null
+    created_by_is_shadow: boolean | null
+  }
+  if ((j.search_engine ?? '') !== 'tiktok') {
+    return { status: 'error', error: 'Profile enrichment only applies to TikTok scrape jobs.' }
+  }
+
+  // Creators that haven't had their profile page scraped yet.
+  const { count: pending, error: cntErr } = await svc
+    .from('tiktok_creators')
+    .select('id', { count: 'exact', head: true })
+    .eq('scrape_queue_id', jobId)
+    .is('about_scraped_at', null)
+  if (cntErr) return { status: 'error', error: safeError(cntErr, 'Failed to count discovered creators.') }
+  if (!pending || pending === 0) {
+    revalidatePath(`/scrape/${jobId}`)
+    return {
+      status: 'ok',
+      message: 'No creators left to enrich — every discovered profile already scraped.',
+    }
+  }
+
+  // Don't stack Phase 2 jobs: bail if one is already queued/running for this
+  // parent so a double-click doesn't burn two GoLogin sessions.
+  const { count: inflight, error: ifErr } = await svc
+    .from('scrape_queue')
+    .select('id', { count: 'exact', head: true })
+    .eq('parent_scrape_job_id', jobId)
+    .in('status', ['pending', 'running'])
+  if (ifErr) return { status: 'error', error: safeError(ifErr, 'Failed to check for an in-flight enrichment job.') }
+  if (inflight && inflight > 0) {
+    return { status: 'error', error: 'A profile-enrichment run is already queued or running for this job.' }
+  }
+
+  // No login pre-check (unlike X): TikTok serves profiles logged-out.
+  const { error: insertError } = await svc.from('scrape_queue').insert({
+    keyword: j.keyword,
+    country_code: j.country_code,
+    search_engine: 'tiktok',
+    parent_scrape_job_id: jobId,
+    language: j.language,
+    priority: 0,
+    with_enrichment: false,
+    created_by_email: j.created_by_email,
+    created_by_username: j.created_by_username,
+    created_by_display: j.created_by_display,
+    created_by_is_shadow: j.created_by_is_shadow ?? false,
+  })
+  if (insertError) return { status: 'error', error: safeError(insertError, 'Failed to queue profile enrichment.') }
+
+  await logActivity({
+    action: 'enrichment.tiktok_profile',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { pending_creators: pending },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: `Queued profile enrichment. A VM worker will open the discovered profiles through GoLogin and backfill bio, bio link, followers, and recent captions. ${pending} creator${pending === 1 ? '' : 's'} still pending.`,
+  }
+}
+
+// ============================================================
+// TikTok Phase 3 — affiliate scoring + S-tag / new-vs-known check
+//
+// Pure data work (+ light HTTP to resolve shorteners), so it runs INLINE like
+// runXCreatorAnalysis. For each creator it resolves the bio-link + caption
+// links Phase 2 captured, parses any affiliate S-tag (or falls back to the
+// operator brand), checks each against Monday, scores affiliate likelihood
+// from the bio link (hub/shortener/casino) + bio/caption keywords + handle, and
+// mines outreach contacts. A creator is flagged is_new_lead_candidate when it's
+// a likely affiliate carrying ≥1 affiliate ID NOT on Monday, OR whose @handle
+// isn't on Monday (TikTok bio links are usually redirectors with no in-URL stag).
+// No leads are created — operator reviews them.
+// ============================================================
+export async function runTiktokCreatorAnalysis(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+
+  const { data: job, error: jobErr } = await svc
+    .from('scrape_queue')
+    .select('search_engine')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (jobErr) return { status: 'error', error: safeError(jobErr, 'Failed to load the job.') }
+  if (!job) return { status: 'error', error: 'Job not found.' }
+  if (((job as { search_engine: string | null }).search_engine ?? '') !== 'tiktok') {
+    return { status: 'error', error: 'Scoring only applies to TikTok scrape jobs.' }
+  }
+
+  type CreatorRow = {
+    id: string
+    username: string | null
+    display_name: string | null
+    bio: string | null
+    recent_video_captions: string[] | null
+  }
+  const { data: creators, error: cErr } = await svc
+    .from('tiktok_creators')
+    .select('id, username, display_name, bio, recent_video_captions')
+    .eq('scrape_queue_id', jobId)
+  if (cErr) return { status: 'error', error: safeError(cErr, 'Failed to load creators.') }
+  const rows = (creators ?? []) as unknown as CreatorRow[]
+  if (rows.length === 0) {
+    return { status: 'ok', message: 'No creators to score yet — run the TikTok scrape first.' }
+  }
+  const creatorIds = rows.map(r => r.id)
+
+  type LinkRow = {
+    id: string
+    tiktok_creator_id: string
+    url: string
+    resolved_url: string | null
+    source: string
+    s_tag: string | null
+    brand: string | null
+    is_known_on_monday: boolean | null
+  }
+  const { data: links, error: lErr } = await svc
+    .from('tiktok_links')
+    .select('id, tiktok_creator_id, url, resolved_url, source, s_tag, brand, is_known_on_monday')
+    .in('tiktok_creator_id', creatorIds)
+  if (lErr) return { status: 'error', error: safeError(lErr, 'Failed to load creator links.') }
+  const allLinks = (links ?? []) as unknown as LinkRow[]
+
+  // Casino-operator domain set (host suffixes) for affiliate-link scoring.
+  const { data: denyRows } = await svc.from('operator_domains_denylist').select('host_suffix')
+  const denylist = new Set(
+    (denyRows ?? []).map(r => (r as { host_suffix: string }).host_suffix.toLowerCase()),
+  )
+
+  // 1. Resolve shortener-like links (bio links are often a tny.sh/bit.ly mask —
+  //    expand to the operator destination).
+  const toResolve = allLinks
+    .filter(l => !l.resolved_url && needsResolution(l.url))
+    .map(l => l.url)
+  let linksResolved = 0
+  if (toResolve.length > 0) {
+    const resolvedMap = await resolveShorteners(toResolve)
+    const nowIso = new Date().toISOString()
+    for (const l of allLinks) {
+      const resolved = resolvedMap.get(l.url)
+      if (!resolved) continue
+      l.resolved_url = resolved // reflect locally so scoring/parsing sees it
+      const { error: upErr } = await svc
+        .from('tiktok_links')
+        .update({ resolved_url: resolved, resolved_at: nowIso })
+        .eq('id', l.id)
+      if (!upErr) linksResolved++
+    }
+  }
+
+  // Monday "have we seen this affiliate ID / operator?" check, memoized.
+  const mondayCache = new Map<string, { kind: string; item_id: string } | null>()
+  async function checkMonday(key0: string): Promise<{ kind: string; item_id: string } | null> {
+    const key = key0.toLowerCase()
+    if (mondayCache.has(key)) return mondayCache.get(key) ?? null
+    const { data } = await svc.rpc('search_s_tag_on_monday', { p_tag: key0 })
+    const hit = (Array.isArray(data) ? data[0] : data) as { kind: string; item_id: string } | null | undefined
+    const val = hit?.item_id ? hit : null
+    mondayCache.set(key, val)
+    return val
+  }
+
+  // 2. Parse S-tag / brand for each casino link + check it against Monday.
+  const linksByCreator = new Map<string, LinkRow[]>()
+  for (const l of allLinks) {
+    const arr = linksByCreator.get(l.tiktok_creator_id) ?? []
+    arr.push(l)
+    linksByCreator.set(l.tiktok_creator_id, arr)
+  }
+  let affiliateLinks = 0
+  for (const l of allLinks) {
+    const dest = l.resolved_url ?? l.url
+    const parsed = parseStagFromUrl(dest)
+    const isCasino = !!parsed || isAffiliateCasinoLink(dest, denylist)
+    if (!isCasino) continue
+    affiliateLinks++
+    const brand = guessBrandFromUrl(dest)
+    const checkKey = parsed?.tag || brand || ''
+    let hit: { kind: string; item_id: string } | null = null
+    if (checkKey) hit = await checkMonday(checkKey)
+    const update = {
+      s_tag: parsed?.tag ?? null,
+      s_tag_param: parsed?.param ?? null,
+      brand,
+      is_known_on_monday: checkKey ? !!hit : null,
+      monday_match_kind: hit?.kind ?? null,
+      monday_match_item_id: hit?.item_id ?? null,
+    }
+    const { error: upErr } = await svc.from('tiktok_links').update(update).eq('id', l.id)
+    if (!upErr) {
+      l.s_tag = update.s_tag
+      l.brand = update.brand
+      l.is_known_on_monday = update.is_known_on_monday
+    }
+  }
+
+  // 3. Score each creator + derive contacts + new-vs-known verdict.
+  let scored = 0
+  let likelyAffiliates = 0
+  let newCandidates = 0
+  let withContacts = 0
+  for (const c of rows) {
+    const creatorLinks = linksByCreator.get(c.id) ?? []
+    const scoreLinks: TiktokScoreLink[] = creatorLinks.map(l => ({ url: l.url, resolved_url: l.resolved_url }))
+    const result = scoreTiktokCreator(
+      { display_name: c.display_name, username: c.username, bio: c.bio, captions: c.recent_video_captions },
+      scoreLinks,
+      denylist,
+    )
+
+    // Contacts from bio + captions + the captured link URLs (resolved first so a
+    // shortener that expanded to a t.me/discord invite still counts). TikTok
+    // exposes no email field, so this is mostly Telegram › Discord, plus any
+    // email written in the bio.
+    const linkUrls = creatorLinks.flatMap(l => [l.resolved_url, l.url].filter((u): u is string => !!u))
+    const contacts = extractContacts([c.bio ?? '', ...(c.recent_video_captions ?? [])], linkUrls)
+
+    // New-lead check: a casino link whose affiliate ID/operator isn't on
+    // Monday, OR the @handle itself isn't on Monday (only for likely affiliates).
+    const hasNewTag = creatorLinks.some(l => l.is_known_on_monday === false)
+    let handleIsNew = false
+    if (result.isLikelyAffiliate) {
+      const handle = (c.username ?? '').replace(/^@/, '').trim()
+      if (handle.length >= 2) {
+        const known = await checkMonday(handle)
+        handleIsNew = !known
+      }
+    }
+    const isNewCandidate = result.isLikelyAffiliate && (hasNewTag || handleIsNew)
+
+    const update: Record<string, unknown> = {
+      is_likely_affiliate: result.isLikelyAffiliate,
+      niche_score: result.nicheScore,
+      is_new_lead_candidate: isNewCandidate,
+      is_known_on_monday: result.isLikelyAffiliate ? !handleIsNew : null,
+      contact_email: contacts.email,
+      telegram_url: contacts.telegram_url,
+      discord_url: contacts.discord_url,
+    }
+
+    const { error: upErr } = await svc.from('tiktok_creators').update(update).eq('id', c.id)
+    if (upErr) continue
+    scored++
+    if (result.isLikelyAffiliate) likelyAffiliates++
+    if (isNewCandidate) newCandidates++
+    if (contacts.email || contacts.telegram_url || contacts.discord_url) withContacts++
+  }
+
+  await logActivity({
+    action: 'enrichment.tiktok_score',
     entity_type: 'scrape_job',
     entity_id: jobId,
     details: { scored, likelyAffiliates, newCandidates, affiliateLinks, linksResolved, withContacts },

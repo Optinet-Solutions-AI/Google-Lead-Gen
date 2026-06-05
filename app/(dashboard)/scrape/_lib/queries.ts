@@ -637,6 +637,150 @@ export async function fetchXCreatorRows(jobId: string): Promise<XCreatorRow[]> {
 }
 
 // ============================================================
+// TikTok creator queries (mirror the X creator queries above; tiktok_creators
+// + tiktok_links instead of x_creators + x_links).
+// ============================================================
+export type TiktokCreatorSummary = {
+  discovered: number
+  /** Creators whose profile page has been scraped (Phase 2 ran). */
+  enriched: number
+  /** Creators whose profile scrape failed permanently (suspended / gone). */
+  failed: number
+  pending: number
+  /** Creators with a niche_score (Phase 3 scoring has run). */
+  scored: number
+  likelyAffiliates: number
+  /** Likely affiliates with an unknown S-tag/operator or @handle not on Monday. */
+  newCandidates: number
+  inflight: boolean
+  inflightStatus: 'pending' | 'running' | null
+}
+
+export async function fetchTiktokCreatorSummary(jobId: string): Promise<TiktokCreatorSummary> {
+  const svc = createServiceClient()
+  const [discoveredRes, enrichedRes, failedRes, scoredRes, affiliateRes, newRes, inflightRes] =
+    await Promise.all([
+      svc.from('tiktok_creators').select('id', { count: 'exact', head: true }).eq('scrape_queue_id', jobId),
+      svc
+        .from('tiktok_creators')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .not('about_scraped_at', 'is', null),
+      svc
+        .from('tiktok_creators')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .eq('about_fetch_failed', true),
+      svc
+        .from('tiktok_creators')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .not('niche_score', 'is', null),
+      svc
+        .from('tiktok_creators')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .eq('is_likely_affiliate', true),
+      svc
+        .from('tiktok_creators')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .eq('is_new_lead_candidate', true),
+      svc
+        .from('scrape_queue')
+        .select('status')
+        .eq('parent_scrape_job_id', jobId)
+        .in('status', ['pending', 'running']),
+    ])
+
+  const discovered = discoveredRes.count ?? 0
+  const enriched = enrichedRes.count ?? 0
+  const inflightRows = (inflightRes.data ?? []) as Array<{ status: string }>
+  const inflight = inflightRows.length > 0
+  const running = inflightRows.some(r => r.status === 'running')
+  return {
+    discovered,
+    enriched,
+    failed: failedRes.count ?? 0,
+    pending: Math.max(0, discovered - enriched),
+    scored: scoredRes.count ?? 0,
+    likelyAffiliates: affiliateRes.count ?? 0,
+    newCandidates: newRes.count ?? 0,
+    inflight,
+    inflightStatus: inflight ? (running ? 'running' : 'pending') : null,
+  }
+}
+
+export type TiktokLinkRow = {
+  url: string
+  resolved_url: string | null
+  source: 'bio_link' | 'video_caption'
+  brand: string | null
+  is_known_on_monday: boolean | null
+}
+
+export type TiktokCreatorRow = {
+  id: string
+  username: string
+  profile_url: string
+  display_name: string | null
+  bio: string | null
+  bio_link: string | null
+  follower_count: number | null
+  verified: boolean | null
+  contact_email: string | null
+  telegram_url: string | null
+  discord_url: string | null
+  is_likely_affiliate: boolean | null
+  niche_score: number | null
+  is_new_lead_candidate: boolean | null
+  about_scraped_at: string | null
+  links: TiktokLinkRow[]
+}
+
+/** Per-creator rows for the TikTok results table: new candidates first, then
+ *  affiliates, then niche_score desc, then followers — with each creator's
+ *  bio/caption affiliate links attached. */
+export async function fetchTiktokCreatorRows(jobId: string): Promise<TiktokCreatorRow[]> {
+  const svc = createServiceClient()
+  const { data: creators, error } = await svc
+    .from('tiktok_creators')
+    .select(
+      'id, username, profile_url, display_name, bio, bio_link, follower_count, verified, ' +
+        'contact_email, telegram_url, discord_url, ' +
+        'is_likely_affiliate, niche_score, is_new_lead_candidate, about_scraped_at',
+    )
+    .eq('scrape_queue_id', jobId)
+  if (error) throw error
+  const rows = (creators ?? []) as unknown as Omit<TiktokCreatorRow, 'links'>[]
+  if (rows.length === 0) return []
+
+  const { data: links } = await svc
+    .from('tiktok_links')
+    .select('tiktok_creator_id, url, resolved_url, source, brand, is_known_on_monday')
+    .in('tiktok_creator_id', rows.map(r => r.id))
+  const linksByCreator = new Map<string, TiktokLinkRow[]>()
+  for (const l of (links ?? []) as unknown as Array<TiktokLinkRow & { tiktok_creator_id: string }>) {
+    const arr = linksByCreator.get(l.tiktok_creator_id) ?? []
+    arr.push({ url: l.url, resolved_url: l.resolved_url, source: l.source, brand: l.brand, is_known_on_monday: l.is_known_on_monday })
+    linksByCreator.set(l.tiktok_creator_id, arr)
+  }
+
+  return rows
+    .slice()
+    .sort((a, b) => {
+      const nw = Number(b.is_new_lead_candidate ?? false) - Number(a.is_new_lead_candidate ?? false)
+      if (nw !== 0) return nw
+      const aff = Number(b.is_likely_affiliate ?? false) - Number(a.is_likely_affiliate ?? false)
+      if (aff !== 0) return aff
+      const ns = Number(b.niche_score ?? -1) - Number(a.niche_score ?? -1)
+      if (ns !== 0) return ns
+      return (b.follower_count ?? 0) - (a.follower_count ?? 0)
+    })
+    .map(r => ({ ...r, links: linksByCreator.get(r.id) ?? [] }))
+}
+
+// ============================================================
 // Facebook Ad Library advertiser queries (mirror the X creator queries above;
 // fb_advertisers + fb_links instead of x_creators + x_links).
 // ============================================================

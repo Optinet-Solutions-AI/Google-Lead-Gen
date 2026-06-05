@@ -24,6 +24,7 @@ const SEARCH_ENGINE_OPTIONS = [
   { value: 'kick', label: 'Kick' },
   { value: 'x', label: 'X (Twitter)' },
   { value: 'facebook', label: 'Facebook' },
+  { value: 'tiktok', label: 'TikTok' },
 ] as const
 
 const VIEW_MODE_OPTIONS = [
