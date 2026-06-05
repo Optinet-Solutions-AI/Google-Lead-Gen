@@ -53,7 +53,7 @@ const NAME_GAMBLING_RE = /casino|slots?|pokies?|gambl|\bbet(ting)?\b|roulette|bl
 // a direct operator. These are 200-OK pages (not 30x), so the resolver can't
 // expand them; we score the *presence* of the hub instead. Only counts when the
 // Page also shows gambling context (so we don't flag every creator on heylink).
-const AGGREGATOR_HOSTS = new Set([
+export const AGGREGATOR_HOSTS = new Set([
   'heylink.me', 'linktr.ee', 'beacons.ai', 'bio.link', 'lnk.bio', 'linkr.bio',
   'allmylinks.com', 'linkin.bio', 'solo.to', 'tap.bio', 'msha.ke', 'about.me',
 ])

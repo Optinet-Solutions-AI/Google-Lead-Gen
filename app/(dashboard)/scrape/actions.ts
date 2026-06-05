@@ -11,8 +11,10 @@ import {
 } from '@/lib/affiliate-detection/kick-scorer'
 import { scoreYoutubeChannel, type YoutubeScoreLink } from '@/lib/affiliate-detection/youtube-scorer'
 import { scoreXCreator, type XScoreLink } from '@/lib/affiliate-detection/x-scorer'
-import { scoreFbAdvertiser, type FbScoreLink } from '@/lib/affiliate-detection/fb-scorer'
+import { scoreFbAdvertiser, AGGREGATOR_HOSTS, type FbScoreLink } from '@/lib/affiliate-detection/fb-scorer'
 import { extractContacts } from '@/lib/affiliate-detection/kick-contacts'
+import { extractContacts as extractContactsFromHtml } from '@/lib/contact-extraction/extract'
+import { fetchPagesHtml } from '@/lib/contact-extraction/fetch-html'
 import { needsResolution, resolveShorteners } from '@/lib/affiliate-detection/resolve-links'
 import {
   collectCandidates,
@@ -1923,11 +1925,41 @@ export async function runFbAdvertiserAnalysis(
   }
 
   // 3. Score each advertiser + derive contacts + new-vs-known verdict.
-  let scored = 0
-  let likelyAffiliates = 0
-  let newCandidates = 0
-  let withContacts = 0
-  for (const a of rows) {
+  const hostOf = (u: string): string => {
+    try {
+      return new URL(u).hostname.toLowerCase().replace(/^www\./, '')
+    } catch {
+      return ''
+    }
+  }
+  // Pick the best contact-bearing page to fetch for an advertiser: their own
+  // affiliate link-hub first (heylink/linktr — where affiliates publish their
+  // email/Telegram), then a resolved casino landing, then any non-Facebook http
+  // link. Returns null when there's nothing worth fetching.
+  const pickContactUrl = (advLinks: LinkRow[]): string | null => {
+    const dests = advLinks
+      .map(l => l.resolved_url ?? l.url)
+      .filter((u): u is string => !!u)
+    const hub = dests.find(u => AGGREGATOR_HOSTS.has(hostOf(u)))
+    if (hub) return hub
+    const landing = dests.find(u => isAffiliateCasinoLink(u, denylist))
+    if (landing) return landing
+    return (
+      dests.find(u => {
+        const h = hostOf(u)
+        return h !== '' && !/(^|\.)(facebook|fb|instagram|fbcdn|whatsapp|messenger)\./.test(h)
+      }) ?? null
+    )
+  }
+
+  type Scored = {
+    a: AdvertiserRow
+    result: ReturnType<typeof scoreFbAdvertiser>
+    advLinks: LinkRow[]
+    contacts: ReturnType<typeof extractContacts>
+    fetchUrl: string | null
+  }
+  const prelim: Scored[] = rows.map(a => {
     const advLinks = linksByAdvertiser.get(a.id) ?? []
     const scoreLinks: FbScoreLink[] = advLinks.map(l => ({ url: l.url, resolved_url: l.resolved_url }))
     const result = scoreFbAdvertiser(
@@ -1943,6 +1975,41 @@ export async function runFbAdvertiserAnalysis(
     if (a.page_website_url) linkUrls.push(a.page_website_url)
     const contacts = extractContacts([a.ad_text_sample ?? '', a.page_transparency ?? ''], linkUrls)
 
+    // Worth a page fetch only when the Page looks affiliate AND we still lack an
+    // email — the FB scrape never fetches these pages, so the affiliate's own
+    // hub/landing is the only place to mine the email they publish.
+    const fetchUrl = result.isLikelyAffiliate && !contacts.email ? pickContactUrl(advLinks) : null
+    return { a, result, advLinks, contacts, fetchUrl }
+  })
+
+  // Batch-fetch the candidate pages (bounded concurrency + hard cap), then mine
+  // each page's HTML for the contacts the ad copy didn't carry.
+  const pageUrls = prelim.map(p => p.fetchUrl).filter((u): u is string => !!u)
+  let pagesFetched = 0
+  if (pageUrls.length > 0) {
+    const htmlByUrl = await fetchPagesHtml(pageUrls)
+    pagesFetched = htmlByUrl.size
+    for (const p of prelim) {
+      if (!p.fetchUrl) continue
+      const html = htmlByUrl.get(p.fetchUrl)
+      if (!html) continue
+      // HTML extractor → emails (mailto + obfuscated); text extractor over the
+      // same HTML → Telegram/Discord from the hrefs it contains. Fill only the
+      // gaps so a contact already mined from the ad copy is never clobbered.
+      const fromHtml = extractContactsFromHtml(html, p.fetchUrl)
+      const fromLinks = extractContacts([html], [])
+      if (!p.contacts.email) p.contacts.email = fromHtml.emails[0] ?? fromLinks.email ?? null
+      if (!p.contacts.telegram_url) p.contacts.telegram_url = fromLinks.telegram_url
+      if (!p.contacts.discord_url) p.contacts.discord_url = fromLinks.discord_url
+    }
+  }
+
+  // Persist scores + contacts + new-vs-known verdict.
+  let scored = 0
+  let likelyAffiliates = 0
+  let newCandidates = 0
+  let withContacts = 0
+  for (const { a, result, advLinks, contacts } of prelim) {
     // New-lead check: a casino link whose affiliate ID/operator isn't on
     // Monday, OR the page_name itself isn't on Monday (only for likely
     // affiliates — Page-level redirector links often carry no in-URL stag).
@@ -1979,7 +2046,7 @@ export async function runFbAdvertiserAnalysis(
     action: 'enrichment.fb_score',
     entity_type: 'scrape_job',
     entity_id: jobId,
-    details: { scored, likelyAffiliates, newCandidates, affiliateLinks, linksResolved, withContacts },
+    details: { scored, likelyAffiliates, newCandidates, affiliateLinks, linksResolved, withContacts, pagesFetched },
   })
 
   revalidatePath(`/scrape/${jobId}`)
