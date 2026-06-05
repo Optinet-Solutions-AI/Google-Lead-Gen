@@ -133,31 +133,54 @@ def _hashtag_token(keyword: str) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", keyword)
 
 
+def _harvest_surface(driver, url: str, surface: str, found: dict[str, dict[str, Any]],
+                     max_results: int, *, retry: bool = False) -> int:
+    """Navigate `url`, scroll-collect creator handles, fold new ones into
+    `found` tagged with `surface` (first surface wins on dupes). Returns how
+    many NEW handles this surface added. Best-effort — never raises. When
+    `retry` is set and the first pass finds nothing (TikTok intermittently
+    gates a surface behind a login wall logged-out), it reloads once."""
+    before = len(found)
+    for attempt in range(2 if retry else 1):
+        try:
+            driver.get(url)
+            time.sleep(5)
+            handles = collect_handles(driver, max_results)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] {surface} surface failed: {exc}", file=sys.stderr)
+            handles = []
+        for uname in handles:
+            found.setdefault(uname.lower(), {"username": uname, "surface": surface})
+        if handles or not retry:
+            break
+        print(f"[INFO] {surface} surface returned 0 (likely gated) — retrying once", file=sys.stderr)
+        time.sleep(TT_BLOCK_COOLDOWN_S)
+    gained = len(found) - before
+    print(f"[INFO] {surface} surface: +{gained} creator(s)")
+    return gained
+
+
 def search_creators(driver, keyword: str, max_results: int) -> list[dict[str, Any]]:
-    """Harvest creator handles from BOTH the hashtag and user-search surfaces,
-    tagging each with the surface it came from (first surface wins on dupes)."""
+    """Harvest creator handles from three surfaces, merging (first surface wins
+    on dupes). TikTok caps/gates each surface differently logged-out, so we
+    sweep all three for coverage:
+      - hashtag    tiktok.com/tag/{tag}        — broad organic posters (gated
+                   intermittently → one retry)
+      - search     tiktok.com/search/user?q=   — accounts name-matching the kw
+      - content    tiktok.com/search?q=        — creators POSTING about the kw
+                   (the best affiliate candidates; not just name matches)
+    """
     found: dict[str, dict[str, Any]] = {}
 
-    # 1) Hashtag surface — broad organic creators posting under the tag.
     tag = _hashtag_token(keyword)
     if tag:
-        try:
-            driver.get(f"{TT_BASE}/tag/{quote(tag)}")
-            time.sleep(5)
-            for uname in collect_handles(driver, max_results):
-                found.setdefault(uname.lower(), {"username": uname, "surface": "hashtag"})
-        except Exception as exc:  # noqa: BLE001
-            print(f"[WARN] hashtag surface failed: {exc}", file=sys.stderr)
+        _harvest_surface(driver, f"{TT_BASE}/tag/{quote(tag)}", "hashtag", found, max_results, retry=True)
 
-    # 2) User-search surface — accounts whose name/handle matches the keyword.
     if len(found) < max_results:
-        try:
-            driver.get(f"{TT_BASE}/search/user?q={quote(keyword)}")
-            time.sleep(5)
-            for uname in collect_handles(driver, max_results):
-                found.setdefault(uname.lower(), {"username": uname, "surface": "search"})
-        except Exception as exc:  # noqa: BLE001
-            print(f"[WARN] search surface failed: {exc}", file=sys.stderr)
+        _harvest_surface(driver, f"{TT_BASE}/search/user?q={quote(keyword)}", "search", found, max_results)
+
+    if len(found) < max_results:
+        _harvest_surface(driver, f"{TT_BASE}/search?q={quote(keyword)}", "content", found, max_results)
 
     return list(found.values())[:max_results]
 
