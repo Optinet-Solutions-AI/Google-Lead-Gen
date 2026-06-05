@@ -461,7 +461,7 @@ def _upload_landing_screenshots(job_id: str, results: list[dict[str, Any]]) -> N
 def fetch_profile(country_code: str) -> dict[str, Any] | None:
     result = (
         supabase.table("gologin_profiles")
-        .select("gologin_profile_id, country_name, requires_google_login")
+        .select("gologin_profile_id, country_name, requires_google_login, languages")
         .eq("country_code", country_code)
         .single()
         .execute()
@@ -732,6 +732,7 @@ def run_kick_search(
     country_code: str,
     language: str,
     job_id: str,
+    keep_languages: str = "",
     max_results: int = 100,
 ) -> tuple[int, str, Path, Path]:
     """Invoke kick_search.py as a subprocess.
@@ -756,6 +757,7 @@ def run_kick_search(
         "-c", country_name,
         "--country-code", country_code,
         "--language", language,
+        "--keep-languages", keep_languages,
         "--max-results", str(max_results),
         "--job-id", job_id,
         "--worker-id", WORKER_ID,
@@ -810,12 +812,22 @@ def process_kick_job(job: dict[str, Any]) -> None:
     profile = fetch_profile(country_code) or {}
     country_name = profile.get("country_name") or country_code
 
+    # Exclude streamers whose Kick language is outside this country's allowed
+    # set (untagged ones are kept). Source of truth is gologin_profiles.languages
+    # (e.g. ['en'] for AU); defaults to 'en' if a profile has none.
+    allowed_langs = profile.get("languages") or ["en"]
+    keep_languages = ",".join(
+        a.strip().lower() for a in allowed_langs if a and a.strip()
+    ) or "en"
+    log.info("kick job %s | language filter keep=%s", job_id, keep_languages)
+
     try:
         exit_code, combined_log, output_path, log_path = run_kick_search(
             keyword=keyword,
             country_name=country_name,
             country_code=country_code,
             language=language,
+            keep_languages=keep_languages,
             job_id=job_id,
         )
     except subprocess.TimeoutExpired:

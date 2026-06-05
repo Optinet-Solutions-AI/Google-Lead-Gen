@@ -61,6 +61,82 @@ CATEGORY_FALLBACK: dict[str, list[int]] = {
     "gambling": [28],
 }
 
+# Kick reports a stream's language as either an ISO-639-1 code ("pt") or a
+# full/native name ("Portuguese" / "português") depending on the endpoint.
+# This maps the names we've actually seen back to codes so the language
+# filter can compare apples to apples. ISO codes pass through untouched.
+# Mirror app/(dashboard)/scrape/_components/kick-streamers-table.tsx — keep
+# the two in sync if Kick starts returning new languages.
+_LANG_NAME_TO_CODE: dict[str, str] = {
+    "english": "en",
+    "spanish": "es", "español": "es", "espanol": "es", "castellano": "es",
+    "portuguese": "pt", "português": "pt", "portugues": "pt",
+    "french": "fr", "français": "fr", "francais": "fr",
+    "german": "de", "deutsch": "de",
+    "italian": "it", "italiano": "it",
+    "dutch": "nl", "nederlands": "nl",
+    "polish": "pl", "polski": "pl",
+    "turkish": "tr", "türkçe": "tr", "turkce": "tr",
+    "russian": "ru", "русский": "ru",
+    "arabic": "ar", "العربية": "ar",
+    "japanese": "ja", "日本語": "ja",
+    "korean": "ko", "한국어": "ko",
+    "chinese": "zh", "中文": "zh",
+    "hindi": "hi",
+    "swedish": "sv", "svenska": "sv",
+    "norwegian": "no", "norsk": "no",
+    "danish": "da", "dansk": "da",
+    "finnish": "fi", "suomi": "fi",
+    "czech": "cs", "čeština": "cs", "cestina": "cs",
+    "greek": "el", "ελληνικά": "el",
+    "romanian": "ro", "română": "ro", "romana": "ro",
+    "hungarian": "hu", "magyar": "hu",
+    "thai": "th", "ไทย": "th",
+    "vietnamese": "vi", "tiếng việt": "vi",
+    "indonesian": "id", "bahasa indonesia": "id",
+    "filipino": "tl", "tagalog": "tl",
+}
+
+
+def normalize_lang_code(raw: str | None) -> str:
+    """Map a Kick stream-language value (ISO code or full/native name) to a
+    lowercase ISO-639-1 code. Returns '' for untagged/empty values so the
+    filter can treat "unknown language" as keep-by-default."""
+    if not raw:
+        return ""
+    v = raw.strip().lower()
+    if not v:
+        return ""
+    if "-" in v:                 # locale tag like "en-us" → "en"
+        v = v.split("-", 1)[0].strip()
+    if len(v) == 2:              # already an ISO-639-1 code
+        return v
+    return _LANG_NAME_TO_CODE.get(v, v)
+
+
+def filter_by_language(
+    streamers: list[dict[str, Any]], keep_codes: set[str],
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Exclude streamers whose stream language is tagged AND not in keep_codes.
+
+    This is a filter-OUT (not filter-IN): a streamer with no language tag is
+    KEPT, so we don't drop English-market channels Kick happened to leave
+    untagged. Requested by Andrei 2026-06-05 — Kick's casino category is
+    international, so an AU search otherwise surfaces mostly pt/tr game
+    streamers. Returns (kept, dropped_by_code) for logging.
+    """
+    if not keep_codes:
+        return streamers, {}
+    kept: list[dict[str, Any]] = []
+    dropped: dict[str, int] = {}
+    for s in streamers:
+        code = normalize_lang_code((s.get("stream") or {}).get("language"))
+        if code == "" or code in keep_codes:
+            kept.append(s)
+        else:
+            dropped[code] = dropped.get(code, 0) + 1
+    return kept, dropped
+
 
 def fetch_access_token(client_id: str, client_secret: str) -> str:
     """Client Credentials grant — returns a 60-day App Access Token."""
@@ -247,6 +323,14 @@ def main() -> None:
     parser.add_argument("-c", "--country", default="", help="Country display name (unused for Kick; logged only)")
     parser.add_argument("--country-code", default="", help="ISO-2 country code (unused for Kick)")
     parser.add_argument("--language", default="en", help="2-letter language code (Phase 1: logged only)")
+    parser.add_argument(
+        "--keep-languages",
+        default="",
+        help="Comma-separated ISO-639-1 codes to KEEP (the country's allowed "
+             "languages, e.g. 'en' for AU). Streamers tagged with any other "
+             "language are filtered OUT; untagged streamers are kept. Empty "
+             "string disables the filter.",
+    )
     parser.add_argument("--max-results", type=int, default=100, help="Max total live streamers to fetch (default 100)")
     parser.add_argument("--job-id", required=True, help="scrape_queue.id this run belongs to")
     parser.add_argument("--worker-id", default="", help="Worker identifier (logged only)")
@@ -345,6 +429,30 @@ def main() -> None:
         print("[WARN] Channel enrichment returned no data", file=sys.stderr)
         _write_summary(args.output, args.keyword, language, 0, len(category_ids))
         print("[DONE] KICK | Total: 0 (enrichment empty)")
+        print("[RESULT] SUCCESS")
+        return
+
+    # 4b. Language filter — exclude streamers tagged with a language outside
+    # the country's allowed set (keep untagged). See filter_by_language.
+    keep_codes = {
+        c for c in args.keep_languages.lower().replace(" ", "").split(",") if c
+    }
+    if keep_codes:
+        before = len(enriched)
+        enriched, dropped = filter_by_language(enriched, keep_codes)
+        if dropped:
+            breakdown = ", ".join(f"{k}={v}" for k, v in sorted(dropped.items()))
+            print(
+                f"[INFO] Language filter (keep={sorted(keep_codes)}): kept "
+                f"{len(enriched)}/{before}, dropped {before - len(enriched)} [{breakdown}]"
+            )
+        else:
+            print(f"[INFO] Language filter (keep={sorted(keep_codes)}): kept all {before}")
+
+    if not enriched:
+        print("[WARN] All streamers filtered out by language", file=sys.stderr)
+        _write_summary(args.output, args.keyword, language, 0, len(category_ids))
+        print("[DONE] KICK | Total: 0 (all filtered by language)")
         print("[RESULT] SUCCESS")
         return
 
