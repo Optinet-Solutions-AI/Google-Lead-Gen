@@ -194,6 +194,7 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
             <option value="facebook">Facebook (Ad Library)</option>
             <option value="tiktok">TikTok</option>
             <option value="snapchat">Snapchat</option>
+            <option value="telegram">Telegram</option>
           </select>
         </label>
 

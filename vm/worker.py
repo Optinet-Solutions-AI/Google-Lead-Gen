@@ -182,6 +182,16 @@ SNAPCHAT_SEARCH_PATH = os.environ.get(
 )
 SNAPCHAT_SEARCH_TIMEOUT_S = int(os.environ.get("SNAPCHAT_SEARCH_TIMEOUT_SECONDS", "300"))
 SNAPCHAT_PHASE1_MAX_RESULTS = int(os.environ.get("SNAPCHAT_PHASE1_MAX_RESULTS", "100"))
+# Telegram is also the PURE-HTTP single-pass path (like Snapchat): discovery via
+# lyzem.com keyword search + enrichment via t.me/s/{handle} SEO previews, both
+# plain HTTP (no GoLogin, no bot token, no login wall). One pass discovers +
+# enriches + snowballs @mentions.
+TELEGRAM_SEARCH_PATH = os.environ.get(
+    "TELEGRAM_SEARCH_PATH",
+    str(Path.home() / "telegram_search.py"),
+)
+TELEGRAM_SEARCH_TIMEOUT_S = int(os.environ.get("TELEGRAM_SEARCH_TIMEOUT_SECONDS", "300"))
+TELEGRAM_PHASE1_MAX_RESULTS = int(os.environ.get("TELEGRAM_PHASE1_MAX_RESULTS", "100"))
 KILL_SCRIPT_PATH     = os.environ.get(
     "KILL_SCRIPT_PATH",
     str(Path.home() / "kill_gologin.py"),
@@ -1804,6 +1814,114 @@ def process_snapchat_job(job: dict[str, Any]) -> None:
     log.info("snapchat job %s completed | %d creators", job_id, summary.get("total_results") or 0)
 
 
+def run_telegram_search(
+    keyword: str,
+    country_code: str,
+    language: str,
+    job_id: str,
+    max_results: int,
+) -> tuple[int, str, Path, Path]:
+    """Invoke telegram_search.py as a subprocess. PURE HTTP like
+    run_snapchat_search — no GoLogin, no port. Single pass: discovers channels
+    via lyzem, enriches each via t.me/s, snowballs @mentions, all in one run.
+
+    Returns: (exit_code, combined_log_text, json_output_path, log_path)
+    """
+    output_path = Path(RESULTS_DIR) / f"telegram_{WORKER_ID}_{GOLOGIN_PORT}.json"
+    log_path    = Path(RESULTS_DIR) / f"telegram_{WORKER_ID}_{GOLOGIN_PORT}.log"
+    output_path.unlink(missing_ok=True)
+    log_path.unlink(missing_ok=True)
+
+    cmd = [
+        "python3",
+        "-u",
+        TELEGRAM_SEARCH_PATH,
+        "-k", keyword,
+        "--country-code", country_code,
+        "--language", language,
+        "--max-results", str(max_results),
+        "--job-id", job_id,
+        "--worker-id", WORKER_ID,
+        "--output", str(output_path),
+    ]
+
+    env = os.environ.copy()
+    log.info("launching telegram_search (keyword=%r lang=%s log=%s timeout=%ds)",
+             keyword, language, log_path, TELEGRAM_SEARCH_TIMEOUT_S)
+
+    with open(log_path, "w", encoding="utf-8") as log_f:
+        result = subprocess.run(
+            cmd, env=env, stdout=log_f, stderr=subprocess.STDOUT, timeout=TELEGRAM_SEARCH_TIMEOUT_S,
+        )
+
+    try:
+        combined = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        combined = ""
+    return result.returncode, combined, output_path, log_path
+
+
+def process_telegram_job(job: dict[str, Any]) -> None:
+    """Handle a scrape_queue row where search_engine='telegram'.
+
+    Pure-HTTP path like Snapchat/Kick — no Chromium, no GoLogin profile.
+    Single pass (no Phase-2 job): the child discovers + enriches + snowballs,
+    writing telegram_channels + telegram_links directly.
+    """
+    job_id = job["id"]
+    country_code = job["country_code"]
+    keyword = job["keyword"]
+    language = (job.get("language") or "en").strip().lower() or "en"
+
+    log.info("claimed telegram job %s | country=%s keyword=%r lang=%s",
+             job_id, country_code, keyword, language)
+
+    try:
+        exit_code, combined_log, output_path, log_path = run_telegram_search(
+            keyword=keyword,
+            country_code=country_code,
+            language=language,
+            job_id=job_id,
+            max_results=TELEGRAM_PHASE1_MAX_RESULTS,
+        )
+    except subprocess.TimeoutExpired:
+        fail_job(job_id, f"Telegram search took too long ({TELEGRAM_SEARCH_TIMEOUT_S}s) and was stopped.")
+        return
+    except Exception as exc:  # noqa: BLE001
+        fail_job(job_id, classify_failure(exit_code=None, error_text=str(exc), source="telegram_search"))
+        return
+
+    if "[RESULT] SUCCESS" not in combined_log:
+        fail_job(job_id, classify_failure(exit_code=exit_code, error_text=combined_log, source="telegram_search"))
+        return
+
+    if not output_path.exists():
+        fail_job(job_id, "Telegram search finished but the results file is missing on disk.")
+        return
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        fail_job(job_id, "Telegram search finished but the results file is corrupted — re-run usually fixes this.")
+        return
+
+    summary = {
+        "total_results": payload.get("total_results"),
+        "organic_results": payload.get("organic_results"),
+        "ppc_results": payload.get("ppc_results"),
+        "pages_scraped": payload.get("pages_scraped"),
+        "scraped_at": payload.get("timestamp"),
+        "is_logged_in": None,
+        "view_mode": "desktop",   # Telegram has no mobile/desktop split
+    }
+    try:
+        complete_job(job_id, [], summary)
+    except Exception as exc:  # noqa: BLE001
+        log.error("complete_scrape_job RPC failed for telegram job %s: %s", job_id, exc)
+        return
+
+    log.info("telegram job %s completed | %d channels", job_id, summary.get("total_results") or 0)
+
+
 def run_fb_adlibrary_search(
     profile_id: str,
     keyword: str,
@@ -1948,7 +2066,7 @@ def process_job(job: dict[str, Any]) -> None:
     # that pre-date the migration that added the column.
     language = (job.get("language") or "en").strip().lower() or "en"
     engine = (job.get("search_engine") or "google").strip().lower() or "google"
-    if engine not in ("google", "bing", "youtube", "kick", "x", "facebook", "tiktok", "snapchat"):
+    if engine not in ("google", "bing", "youtube", "kick", "x", "facebook", "tiktok", "snapchat", "telegram"):
         engine = "google"
 
     # YouTube and Kick jobs take a completely different path — pure
@@ -1984,6 +2102,11 @@ def process_job(job: dict[str, Any]) -> None:
     # Single pass: process_snapchat_job discovers + enriches in one run.
     if engine == "snapchat":
         process_snapchat_job(job)
+        return
+    # Telegram is the PURE-HTTP single-pass path (lyzem discovery + t.me/s
+    # enrichment) — no GoLogin/Chromium, no Phase-2 job.
+    if engine == "telegram":
+        process_telegram_job(job)
         return
 
     # view_mode controls whether scraper.py runs the desktop pass, the

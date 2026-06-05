@@ -1011,6 +1011,116 @@ export async function fetchSnapchatCreatorRows(jobId: string): Promise<SnapchatC
     .map(r => ({ ...r, links: linksByCreator.get(r.id) ?? [] }))
 }
 
+// ============================================================
+// Telegram channel queries (single-pass like Snapchat/Facebook — discover+
+// enrich in one scrape, then score; telegram_channels + telegram_links).
+// ============================================================
+export type TelegramChannelSummary = {
+  discovered: number
+  scored: number
+  unscored: number
+  likelyAffiliates: number
+  newCandidates: number
+}
+
+export async function fetchTelegramChannelSummary(jobId: string): Promise<TelegramChannelSummary> {
+  const svc = createServiceClient()
+  const [discoveredRes, scoredRes, affiliateRes, newRes] = await Promise.all([
+    svc.from('telegram_channels').select('id', { count: 'exact', head: true }).eq('scrape_queue_id', jobId),
+    svc
+      .from('telegram_channels')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .not('niche_score', 'is', null),
+    svc
+      .from('telegram_channels')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .eq('is_likely_affiliate', true),
+    svc
+      .from('telegram_channels')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .eq('is_new_lead_candidate', true),
+  ])
+
+  const discovered = discoveredRes.count ?? 0
+  const scored = scoredRes.count ?? 0
+  return {
+    discovered,
+    scored,
+    unscored: Math.max(0, discovered - scored),
+    likelyAffiliates: affiliateRes.count ?? 0,
+    newCandidates: newRes.count ?? 0,
+  }
+}
+
+export type TelegramLinkRow = {
+  url: string
+  resolved_url: string | null
+  source: 'post' | 'description'
+  brand: string | null
+  is_known_on_monday: boolean | null
+}
+
+export type TelegramChannelRow = {
+  id: string
+  username: string
+  channel_url: string
+  title: string | null
+  description: string | null
+  subscriber_count: number | null
+  contact_email: string | null
+  telegram_url: string | null
+  discord_url: string | null
+  is_likely_affiliate: boolean | null
+  niche_score: number | null
+  is_new_lead_candidate: boolean | null
+  links: TelegramLinkRow[]
+}
+
+/** Per-channel rows for the Telegram results table: new candidates first, then
+ *  affiliates, then niche_score desc, then subscribers — with each channel's
+ *  posted/description links attached. */
+export async function fetchTelegramChannelRows(jobId: string): Promise<TelegramChannelRow[]> {
+  const svc = createServiceClient()
+  const { data: channels, error } = await svc
+    .from('telegram_channels')
+    .select(
+      'id, username, channel_url, title, description, subscriber_count, ' +
+        'contact_email, telegram_url, discord_url, ' +
+        'is_likely_affiliate, niche_score, is_new_lead_candidate',
+    )
+    .eq('scrape_queue_id', jobId)
+  if (error) throw error
+  const rows = (channels ?? []) as unknown as Omit<TelegramChannelRow, 'links'>[]
+  if (rows.length === 0) return []
+
+  const { data: links } = await svc
+    .from('telegram_links')
+    .select('telegram_channel_id, url, resolved_url, source, brand, is_known_on_monday')
+    .in('telegram_channel_id', rows.map(r => r.id))
+  const linksByChannel = new Map<string, TelegramLinkRow[]>()
+  for (const l of (links ?? []) as unknown as Array<TelegramLinkRow & { telegram_channel_id: string }>) {
+    const arr = linksByChannel.get(l.telegram_channel_id) ?? []
+    arr.push({ url: l.url, resolved_url: l.resolved_url, source: l.source, brand: l.brand, is_known_on_monday: l.is_known_on_monday })
+    linksByChannel.set(l.telegram_channel_id, arr)
+  }
+
+  return rows
+    .slice()
+    .sort((a, b) => {
+      const nw = Number(b.is_new_lead_candidate ?? false) - Number(a.is_new_lead_candidate ?? false)
+      if (nw !== 0) return nw
+      const aff = Number(b.is_likely_affiliate ?? false) - Number(a.is_likely_affiliate ?? false)
+      if (aff !== 0) return aff
+      const ns = Number(b.niche_score ?? -1) - Number(a.niche_score ?? -1)
+      if (ns !== 0) return ns
+      return (b.subscriber_count ?? 0) - (a.subscriber_count ?? 0)
+    })
+    .map(r => ({ ...r, links: linksByChannel.get(r.id) ?? [] }))
+}
+
 export async function listRecentJobs(limit = 30): Promise<ScrapeJob[]> {
   return queryJobs({ limit, page: 1, size: limit }).then(r => r.rows)
 }

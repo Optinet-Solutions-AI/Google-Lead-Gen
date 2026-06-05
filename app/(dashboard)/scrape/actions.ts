@@ -14,6 +14,7 @@ import { scoreXCreator, type XScoreLink } from '@/lib/affiliate-detection/x-scor
 import { scoreFbAdvertiser, AGGREGATOR_HOSTS, type FbScoreLink } from '@/lib/affiliate-detection/fb-scorer'
 import { scoreTiktokCreator, type TiktokScoreLink } from '@/lib/affiliate-detection/tiktok-scorer'
 import { scoreSnapchatCreator, type SnapchatScoreLink } from '@/lib/affiliate-detection/snapchat-scorer'
+import { scoreTelegramChannel, type TelegramScoreLink } from '@/lib/affiliate-detection/telegram-scorer'
 import { extractContacts } from '@/lib/affiliate-detection/kick-contacts'
 import { extractContacts as extractContactsFromHtml } from '@/lib/contact-extraction/extract'
 import { fetchPagesHtml } from '@/lib/contact-extraction/fetch-html'
@@ -135,7 +136,7 @@ export async function enqueueScrape(
   // 'youtube' is a separate path (Data API, channel results into
   // youtube_channels) and intentionally NOT included in "both" — the
   // output shape is too different to bundle into a SERP comparison.
-  const enginesToRun: Array<'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook' | 'tiktok' | 'snapchat'> =
+  const enginesToRun: Array<'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook' | 'tiktok' | 'snapchat' | 'telegram'> =
     engineRaw === 'both'
       ? ['google', 'bing']
       : engineRaw === 'bing'
@@ -154,7 +155,9 @@ export async function enqueueScrape(
                     ? ['tiktok']
                     : engineRaw === 'snapchat'
                       ? ['snapchat']
-                      : ['google']
+                      : engineRaw === 'telegram'
+                        ? ['telegram']
+                        : ['google']
   // view_mode controls whether the scraper runs desktop, mobile (iPhone
   // UA + 375x812 viewport via CDP), or both passes. 'both' is the
   // default — catches mobile-only PPC ads + mobile-ranked organic that
@@ -2289,6 +2292,204 @@ export async function runSnapchatCreatorAnalysis(
   return {
     status: 'ok',
     message: `Scored ${scored} creator${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}, ${withContacts} with contact${withContacts === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
+  }
+}
+
+// ============================================================
+// Telegram Phase 3 — affiliate scoring + S-tag / new-vs-known check
+//
+// Telegram is single-pass (telegram_search.py discovers AND enriches via
+// t.me/s), so — like Snapchat/Facebook — the only operator action is this
+// inline scorer. For each channel it resolves the links it posts, parses any
+// affiliate S-tag (or falls back to the operator brand), checks each against
+// Monday, scores affiliate likelihood from the posted casino links + title/
+// description keywords + handle, and mines contacts. A channel is flagged
+// is_new_lead_candidate when it's a likely affiliate carrying ≥1 affiliate ID
+// NOT on Monday, OR whose @handle isn't on Monday.
+// ============================================================
+export async function runTelegramChannelAnalysis(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+
+  const { data: job, error: jobErr } = await svc
+    .from('scrape_queue')
+    .select('search_engine')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (jobErr) return { status: 'error', error: safeError(jobErr, 'Failed to load the job.') }
+  if (!job) return { status: 'error', error: 'Job not found.' }
+  if (((job as { search_engine: string | null }).search_engine ?? '') !== 'telegram') {
+    return { status: 'error', error: 'Scoring only applies to Telegram scrape jobs.' }
+  }
+
+  type ChannelRow = {
+    id: string
+    username: string | null
+    title: string | null
+    description: string | null
+  }
+  const { data: channels, error: cErr } = await svc
+    .from('telegram_channels')
+    .select('id, username, title, description')
+    .eq('scrape_queue_id', jobId)
+  if (cErr) return { status: 'error', error: safeError(cErr, 'Failed to load channels.') }
+  const rows = (channels ?? []) as unknown as ChannelRow[]
+  if (rows.length === 0) {
+    return { status: 'ok', message: 'No channels to score yet — run the Telegram scrape first.' }
+  }
+  const channelIds = rows.map(r => r.id)
+
+  type LinkRow = {
+    id: string
+    telegram_channel_id: string
+    url: string
+    resolved_url: string | null
+    source: string
+    s_tag: string | null
+    brand: string | null
+    is_known_on_monday: boolean | null
+  }
+  const { data: links, error: lErr } = await svc
+    .from('telegram_links')
+    .select('id, telegram_channel_id, url, resolved_url, source, s_tag, brand, is_known_on_monday')
+    .in('telegram_channel_id', channelIds)
+  if (lErr) return { status: 'error', error: safeError(lErr, 'Failed to load channel links.') }
+  const allLinks = (links ?? []) as unknown as LinkRow[]
+
+  const { data: denyRows } = await svc.from('operator_domains_denylist').select('host_suffix')
+  const denylist = new Set(
+    (denyRows ?? []).map(r => (r as { host_suffix: string }).host_suffix.toLowerCase()),
+  )
+
+  // 1. Resolve shortener-like posted links.
+  const toResolve = allLinks
+    .filter(l => !l.resolved_url && needsResolution(l.url))
+    .map(l => l.url)
+  let linksResolved = 0
+  if (toResolve.length > 0) {
+    const resolvedMap = await resolveShorteners(toResolve)
+    const nowIso = new Date().toISOString()
+    for (const l of allLinks) {
+      const resolved = resolvedMap.get(l.url)
+      if (!resolved) continue
+      l.resolved_url = resolved
+      const { error: upErr } = await svc
+        .from('telegram_links')
+        .update({ resolved_url: resolved, resolved_at: nowIso })
+        .eq('id', l.id)
+      if (!upErr) linksResolved++
+    }
+  }
+
+  const mondayCache = new Map<string, { kind: string; item_id: string } | null>()
+  async function checkMonday(key0: string): Promise<{ kind: string; item_id: string } | null> {
+    const key = key0.toLowerCase()
+    if (mondayCache.has(key)) return mondayCache.get(key) ?? null
+    const { data } = await svc.rpc('search_s_tag_on_monday', { p_tag: key0 })
+    const hit = (Array.isArray(data) ? data[0] : data) as { kind: string; item_id: string } | null | undefined
+    const val = hit?.item_id ? hit : null
+    mondayCache.set(key, val)
+    return val
+  }
+
+  // 2. Parse S-tag / brand for each casino link + check it against Monday.
+  const linksByChannel = new Map<string, LinkRow[]>()
+  for (const l of allLinks) {
+    const arr = linksByChannel.get(l.telegram_channel_id) ?? []
+    arr.push(l)
+    linksByChannel.set(l.telegram_channel_id, arr)
+  }
+  let affiliateLinks = 0
+  for (const l of allLinks) {
+    const dest = l.resolved_url ?? l.url
+    const parsed = parseStagFromUrl(dest)
+    const isCasino = !!parsed || isAffiliateCasinoLink(dest, denylist)
+    if (!isCasino) continue
+    affiliateLinks++
+    const brand = guessBrandFromUrl(dest)
+    const checkKey = parsed?.tag || brand || ''
+    let hit: { kind: string; item_id: string } | null = null
+    if (checkKey) hit = await checkMonday(checkKey)
+    const update = {
+      s_tag: parsed?.tag ?? null,
+      s_tag_param: parsed?.param ?? null,
+      brand,
+      is_known_on_monday: checkKey ? !!hit : null,
+      monday_match_kind: hit?.kind ?? null,
+      monday_match_item_id: hit?.item_id ?? null,
+    }
+    const { error: upErr } = await svc.from('telegram_links').update(update).eq('id', l.id)
+    if (!upErr) {
+      l.s_tag = update.s_tag
+      l.brand = update.brand
+      l.is_known_on_monday = update.is_known_on_monday
+    }
+  }
+
+  // 3. Score each channel + derive contacts + new-vs-known verdict.
+  let scored = 0
+  let likelyAffiliates = 0
+  let newCandidates = 0
+  let withContacts = 0
+  for (const c of rows) {
+    const channelLinks = linksByChannel.get(c.id) ?? []
+    const scoreLinks: TelegramScoreLink[] = channelLinks.map(l => ({ url: l.url, resolved_url: l.resolved_url }))
+    const result = scoreTelegramChannel(
+      { title: c.title, username: c.username, description: c.description },
+      scoreLinks,
+      denylist,
+    )
+
+    const linkUrls = channelLinks.flatMap(l => [l.resolved_url, l.url].filter((u): u is string => !!u))
+    const contacts = extractContacts([c.title ?? '', c.description ?? ''], linkUrls)
+
+    const hasNewTag = channelLinks.some(l => l.is_known_on_monday === false)
+    let handleIsNew = false
+    if (result.isLikelyAffiliate) {
+      const handle = (c.username ?? '').replace(/^@/, '').trim()
+      if (handle.length >= 2) {
+        const known = await checkMonday(handle)
+        handleIsNew = !known
+      }
+    }
+    const isNewCandidate = result.isLikelyAffiliate && (hasNewTag || handleIsNew)
+
+    const update: Record<string, unknown> = {
+      is_likely_affiliate: result.isLikelyAffiliate,
+      niche_score: result.nicheScore,
+      is_new_lead_candidate: isNewCandidate,
+      is_known_on_monday: result.isLikelyAffiliate ? !handleIsNew : null,
+      contact_email: contacts.email,
+      telegram_url: contacts.telegram_url,
+      discord_url: contacts.discord_url,
+    }
+
+    const { error: upErr } = await svc.from('telegram_channels').update(update).eq('id', c.id)
+    if (upErr) continue
+    scored++
+    if (result.isLikelyAffiliate) likelyAffiliates++
+    if (isNewCandidate) newCandidates++
+    if (contacts.email || contacts.telegram_url || contacts.discord_url) withContacts++
+  }
+
+  await logActivity({
+    action: 'enrichment.telegram_score',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { scored, likelyAffiliates, newCandidates, affiliateLinks, linksResolved, withContacts },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: `Scored ${scored} channel${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}, ${withContacts} with contact${withContacts === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
   }
 }
 

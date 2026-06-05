@@ -26,6 +26,7 @@ const SEARCH_ENGINE_OPTIONS = [
   { value: 'facebook', label: 'Facebook' },
   { value: 'tiktok', label: 'TikTok' },
   { value: 'snapchat', label: 'Snapchat' },
+  { value: 'telegram', label: 'Telegram' },
 ] as const
 
 const VIEW_MODE_OPTIONS = [
