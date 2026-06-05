@@ -13,6 +13,7 @@ import { scoreYoutubeChannel, type YoutubeScoreLink } from '@/lib/affiliate-dete
 import { scoreXCreator, type XScoreLink } from '@/lib/affiliate-detection/x-scorer'
 import { scoreFbAdvertiser, AGGREGATOR_HOSTS, type FbScoreLink } from '@/lib/affiliate-detection/fb-scorer'
 import { scoreTiktokCreator, type TiktokScoreLink } from '@/lib/affiliate-detection/tiktok-scorer'
+import { scoreSnapchatCreator, type SnapchatScoreLink } from '@/lib/affiliate-detection/snapchat-scorer'
 import { extractContacts } from '@/lib/affiliate-detection/kick-contacts'
 import { extractContacts as extractContactsFromHtml } from '@/lib/contact-extraction/extract'
 import { fetchPagesHtml } from '@/lib/contact-extraction/fetch-html'
@@ -134,7 +135,7 @@ export async function enqueueScrape(
   // 'youtube' is a separate path (Data API, channel results into
   // youtube_channels) and intentionally NOT included in "both" — the
   // output shape is too different to bundle into a SERP comparison.
-  const enginesToRun: Array<'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook' | 'tiktok'> =
+  const enginesToRun: Array<'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook' | 'tiktok' | 'snapchat'> =
     engineRaw === 'both'
       ? ['google', 'bing']
       : engineRaw === 'bing'
@@ -151,7 +152,9 @@ export async function enqueueScrape(
                   ? ['facebook']
                   : engineRaw === 'tiktok'
                     ? ['tiktok']
-                    : ['google']
+                    : engineRaw === 'snapchat'
+                      ? ['snapchat']
+                      : ['google']
   // view_mode controls whether the scraper runs desktop, mobile (iPhone
   // UA + 375x812 viewport via CDP), or both passes. 'both' is the
   // default — catches mobile-only PPC ads + mobile-ranked organic that
@@ -2079,6 +2082,204 @@ export async function runTiktokCreatorAnalysis(
 
   await logActivity({
     action: 'enrichment.tiktok_score',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { scored, likelyAffiliates, newCandidates, affiliateLinks, linksResolved, withContacts },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: `Scored ${scored} creator${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}, ${withContacts} with contact${withContacts === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
+  }
+}
+
+// ============================================================
+// Snapchat Phase 3 — affiliate scoring + S-tag / new-vs-known check
+//
+// Snapchat is single-pass (snapchat_search.py discovers AND enriches), so there
+// is NO separate profile-enrichment action — only this inline scorer, like the
+// Facebook engine's score-only flow. For each creator it resolves the bio link
+// the scrape captured, parses any affiliate S-tag (or falls back to the operator
+// brand), checks each against Monday, scores affiliate likelihood from the bio
+// link (hub/shortener/casino) + bio keywords + handle, and mines contacts. A
+// creator is flagged is_new_lead_candidate when it's a likely affiliate carrying
+// ≥1 affiliate ID NOT on Monday, OR whose @handle isn't on Monday.
+// ============================================================
+export async function runSnapchatCreatorAnalysis(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+
+  const { data: job, error: jobErr } = await svc
+    .from('scrape_queue')
+    .select('search_engine')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (jobErr) return { status: 'error', error: safeError(jobErr, 'Failed to load the job.') }
+  if (!job) return { status: 'error', error: 'Job not found.' }
+  if (((job as { search_engine: string | null }).search_engine ?? '') !== 'snapchat') {
+    return { status: 'error', error: 'Scoring only applies to Snapchat scrape jobs.' }
+  }
+
+  type CreatorRow = {
+    id: string
+    username: string | null
+    display_name: string | null
+    bio: string | null
+  }
+  const { data: creators, error: cErr } = await svc
+    .from('snapchat_creators')
+    .select('id, username, display_name, bio')
+    .eq('scrape_queue_id', jobId)
+  if (cErr) return { status: 'error', error: safeError(cErr, 'Failed to load creators.') }
+  const rows = (creators ?? []) as unknown as CreatorRow[]
+  if (rows.length === 0) {
+    return { status: 'ok', message: 'No creators to score yet — run the Snapchat scrape first.' }
+  }
+  const creatorIds = rows.map(r => r.id)
+
+  type LinkRow = {
+    id: string
+    snapchat_creator_id: string
+    url: string
+    resolved_url: string | null
+    source: string
+    s_tag: string | null
+    brand: string | null
+    is_known_on_monday: boolean | null
+  }
+  const { data: links, error: lErr } = await svc
+    .from('snapchat_links')
+    .select('id, snapchat_creator_id, url, resolved_url, source, s_tag, brand, is_known_on_monday')
+    .in('snapchat_creator_id', creatorIds)
+  if (lErr) return { status: 'error', error: safeError(lErr, 'Failed to load creator links.') }
+  const allLinks = (links ?? []) as unknown as LinkRow[]
+
+  const { data: denyRows } = await svc.from('operator_domains_denylist').select('host_suffix')
+  const denylist = new Set(
+    (denyRows ?? []).map(r => (r as { host_suffix: string }).host_suffix.toLowerCase()),
+  )
+
+  // 1. Resolve shortener-like bio links.
+  const toResolve = allLinks
+    .filter(l => !l.resolved_url && needsResolution(l.url))
+    .map(l => l.url)
+  let linksResolved = 0
+  if (toResolve.length > 0) {
+    const resolvedMap = await resolveShorteners(toResolve)
+    const nowIso = new Date().toISOString()
+    for (const l of allLinks) {
+      const resolved = resolvedMap.get(l.url)
+      if (!resolved) continue
+      l.resolved_url = resolved
+      const { error: upErr } = await svc
+        .from('snapchat_links')
+        .update({ resolved_url: resolved, resolved_at: nowIso })
+        .eq('id', l.id)
+      if (!upErr) linksResolved++
+    }
+  }
+
+  const mondayCache = new Map<string, { kind: string; item_id: string } | null>()
+  async function checkMonday(key0: string): Promise<{ kind: string; item_id: string } | null> {
+    const key = key0.toLowerCase()
+    if (mondayCache.has(key)) return mondayCache.get(key) ?? null
+    const { data } = await svc.rpc('search_s_tag_on_monday', { p_tag: key0 })
+    const hit = (Array.isArray(data) ? data[0] : data) as { kind: string; item_id: string } | null | undefined
+    const val = hit?.item_id ? hit : null
+    mondayCache.set(key, val)
+    return val
+  }
+
+  // 2. Parse S-tag / brand for each casino link + check it against Monday.
+  const linksByCreator = new Map<string, LinkRow[]>()
+  for (const l of allLinks) {
+    const arr = linksByCreator.get(l.snapchat_creator_id) ?? []
+    arr.push(l)
+    linksByCreator.set(l.snapchat_creator_id, arr)
+  }
+  let affiliateLinks = 0
+  for (const l of allLinks) {
+    const dest = l.resolved_url ?? l.url
+    const parsed = parseStagFromUrl(dest)
+    const isCasino = !!parsed || isAffiliateCasinoLink(dest, denylist)
+    if (!isCasino) continue
+    affiliateLinks++
+    const brand = guessBrandFromUrl(dest)
+    const checkKey = parsed?.tag || brand || ''
+    let hit: { kind: string; item_id: string } | null = null
+    if (checkKey) hit = await checkMonday(checkKey)
+    const update = {
+      s_tag: parsed?.tag ?? null,
+      s_tag_param: parsed?.param ?? null,
+      brand,
+      is_known_on_monday: checkKey ? !!hit : null,
+      monday_match_kind: hit?.kind ?? null,
+      monday_match_item_id: hit?.item_id ?? null,
+    }
+    const { error: upErr } = await svc.from('snapchat_links').update(update).eq('id', l.id)
+    if (!upErr) {
+      l.s_tag = update.s_tag
+      l.brand = update.brand
+      l.is_known_on_monday = update.is_known_on_monday
+    }
+  }
+
+  // 3. Score each creator + derive contacts + new-vs-known verdict.
+  let scored = 0
+  let likelyAffiliates = 0
+  let newCandidates = 0
+  let withContacts = 0
+  for (const c of rows) {
+    const creatorLinks = linksByCreator.get(c.id) ?? []
+    const scoreLinks: SnapchatScoreLink[] = creatorLinks.map(l => ({ url: l.url, resolved_url: l.resolved_url }))
+    const result = scoreSnapchatCreator(
+      { display_name: c.display_name, username: c.username, bio: c.bio },
+      scoreLinks,
+      denylist,
+    )
+
+    const linkUrls = creatorLinks.flatMap(l => [l.resolved_url, l.url].filter((u): u is string => !!u))
+    const contacts = extractContacts([c.bio ?? ''], linkUrls)
+
+    const hasNewTag = creatorLinks.some(l => l.is_known_on_monday === false)
+    let handleIsNew = false
+    if (result.isLikelyAffiliate) {
+      const handle = (c.username ?? '').replace(/^@/, '').trim()
+      if (handle.length >= 2) {
+        const known = await checkMonday(handle)
+        handleIsNew = !known
+      }
+    }
+    const isNewCandidate = result.isLikelyAffiliate && (hasNewTag || handleIsNew)
+
+    const update: Record<string, unknown> = {
+      is_likely_affiliate: result.isLikelyAffiliate,
+      niche_score: result.nicheScore,
+      is_new_lead_candidate: isNewCandidate,
+      is_known_on_monday: result.isLikelyAffiliate ? !handleIsNew : null,
+      contact_email: contacts.email,
+      telegram_url: contacts.telegram_url,
+      discord_url: contacts.discord_url,
+    }
+
+    const { error: upErr } = await svc.from('snapchat_creators').update(update).eq('id', c.id)
+    if (upErr) continue
+    scored++
+    if (result.isLikelyAffiliate) likelyAffiliates++
+    if (isNewCandidate) newCandidates++
+    if (contacts.email || contacts.telegram_url || contacts.discord_url) withContacts++
+  }
+
+  await logActivity({
+    action: 'enrichment.snapchat_score',
     entity_type: 'scrape_job',
     entity_id: jobId,
     details: { scored, likelyAffiliates, newCandidates, affiliateLinks, linksResolved, withContacts },

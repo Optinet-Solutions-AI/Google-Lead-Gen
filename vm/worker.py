@@ -172,6 +172,16 @@ TIKTOK_PROFILE_SCRAPE_PATH = os.environ.get(
 )
 TIKTOK_PHASE1_MAX_RESULTS = int(os.environ.get("TIKTOK_PHASE1_MAX_RESULTS", "100"))
 TIKTOK_PHASE2_TOP_N = int(os.environ.get("TIKTOK_PHASE2_TOP_N", "25"))
+# Snapchat is the PURE-HTTP path (like Kick/YouTube, no GoLogin): a recon probe
+# confirmed snapchat.com/explore/{kw} + snapchat.com/@{handle} serve all data in
+# a server-rendered __NEXT_DATA__ JSON. Single pass — snapchat_search.py
+# discovers AND enriches (profile fetch is cheap HTTP), so there's no Phase-2 job.
+SNAPCHAT_SEARCH_PATH = os.environ.get(
+    "SNAPCHAT_SEARCH_PATH",
+    str(Path.home() / "snapchat_search.py"),
+)
+SNAPCHAT_SEARCH_TIMEOUT_S = int(os.environ.get("SNAPCHAT_SEARCH_TIMEOUT_SECONDS", "300"))
+SNAPCHAT_PHASE1_MAX_RESULTS = int(os.environ.get("SNAPCHAT_PHASE1_MAX_RESULTS", "100"))
 KILL_SCRIPT_PATH     = os.environ.get(
     "KILL_SCRIPT_PATH",
     str(Path.home() / "kill_gologin.py"),
@@ -1682,6 +1692,118 @@ def process_tiktok_phase2_job(job: dict[str, Any]) -> None:
              payload.get("attempted") or 0, payload.get("failed") or 0)
 
 
+def run_snapchat_search(
+    keyword: str,
+    country_code: str,
+    language: str,
+    job_id: str,
+    max_results: int,
+) -> tuple[int, str, Path, Path]:
+    """Invoke snapchat_search.py as a subprocess. PURE HTTP like
+    run_kick_search — no GoLogin, no port, no view_mode. Single pass:
+    discovers creators from the explore page AND enriches each profile's
+    __NEXT_DATA__ in the same run.
+
+    Returns: (exit_code, combined_log_text, json_output_path, log_path)
+    """
+    output_path = Path(RESULTS_DIR) / f"snapchat_{WORKER_ID}_{GOLOGIN_PORT}.json"
+    log_path    = Path(RESULTS_DIR) / f"snapchat_{WORKER_ID}_{GOLOGIN_PORT}.log"
+    output_path.unlink(missing_ok=True)
+    log_path.unlink(missing_ok=True)
+
+    cmd = [
+        "python3",
+        "-u",
+        SNAPCHAT_SEARCH_PATH,
+        "-k", keyword,
+        "--country-code", country_code,
+        "--language", language,
+        "--max-results", str(max_results),
+        "--job-id", job_id,
+        "--worker-id", WORKER_ID,
+        "--output", str(output_path),
+    ]
+
+    env = os.environ.copy()
+    log.info("launching snapchat_search (keyword=%r lang=%s log=%s timeout=%ds)",
+             keyword, language, log_path, SNAPCHAT_SEARCH_TIMEOUT_S)
+
+    with open(log_path, "w", encoding="utf-8") as log_f:
+        result = subprocess.run(
+            cmd, env=env, stdout=log_f, stderr=subprocess.STDOUT, timeout=SNAPCHAT_SEARCH_TIMEOUT_S,
+        )
+
+    try:
+        combined = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        combined = ""
+    return result.returncode, combined, output_path, log_path
+
+
+def process_snapchat_job(job: dict[str, Any]) -> None:
+    """Handle a scrape_queue row where search_engine='snapchat'.
+
+    Pure-HTTP path like Kick/YouTube — no Chromium, no GoLogin profile, no
+    port-kill cycle. Single pass (no Phase-2 job): the child discovers AND
+    enriches creators, writing snapchat_creators + snapchat_links directly.
+    """
+    job_id = job["id"]
+    country_code = job["country_code"]
+    keyword = job["keyword"]
+    language = (job.get("language") or "en").strip().lower() or "en"
+
+    log.info("claimed snapchat job %s | country=%s keyword=%r lang=%s",
+             job_id, country_code, keyword, language)
+
+    try:
+        exit_code, combined_log, output_path, log_path = run_snapchat_search(
+            keyword=keyword,
+            country_code=country_code,
+            language=language,
+            job_id=job_id,
+            max_results=SNAPCHAT_PHASE1_MAX_RESULTS,
+        )
+    except subprocess.TimeoutExpired:
+        fail_job(job_id, f"Snapchat search took too long ({SNAPCHAT_SEARCH_TIMEOUT_S}s) and was stopped.")
+        return
+    except Exception as exc:  # noqa: BLE001
+        fail_job(job_id, classify_failure(exit_code=None, error_text=str(exc), source="snapchat_search"))
+        return
+
+    if "[RESULT] SUCCESS" not in combined_log:
+        fail_job(job_id, classify_failure(exit_code=exit_code, error_text=combined_log, source="snapchat_search"))
+        return
+
+    if not output_path.exists():
+        fail_job(job_id, "Snapchat search finished but the results file is missing on disk.")
+        return
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        fail_job(job_id, "Snapchat search finished but the results file is corrupted — re-run usually fixes this.")
+        return
+
+    # Creators are already in public.snapchat_creators (the child wrote them
+    # directly). Passing [] makes the leads-insert a no-op while the summary +
+    # status update fire and the active_profile_lock is released.
+    summary = {
+        "total_results": payload.get("total_results"),
+        "organic_results": payload.get("organic_results"),
+        "ppc_results": payload.get("ppc_results"),
+        "pages_scraped": payload.get("pages_scraped"),
+        "scraped_at": payload.get("timestamp"),
+        "is_logged_in": None,
+        "view_mode": "desktop",   # Snapchat has no mobile/desktop split
+    }
+    try:
+        complete_job(job_id, [], summary)
+    except Exception as exc:  # noqa: BLE001
+        log.error("complete_scrape_job RPC failed for snapchat job %s: %s", job_id, exc)
+        return
+
+    log.info("snapchat job %s completed | %d creators", job_id, summary.get("total_results") or 0)
+
+
 def run_fb_adlibrary_search(
     profile_id: str,
     keyword: str,
@@ -1826,7 +1948,7 @@ def process_job(job: dict[str, Any]) -> None:
     # that pre-date the migration that added the column.
     language = (job.get("language") or "en").strip().lower() or "en"
     engine = (job.get("search_engine") or "google").strip().lower() or "google"
-    if engine not in ("google", "bing", "youtube", "kick", "x", "facebook", "tiktok"):
+    if engine not in ("google", "bing", "youtube", "kick", "x", "facebook", "tiktok", "snapchat"):
         engine = "google"
 
     # YouTube and Kick jobs take a completely different path — pure
@@ -1857,6 +1979,11 @@ def process_job(job: dict[str, Any]) -> None:
     # lifecycle (and routes Phase-2 enrichment jobs to process_tiktok_phase2_job).
     if engine == "tiktok":
         process_tiktok_job(job)
+        return
+    # Snapchat is the PURE-HTTP path (like Kick/YouTube) — no GoLogin / Chromium.
+    # Single pass: process_snapchat_job discovers + enriches in one run.
+    if engine == "snapchat":
+        process_snapchat_job(job)
         return
 
     # view_mode controls whether scraper.py runs the desktop pass, the

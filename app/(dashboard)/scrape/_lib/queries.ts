@@ -897,6 +897,120 @@ export async function fetchFbAdvertiserRows(jobId: string): Promise<FbAdvertiser
     .map(r => ({ ...r, links: linksByAdvertiser.get(r.id) ?? [] }))
 }
 
+// ============================================================
+// Snapchat creator queries (single-pass like Facebook — discover+enrich in one
+// scrape, then score; snapchat_creators + snapchat_links).
+// ============================================================
+export type SnapchatCreatorSummary = {
+  discovered: number
+  /** Creators with a niche_score (Phase 3 "Score & check" has run). */
+  scored: number
+  unscored: number
+  likelyAffiliates: number
+  /** Likely affiliates with an unknown S-tag/operator or @handle not on Monday. */
+  newCandidates: number
+}
+
+export async function fetchSnapchatCreatorSummary(jobId: string): Promise<SnapchatCreatorSummary> {
+  const svc = createServiceClient()
+  const [discoveredRes, scoredRes, affiliateRes, newRes] = await Promise.all([
+    svc.from('snapchat_creators').select('id', { count: 'exact', head: true }).eq('scrape_queue_id', jobId),
+    svc
+      .from('snapchat_creators')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .not('niche_score', 'is', null),
+    svc
+      .from('snapchat_creators')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .eq('is_likely_affiliate', true),
+    svc
+      .from('snapchat_creators')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .eq('is_new_lead_candidate', true),
+  ])
+
+  const discovered = discoveredRes.count ?? 0
+  const scored = scoredRes.count ?? 0
+  return {
+    discovered,
+    scored,
+    unscored: Math.max(0, discovered - scored),
+    likelyAffiliates: affiliateRes.count ?? 0,
+    newCandidates: newRes.count ?? 0,
+  }
+}
+
+export type SnapchatLinkRow = {
+  url: string
+  resolved_url: string | null
+  source: 'bio_link'
+  brand: string | null
+  is_known_on_monday: boolean | null
+}
+
+export type SnapchatCreatorRow = {
+  id: string
+  username: string
+  profile_url: string
+  display_name: string | null
+  bio: string | null
+  bio_link: string | null
+  subscriber_count: number | null
+  is_snap_star: boolean | null
+  contact_email: string | null
+  telegram_url: string | null
+  discord_url: string | null
+  is_likely_affiliate: boolean | null
+  niche_score: number | null
+  is_new_lead_candidate: boolean | null
+  links: SnapchatLinkRow[]
+}
+
+/** Per-creator rows for the Snapchat results table: new candidates first, then
+ *  affiliates, then niche_score desc, then subscribers — with each creator's
+ *  bio link attached. */
+export async function fetchSnapchatCreatorRows(jobId: string): Promise<SnapchatCreatorRow[]> {
+  const svc = createServiceClient()
+  const { data: creators, error } = await svc
+    .from('snapchat_creators')
+    .select(
+      'id, username, profile_url, display_name, bio, bio_link, subscriber_count, is_snap_star, ' +
+        'contact_email, telegram_url, discord_url, ' +
+        'is_likely_affiliate, niche_score, is_new_lead_candidate',
+    )
+    .eq('scrape_queue_id', jobId)
+  if (error) throw error
+  const rows = (creators ?? []) as unknown as Omit<SnapchatCreatorRow, 'links'>[]
+  if (rows.length === 0) return []
+
+  const { data: links } = await svc
+    .from('snapchat_links')
+    .select('snapchat_creator_id, url, resolved_url, source, brand, is_known_on_monday')
+    .in('snapchat_creator_id', rows.map(r => r.id))
+  const linksByCreator = new Map<string, SnapchatLinkRow[]>()
+  for (const l of (links ?? []) as unknown as Array<SnapchatLinkRow & { snapchat_creator_id: string }>) {
+    const arr = linksByCreator.get(l.snapchat_creator_id) ?? []
+    arr.push({ url: l.url, resolved_url: l.resolved_url, source: l.source, brand: l.brand, is_known_on_monday: l.is_known_on_monday })
+    linksByCreator.set(l.snapchat_creator_id, arr)
+  }
+
+  return rows
+    .slice()
+    .sort((a, b) => {
+      const nw = Number(b.is_new_lead_candidate ?? false) - Number(a.is_new_lead_candidate ?? false)
+      if (nw !== 0) return nw
+      const aff = Number(b.is_likely_affiliate ?? false) - Number(a.is_likely_affiliate ?? false)
+      if (aff !== 0) return aff
+      const ns = Number(b.niche_score ?? -1) - Number(a.niche_score ?? -1)
+      if (ns !== 0) return ns
+      return (b.subscriber_count ?? 0) - (a.subscriber_count ?? 0)
+    })
+    .map(r => ({ ...r, links: linksByCreator.get(r.id) ?? [] }))
+}
+
 export async function listRecentJobs(limit = 30): Promise<ScrapeJob[]> {
   return queryJobs({ limit, page: 1, size: limit }).then(r => r.rows)
 }

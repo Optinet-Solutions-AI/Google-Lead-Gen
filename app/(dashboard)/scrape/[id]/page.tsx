@@ -28,6 +28,8 @@ import { FbAdvertisersPanel } from '../_components/fb-advertisers-panel'
 import { FbAdvertisersTable } from '../_components/fb-advertisers-table'
 import { TiktokCreatorsPanel } from '../_components/tiktok-creators-panel'
 import { TiktokCreatorsTable } from '../_components/tiktok-creators-table'
+import { SnapchatCreatorsPanel } from '../_components/snapchat-creators-panel'
+import { SnapchatCreatorsTable } from '../_components/snapchat-creators-table'
 import {
   fetchFbAdvertiserRows,
   fetchFbAdvertiserSummary,
@@ -38,6 +40,8 @@ import {
   fetchXCreatorSummary,
   fetchTiktokCreatorRows,
   fetchTiktokCreatorSummary,
+  fetchSnapchatCreatorRows,
+  fetchSnapchatCreatorSummary,
   fetchYoutubeChannelRows,
   fetchYoutubeChannelSummary,
 } from '../_lib/queries'
@@ -63,7 +67,7 @@ type Job = {
   completed_at: string | null
   error_message: string | null
   result_summary: Record<string, unknown> | null
-  search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook' | 'tiktok' | null
+  search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook' | 'tiktok' | 'snapchat' | null
   view_mode: 'desktop' | 'mobile' | 'both' | null
   language: string | null
   created_at: string
@@ -182,10 +186,11 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const isX = job.search_engine === 'x'
   const isFacebook = job.search_engine === 'facebook'
   const isTiktok = job.search_engine === 'tiktok'
-  // Kick streamers, YouTube channels, X creators, Facebook advertisers, and
-  // TikTok creators all live in their own tables/panels — none produces leads,
-  // so the lead filters + table + enrichment stages don't apply to them.
-  const noLeadsEngine = isKick || isYoutube || isX || isFacebook || isTiktok
+  const isSnapchat = job.search_engine === 'snapchat'
+  // Kick streamers, YouTube channels, X creators, Facebook advertisers, TikTok
+  // creators, and Snapchat creators all live in their own tables/panels — none
+  // produces leads, so the lead filters + table + enrichment stages don't apply.
+  const noLeadsEngine = isKick || isYoutube || isX || isFacebook || isTiktok || isSnapchat
 
   const [
     { rows, total },
@@ -202,6 +207,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
     fbRows,
     tiktokSummary,
     tiktokRows,
+    snapchatSummary,
+    snapchatRows,
   ] = await Promise.all([
       queryLeads({
         page,
@@ -234,6 +241,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       isFacebook ? fetchFbAdvertiserRows(id) : Promise.resolve(null),
       isTiktok ? fetchTiktokCreatorSummary(id) : Promise.resolve(null),
       isTiktok ? fetchTiktokCreatorRows(id) : Promise.resolve(null),
+      isSnapchat ? fetchSnapchatCreatorSummary(id) : Promise.resolve(null),
+      isSnapchat ? fetchSnapchatCreatorRows(id) : Promise.resolve(null),
     ])
 
   const toggleHref = (() => {
@@ -361,6 +370,11 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
           {tiktokSummary && <TiktokCreatorsPanel jobId={job.id} summary={tiktokSummary} />}
           {tiktokRows && tiktokRows.length > 0 && <TiktokCreatorsTable rows={tiktokRows} />}
         </>
+      ) : isSnapchat ? (
+        <>
+          {snapchatSummary && <SnapchatCreatorsPanel jobId={job.id} summary={snapchatSummary} />}
+          {snapchatRows && snapchatRows.length > 0 && <SnapchatCreatorsTable rows={snapchatRows} />}
+        </>
       ) : (
         stageSummary && <EnrichmentStages jobId={job.id} summary={stageSummary} />
       )}
@@ -401,7 +415,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   )
 }
 
-function EngineBadge({ engine }: { engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook' | 'tiktok' | null }) {
+function EngineBadge({ engine }: { engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook' | 'tiktok' | 'snapchat' | null }) {
   const e = engine ?? 'google'
   const styles =
     e === 'bing'
@@ -418,8 +432,10 @@ function EngineBadge({ engine }: { engine: 'google' | 'bing' | 'youtube' | 'twit
                 ? 'bg-indigo-100 text-indigo-800'
                 : e === 'tiktok'
                   ? 'bg-pink-100 text-pink-800'
-                  : 'bg-blue-100 text-blue-800'
-  const label = e === 'youtube' ? 'YouTube' : e === 'bing' ? 'Bing' : e === 'twitch' ? 'Twitch' : e === 'kick' ? 'Kick' : e === 'x' ? 'X' : e === 'facebook' ? 'Facebook' : e === 'tiktok' ? 'TikTok' : 'Google'
+                  : e === 'snapchat'
+                    ? 'bg-yellow-100 text-yellow-800'
+                    : 'bg-blue-100 text-blue-800'
+  const label = e === 'youtube' ? 'YouTube' : e === 'bing' ? 'Bing' : e === 'twitch' ? 'Twitch' : e === 'kick' ? 'Kick' : e === 'x' ? 'X' : e === 'facebook' ? 'Facebook' : e === 'tiktok' ? 'TikTok' : e === 'snapchat' ? 'Snapchat' : 'Google'
   return (
     <span
       title={`Scraped on ${label}`}
