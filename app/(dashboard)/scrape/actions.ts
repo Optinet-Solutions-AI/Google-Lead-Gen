@@ -1932,24 +1932,33 @@ export async function runFbAdvertiserAnalysis(
       return ''
     }
   }
+  // Affiliate referral code in a link path (.../RFOGAD007) — marks a link whose
+  // destination is the casino the advertiser PROMOTES, not their own site.
+  const AFFILIATE_REF_RE = /\/RF[A-Z0-9]{4,}/i
+  const isFunnelLink = (l: LinkRow): boolean =>
+    needsResolution(l.url) || // original was a shortener (tny.sh/…) — masks the operator
+    AFFILIATE_REF_RE.test(l.url) ||
+    AFFILIATE_REF_RE.test(l.resolved_url ?? '')
+
   // Pick the best contact-bearing page to fetch for an advertiser: their own
   // affiliate link-hub first (heylink/linktr — where affiliates publish their
-  // email/Telegram), then a resolved casino landing, then any non-Facebook http
-  // link. Returns null when there's nothing worth fetching.
+  // email/Telegram), then the advertiser's OWN site (a direct, non-funnel link).
+  // We deliberately SKIP affiliate-funnel destinations (shortener / referral-code
+  // links): those land on the casino operator the advertiser promotes, whose
+  // support@ address is the wrong outreach party — not the affiliate. Returns
+  // null when there's nothing worth fetching.
   const pickContactUrl = (advLinks: LinkRow[]): string | null => {
-    const dests = advLinks
-      .map(l => l.resolved_url ?? l.url)
-      .filter((u): u is string => !!u)
-    const hub = dests.find(u => AGGREGATOR_HOSTS.has(hostOf(u)))
-    if (hub) return hub
-    const landing = dests.find(u => isAffiliateCasinoLink(u, denylist))
-    if (landing) return landing
-    return (
-      dests.find(u => {
-        const h = hostOf(u)
-        return h !== '' && !/(^|\.)(facebook|fb|instagram|fbcdn|whatsapp|messenger)\./.test(h)
-      }) ?? null
-    )
+    const hub = advLinks.find(l => AGGREGATOR_HOSTS.has(hostOf(l.resolved_url ?? l.url)))
+    if (hub) return hub.resolved_url ?? hub.url
+    const own = advLinks.find(l => {
+      const dest = l.resolved_url ?? l.url
+      const h = hostOf(dest)
+      if (h === '' || /(^|\.)(facebook|fb|instagram|fbcdn|whatsapp|messenger)\./.test(h)) return false
+      if (isFunnelLink(l)) return false // promoted operator, not the affiliate's own site
+      if (isAffiliateCasinoLink(dest, denylist)) return false // known casino operator
+      return true
+    })
+    return own ? own.resolved_url ?? own.url : null
   }
 
   type Scored = {
