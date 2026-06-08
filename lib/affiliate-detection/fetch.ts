@@ -68,7 +68,7 @@ function ipLiteralKind(host: string): 'v4' | 'v6' | null {
 /** True if the URL targets a non-public address. Literal-IP and reserved-
  *  hostname checks always run; DNS resolution is best-effort (Node-only,
  *  dynamically imported) to also catch names that resolve to internal IPs. */
-async function isBlockedTarget(rawUrl: string): Promise<boolean> {
+export async function isBlockedTarget(rawUrl: string): Promise<boolean> {
   let u: URL
   try {
     u = new URL(rawUrl)
@@ -93,6 +93,64 @@ async function isBlockedTarget(rawUrl: string): Promise<boolean> {
     // the cited attack (a 302 to an IP literal or reserved hostname).
   }
   return false
+}
+
+/**
+ * Follow a URL's redirect chain manually, re-validating every hop against the
+ * SSRF guard, and return the FINAL url (or null if a hop is blocked / the
+ * request fails). Unlike fetchHtml this never downloads the destination body —
+ * it's for resolving shorteners / tracking links where only the final URL
+ * matters. Returns the final url even when no redirect occurred (the input).
+ * Uses HEAD with a GET fallback for servers that reject HEAD.
+ */
+export async function resolveFinalUrlSafe(
+  url: string,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<string | null> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    let currentUrl = url
+    for (let hop = 0; ; hop++) {
+      if (await isBlockedTarget(currentUrl)) return null
+      let res: Response
+      try {
+        res = await fetch(currentUrl, {
+          method: 'HEAD',
+          headers: BROWSER_HEADERS,
+          redirect: 'manual', // validate each hop before following it
+          signal: controller.signal,
+        })
+        // Some shorteners/servers reject HEAD — retry this hop with GET.
+        const isRedirect = res.status >= 300 && res.status < 400
+        if (!isRedirect && res.status >= 400) {
+          res = await fetch(currentUrl, {
+            method: 'GET',
+            headers: BROWSER_HEADERS,
+            redirect: 'manual',
+            signal: controller.signal,
+          })
+        }
+      } catch {
+        return null
+      }
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get('location')
+        if (!loc) break
+        if (hop >= MAX_REDIRECTS) return null
+        try {
+          currentUrl = new URL(loc, currentUrl).toString()
+        } catch {
+          return null
+        }
+        continue
+      }
+      break
+    }
+    return currentUrl
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export async function fetchHtml(

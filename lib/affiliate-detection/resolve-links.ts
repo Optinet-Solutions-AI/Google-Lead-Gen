@@ -1,5 +1,7 @@
 import 'server-only'
 
+import { resolveFinalUrlSafe } from './fetch'
+
 /**
  * Server-side shortener resolution for kick_links (Phase 3).
  *
@@ -39,26 +41,15 @@ export function needsResolution(url: string): boolean {
  * Follow redirects to the final URL. Returns the resolved URL when it
  * differs from the input, else null (no-op / unresolved / blocked). Never
  * throws — a failed resolve just leaves resolved_url null.
+ *
+ * Redirects are followed manually with a per-hop SSRF guard (see
+ * resolveFinalUrlSafe): the input host is shortener-allowlisted, but a
+ * shortener can 30x toward an internal/metadata address, so each hop is
+ * re-validated before we connect.
  */
 export async function resolveShortener(url: string, timeoutMs = 4000): Promise<string | null> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
-  try {
-    let res: Response
-    try {
-      res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: ctrl.signal })
-      // Some shorteners reject HEAD — retry with GET.
-      if (!res.ok || res.url === url) {
-        res = await fetch(url, { method: 'GET', redirect: 'follow', signal: ctrl.signal })
-      }
-    } catch {
-      return null
-    }
-    const final = res.url
-    return final && final !== url ? final : null
-  } finally {
-    clearTimeout(timer)
-  }
+  const final = await resolveFinalUrlSafe(url, timeoutMs)
+  return final && final !== url ? final : null
 }
 
 /**

@@ -11,6 +11,8 @@
  *       ['btag', 'stag', 'cxd', 'mid', 'affid']
  */
 
+import { resolveFinalUrlSafe } from '@/lib/affiliate-detection/fetch'
+
 const HREF_RE = /href=["']([^"']+)["']/gi
 const TRACKING_PATH_RE = /\/(track|click|go|visit|out|redirect|creat|aff|ref|link|offer|bonus|promo)\//i
 const TRACKING_QUERY_RE = /[?&](ref|aff|affiliate|campaign|source|tracking|click)=/i
@@ -150,26 +152,12 @@ export function guessBrandFromUrl(rawUrl: string): string | null {
 
 const REDIRECT_TIMEOUT_MS = 8_000
 
-/** Follow a single tracking link's redirect chain and return the final URL. */
+/** Follow a single tracking link's redirect chain and return the final URL.
+ *  Redirects are followed manually with a per-hop SSRF guard — these tracking
+ *  URLs come from scraped third-party pages and could 30x toward an internal/
+ *  metadata address. */
 export async function resolveFinalUrl(trackingUrl: string): Promise<string | null> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REDIRECT_TIMEOUT_MS)
-  try {
-    const res = await fetch(trackingUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      },
-      redirect: 'follow',
-      signal: controller.signal,
-    })
-    return res.url || null
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timer)
-  }
+  return resolveFinalUrlSafe(trackingUrl, REDIRECT_TIMEOUT_MS)
 }
 
 // Plain-text URL run — stops at whitespace and common trailing delimiters.

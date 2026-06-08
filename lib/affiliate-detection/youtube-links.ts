@@ -23,6 +23,7 @@ import 'server-only'
  */
 
 import { resolveShortener, needsResolution } from './resolve-links'
+import { fetchHtml } from './fetch'
 import {
   parseStagFromUrl,
   guessBrandFromUrl,
@@ -121,34 +122,13 @@ export async function resolveCandidate(sourceUrl: string, denylist: Set<string>)
 /** Two-hop: fetch a candidate page and mine ITS outbound casino tracking links
  *  for S-tags (the real affiliate IDs live one hop in). Bounded + never throws. */
 export async function twoHopStags(pageUrl: string, opts: { maxLinks?: number } = {}): Promise<ExtractedStag[]> {
-  const html = await fetchHtml(pageUrl)
-  if (!html) return []
-  return extractStagsFromHtml(html, pageUrl, { maxLinks: opts.maxLinks ?? 10, concurrency: 5 })
-}
-
-async function fetchHtml(url: string, timeoutMs = 6000): Promise<string | null> {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: ctrl.signal,
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml',
-      },
-    })
-    const ct = res.headers.get('content-type') || ''
-    if (!res.ok || !ct.includes('text/html')) return null
-    const buf = await res.arrayBuffer()
-    // Cap the parsed slice — review pages are small; a runaway body shouldn't
-    // blow the action's memory/time budget.
-    return new TextDecoder('utf-8', { fatal: false }).decode(buf.slice(0, 600_000))
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timer)
-  }
+  // Guarded fetcher (manual redirect + per-hop SSRF check): pageUrl derives
+  // from a scraped video description, so a crafted link could 30x toward an
+  // internal/metadata address.
+  const res = await fetchHtml(pageUrl, 6000)
+  if (!res.ok) return []
+  // Cap the parsed slice — review pages are small; a runaway body shouldn't
+  // blow the action's memory/time budget.
+  const html = res.html.slice(0, 600_000)
+  return extractStagsFromHtml(html, res.finalUrl, { maxLinks: opts.maxLinks ?? 10, concurrency: 5 })
 }
