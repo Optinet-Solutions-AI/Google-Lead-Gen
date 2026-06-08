@@ -211,7 +211,14 @@ def write_creators_to_db(sb, job_id: str, keyword: str, creators: list[dict[str,
     rows = _build_rows(job_id, keyword, creators)
     if not rows:
         return 0
-    sb.table("tiktok_creators").insert(rows).execute()
+    # Upsert (ignore duplicates) so a re-dispatched Phase-1 job — one that
+    # committed these rows, then failed completion and got requeued — can't
+    # double-insert the same (scrape_queue_id, username). Requires the unique
+    # index uq_tiktok_creators_job_username (migration 20260608120000); deploy
+    # this only AFTER that migration is applied.
+    sb.table("tiktok_creators").upsert(
+        rows, on_conflict="scrape_queue_id,username", ignore_duplicates=True
+    ).execute()
     return len(rows)
 
 
