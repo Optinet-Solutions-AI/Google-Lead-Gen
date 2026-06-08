@@ -183,9 +183,10 @@ SNAPCHAT_SEARCH_PATH = os.environ.get(
 SNAPCHAT_SEARCH_TIMEOUT_S = int(os.environ.get("SNAPCHAT_SEARCH_TIMEOUT_SECONDS", "300"))
 SNAPCHAT_PHASE1_MAX_RESULTS = int(os.environ.get("SNAPCHAT_PHASE1_MAX_RESULTS", "100"))
 # Telegram is also the PURE-HTTP single-pass path (like Snapchat): discovery via
-# lyzem.com keyword search + enrichment via t.me/s/{handle} SEO previews, both
-# plain HTTP (no GoLogin, no bot token, no login wall). One pass discovers +
-# enriches + snowballs @mentions.
+# a built-in gambling-seed list + @mention snowball, enrichment via
+# t.me/s/{handle} SEO previews, both plain HTTP (no GoLogin, no bot token, no
+# login wall). One pass discovers + enriches + snowballs @mentions. (With
+# TELEGRAM_API_* set it upgrades to a real MTProto keyword search.)
 TELEGRAM_SEARCH_PATH = os.environ.get(
     "TELEGRAM_SEARCH_PATH",
     str(Path.home() / "telegram_search.py"),
@@ -1823,7 +1824,8 @@ def run_telegram_search(
 ) -> tuple[int, str, Path, Path]:
     """Invoke telegram_search.py as a subprocess. PURE HTTP like
     run_snapchat_search — no GoLogin, no port. Single pass: discovers channels
-    via lyzem, enriches each via t.me/s, snowballs @mentions, all in one run.
+    from a built-in gambling-seed list, enriches each via t.me/s, snowballs
+    @mentions, all in one run.
 
     Returns: (exit_code, combined_log_text, json_output_path, log_path)
     """
@@ -2103,8 +2105,8 @@ def process_job(job: dict[str, Any]) -> None:
     if engine == "snapchat":
         process_snapchat_job(job)
         return
-    # Telegram is the PURE-HTTP single-pass path (lyzem discovery + t.me/s
-    # enrichment) — no GoLogin/Chromium, no Phase-2 job.
+    # Telegram is the PURE-HTTP single-pass path (gambling-seed + @mention-
+    # snowball discovery + t.me/s enrichment) — no GoLogin/Chromium, no Phase-2 job.
     if engine == "telegram":
         process_telegram_job(job)
         return

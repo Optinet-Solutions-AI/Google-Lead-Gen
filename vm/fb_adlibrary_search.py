@@ -216,12 +216,16 @@ function cardLinks(card){
   let m;
   while ((m = urlRe.exec(text))) add(m[0].replace(/[.,]+$/, ''), false);
   // 3) UPPERCASE display domains FB renders as the destination line (only kept
-  //    when we don't already have a fuller URL for that host)
+  //    when we don't already have a fuller URL for that host). Require the last
+  //    segment to be a REAL TLD so dot-joined ad copy (WIN.BIG, PLAY.NOW,
+  //    SPIN.PALACE) isn't synthesized into a fabricated landing link.
+  const TLDS = new Set(['com','net','org','io','co','gg','vip','casino','bet','games','game','app','live','club','xyz','online','site','win','fun','bz','ag','cc','tv','me','to','ai','dev','link','life','world','biz','info','pro','us','uk','au','nz','ca','eu','de','fr','es','it','nl','se','no','dk','fi','ie','at','ch','be','pt','pl','cz','ro','br','mx','jp','in','za','sg','ph','id','my','th','vn','kr','ru','tr','ng','ke']);
   const domRe = /\b([A-Z0-9][A-Z0-9\-]*(?:\.[A-Z0-9\-]{2,})+)\b/g;
   let dm;
   while ((dm = domRe.exec(text))) {
     const dom = dm[1];
-    if (dom.length >= 4 && dom === dom.toUpperCase() && /\.[A-Z]{2,6}$/.test(dom)) {
+    const tld = dom.split('.').pop().toLowerCase();
+    if (dom.length >= 4 && dom === dom.toUpperCase() && TLDS.has(tld)) {
       add('https://' + dom.toLowerCase(), true);
     }
   }
@@ -313,7 +317,9 @@ def _aggregate_advertisers(ad_cards: list[dict[str, Any]]) -> list[dict[str, Any
         if not entry.get("page_name") and c.get("page_name"):
             entry["page_name"] = c.get("page_name")
         copy = c.get("ad_copy")
-        if copy and len(" ".join(entry["_copy_parts"])) < FB_AD_TEXT_SAMPLE_MAX:
+        # Measure with the SAME separator the final sample uses (" · "), so the
+        # accumulation cap matches the stored string's real length.
+        if copy and len(" · ".join(entry["_copy_parts"])) < FB_AD_TEXT_SAMPLE_MAX:
             entry["_copy_parts"].append(copy)
         for l in c.get("links") or []:
             url = (l.get("url") or "").strip()
@@ -322,8 +328,15 @@ def _aggregate_advertisers(ad_cards: list[dict[str, Any]]) -> list[dict[str, Any
 
     advertisers: list[dict[str, Any]] = []
     for entry in by_page.values():
-        sample = " · ".join(entry.pop("_copy_parts"))[:FB_AD_TEXT_SAMPLE_MAX] or None
-        entry["ad_text_sample"] = sample
+        sample_full = " · ".join(entry.pop("_copy_parts"))
+        if len(sample_full) > FB_AD_TEXT_SAMPLE_MAX:
+            cut = sample_full[:FB_AD_TEXT_SAMPLE_MAX]
+            # Trim back to the last clean " · " boundary (or last space) so the
+            # sample never ends mid-word / mid-URL.
+            sep = cut.rfind(" · ")
+            cut = cut[:sep] if sep > 0 else cut.rsplit(" ", 1)[0]
+            sample_full = cut
+        entry["ad_text_sample"] = sample_full or None
         entry["links"] = [
             {"url": u, "source": s} for u, s in list(entry.pop("_links").items())[:FB_LINKS_PER_ADVERTISER_MAX]
         ]
