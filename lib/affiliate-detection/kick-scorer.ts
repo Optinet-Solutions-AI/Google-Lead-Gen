@@ -73,18 +73,48 @@ export function hasAffiliateRef(url: string): boolean {
   return AFFILIATE_REF_QUERY_RE.test(url) || AFFILIATE_REF_PATH_RE.test(url)
 }
 
+// Casino keywords split by collision risk. The long, distinctive ones
+// (casino/slots/poker/blackjack) are safe as plain substring tests — no
+// ordinary host embeds them by accident. The short ones (bet/spin/gaming)
+// collide with everyday words: 'bet' in betterhelp.com, 'spin' in
+// spinrilla.com, 'gaming' in razer-gaming.com / any gaming-hardware brand.
+// So those only count at a domain-label boundary — the whole label, or
+// glued to a digit at a label edge (bet365, 22bet). Brands that embed a
+// short keyword mid-word (rainbet, 1xbet) aren't matched here, but they're
+// still caught by the denylist and the affiliate-ref markers, which are the
+// primary, higher-precision classifiers.
+const AMBIGUOUS_CASINO_KEYWORDS = new Set(['bet', 'spin', 'gaming'])
+const STRONG_CASINO_KEYWORDS = CASINO_KEYWORDS.filter(k => !AMBIGUOUS_CASINO_KEYWORDS.has(k))
+const WEAK_CASINO_KEYWORDS = CASINO_KEYWORDS.filter(k => AMBIGUOUS_CASINO_KEYWORDS.has(k))
+
+function hostHasCasinoKeyword(host: string): boolean {
+  // Distinctive keywords: substring anywhere (onlinecasino, casinodaddy…).
+  if (STRONG_CASINO_KEYWORDS.some(k => host.includes(k))) return true
+  // Ambiguous short keywords: whole label, or keyword glued to a digit at a
+  // label edge. Reject mid-word letter-glued matches (betterhelp, spinrilla).
+  for (const label of host.split('.')) {
+    for (const k of WEAK_CASINO_KEYWORDS) {
+      if (label === k) return true
+      if (label.startsWith(k) && /[0-9]/.test(label.charAt(k.length))) return true
+      if (label.endsWith(k) && /[0-9]/.test(label.charAt(label.length - k.length - 1))) return true
+    }
+  }
+  return false
+}
+
 /** A link that points at a casino/affiliate destination: an affiliate-ref
- *  marker, a denylisted operator host, or a host containing a casino keyword
- *  (rainbet → "bet", etc.). The ref marker catches the ones the keyword
- *  misses (luxdrop /r/, stake ?c=); a streamer's own site (sweetflips.gg)
- *  and plain socials (discord, t.me) match none → correctly excluded. */
+ *  marker, a denylisted operator host, or a host carrying a casino keyword
+ *  (boundary-aware — see hostHasCasinoKeyword). The ref marker catches the
+ *  ones the keyword misses (luxdrop /r/, stake ?c=, rainbet ?r=); a
+ *  streamer's own site (sweetflips.gg) and plain socials (discord, t.me)
+ *  match none → correctly excluded. */
 export function isAffiliateCasinoLink(url: string, denylist: Set<string>): boolean {
   const host = hostOf(url)
   if (!host) return false
   return (
     hasAffiliateRef(url) ||
     hostInDenylist(host, denylist) ||
-    CASINO_KEYWORDS.some(k => host.includes(k))
+    hostHasCasinoKeyword(host)
   )
 }
 

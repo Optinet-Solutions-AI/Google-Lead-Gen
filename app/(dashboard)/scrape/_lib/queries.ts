@@ -259,7 +259,10 @@ export async function fetchKickStreamerSummary(jobId: string): Promise<KickStrea
     discovered,
     enriched,
     failed,
-    pending: Math.max(0, discovered - enriched),
+    // Failed streamers are excluded from the enrichment work-list (they've
+    // exhausted their fresh-session retries), so they're not pending — else
+    // 'pending' could never settle to 0 while any channel is unreachable.
+    pending: Math.max(0, discovered - enriched - failed),
     scored: scoredRes.count ?? 0,
     likelyAffiliates: affiliateRes.count ?? 0,
     inflight,
@@ -546,14 +549,18 @@ export async function fetchXCreatorSummary(jobId: string): Promise<XCreatorSumma
 
   const discovered = discoveredRes.count ?? 0
   const enriched = enrichedRes.count ?? 0
+  const failed = failedRes.count ?? 0
   const inflightRows = (inflightRes.data ?? []) as Array<{ status: string }>
   const inflight = inflightRows.length > 0
   const running = inflightRows.some(r => r.status === 'running')
   return {
     discovered,
     enriched,
-    failed: failedRes.count ?? 0,
-    pending: Math.max(0, discovered - enriched),
+    failed,
+    // Permanently-failed creators are excluded from the enrichment work-list,
+    // so they're not pending — else 'pending' could never settle to 0 while
+    // any discovered account is suspended/gone.
+    pending: Math.max(0, discovered - enriched - failed),
     scored: scoredRes.count ?? 0,
     likelyAffiliates: affiliateRes.count ?? 0,
     newCandidates: newRes.count ?? 0,
@@ -695,14 +702,18 @@ export async function fetchTiktokCreatorSummary(jobId: string): Promise<TiktokCr
 
   const discovered = discoveredRes.count ?? 0
   const enriched = enrichedRes.count ?? 0
+  const failed = failedRes.count ?? 0
   const inflightRows = (inflightRes.data ?? []) as Array<{ status: string }>
   const inflight = inflightRows.length > 0
   const running = inflightRows.some(r => r.status === 'running')
   return {
     discovered,
     enriched,
-    failed: failedRes.count ?? 0,
-    pending: Math.max(0, discovered - enriched),
+    failed,
+    // Permanently-failed creators are excluded from the enrichment work-list,
+    // so they're not pending — else 'pending' could never settle to 0 while
+    // any discovered account is suspended/gone.
+    pending: Math.max(0, discovered - enriched - failed),
     scored: scoredRes.count ?? 0,
     likelyAffiliates: affiliateRes.count ?? 0,
     newCandidates: newRes.count ?? 0,

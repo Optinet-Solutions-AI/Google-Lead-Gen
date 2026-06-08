@@ -815,12 +815,16 @@ export async function runKickProfileEnrichment(
     .select('id', { count: 'exact', head: true })
     .eq('scrape_queue_id', jobId)
     .is('about_scraped_at', null)
+    // Exclude rows already marked permanently failed — a re-run shouldn't
+    // re-enqueue work for profiles that can never be enriched (mirrors the
+    // VM-side work-list filter).
+    .or('about_fetch_failed.is.null,about_fetch_failed.eq.false')
   if (cntErr) return { status: 'error', error: safeError(cntErr, 'Failed to count discovered streamers.') }
   if (!pending || pending === 0) {
     revalidatePath(`/scrape/${jobId}`)
     return {
       status: 'ok',
-      message: 'No streamers left to enrich — every discovered profile already has its about page scraped.',
+      message: 'No streamers left to enrich — every discovered profile has been scraped or marked unreachable.',
     }
   }
 
@@ -1496,12 +1500,16 @@ export async function runXProfileEnrichment(
     .select('id', { count: 'exact', head: true })
     .eq('scrape_queue_id', jobId)
     .is('about_scraped_at', null)
+    // Exclude rows already marked permanently failed — a re-run shouldn't
+    // re-enqueue work for profiles that can never be enriched (mirrors the
+    // VM-side work-list filter).
+    .or('about_fetch_failed.is.null,about_fetch_failed.eq.false')
   if (cntErr) return { status: 'error', error: safeError(cntErr, 'Failed to count discovered creators.') }
   if (!pending || pending === 0) {
     revalidatePath(`/scrape/${jobId}`)
     return {
       status: 'ok',
-      message: 'No creators left to enrich — every discovered profile already scraped.',
+      message: 'No creators left to enrich — every discovered profile has been scraped or marked unreachable.',
     }
   }
 
@@ -1837,12 +1845,16 @@ export async function runTiktokProfileEnrichment(
     .select('id', { count: 'exact', head: true })
     .eq('scrape_queue_id', jobId)
     .is('about_scraped_at', null)
+    // Exclude rows already marked permanently failed — a re-run shouldn't
+    // re-enqueue work for profiles that can never be enriched (mirrors the
+    // VM-side work-list filter).
+    .or('about_fetch_failed.is.null,about_fetch_failed.eq.false')
   if (cntErr) return { status: 'error', error: safeError(cntErr, 'Failed to count discovered creators.') }
   if (!pending || pending === 0) {
     revalidatePath(`/scrape/${jobId}`)
     return {
       status: 'ok',
-      message: 'No creators left to enrich — every discovered profile already scraped.',
+      message: 'No creators left to enrich — every discovered profile has been scraped or marked unreachable.',
     }
   }
 

@@ -469,12 +469,18 @@ def enrich_one(driver, scraper_mod, username: str, *, interactive: bool,
 
 def fetch_target_creators(sb, parent_job_id: str, top_n: int) -> list[dict[str, Any]]:
     """Top-N not-yet-enriched creators of the parent Phase-1 job. There's no
-    follower count yet (Phase 2 fills it), so order by discovery order (id)."""
+    follower count yet (Phase 2 fills it), so order by discovery order (id).
+
+    Skips rows marked about_fetch_failed — those are permanent failures
+    (suspended / gone accounts; see enrich_one) that can never succeed, so
+    re-selecting them on every Enrich run just wastes a GoLogin session and
+    keeps 'pending' from ever reaching zero."""
     res = (
         sb.table("x_creators")
         .select("id, username")
         .eq("scrape_queue_id", parent_job_id)
         .is_("about_scraped_at", "null")
+        .or_("about_fetch_failed.is.null,about_fetch_failed.eq.false")
         .order("id", desc=False)
         .limit(top_n)
         .execute()

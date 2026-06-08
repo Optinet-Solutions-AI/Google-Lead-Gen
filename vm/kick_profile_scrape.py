@@ -359,12 +359,19 @@ def _cloudflare_blocked(driver) -> bool:
 
 def fetch_target_streamers(sb, parent_job_id: str, top_n: int) -> list[dict[str, Any]]:
     """Top-N not-yet-enriched streamers of the parent Phase-1 job,
-    ranked by live viewers then subscribers."""
+    ranked by live viewers then subscribers.
+
+    Skips rows already marked about_fetch_failed: each streamer is retried
+    with fresh sessions WITHIN a run, so a row that's still marked failed
+    has already exhausted those retries — re-selecting it on every later
+    Enrich run just re-burns GoLogin/proxy on a hopeless channel and keeps
+    'pending' from ever settling."""
     res = (
         sb.table("kick_streamers")
         .select("id, slug, stream_viewer_count, active_subscribers_count")
         .eq("scrape_queue_id", parent_job_id)
         .is_("about_scraped_at", "null")
+        .or_("about_fetch_failed.is.null,about_fetch_failed.eq.false")
         .order("stream_viewer_count", desc=True, nullsfirst=False)
         .order("active_subscribers_count", desc=True, nullsfirst=False)
         .limit(top_n)
