@@ -1309,13 +1309,12 @@ async function fetchEnrichmentStatus(
     rooster_checked_at: string | null
     contact_checked_at: string | null
     s_tags_checked_at: string | null
-    s_tag_id: number | null
   }
   const data = (await selectInChunks(jobIds, chunk =>
     svc
       .from('google_lead_gen_table')
       .select(
-        'id, scrape_job_id, is_on_monday, affiliate_checked_at, rooster_checked_at, contact_checked_at, s_tags_checked_at, s_tag_id',
+        'id, scrape_job_id, is_on_monday, affiliate_checked_at, rooster_checked_at, contact_checked_at, s_tags_checked_at',
       )
       .in('scrape_job_id', chunk),
   )) as unknown as LeadRow[]
@@ -1349,7 +1348,11 @@ async function fetchEnrichmentStatus(
     if (row.rooster_checked_at !== null) acc.rooster = true
     if (row.contact_checked_at !== null) acc.contacts = true
     if (row.s_tags_checked_at !== null) acc.stags = true
-    if (row.s_tag_id != null && leadIdsWithStagCheck.has(row.s_tag_id as number)) {
+    // Key on the lead's own id — leadIdsWithStagCheck holds s_tags_table.lead_id
+    // values (the google_lead_gen_table.id space). row.s_tag_id is an FK to
+    // s_tags_table.id (a different sequence), so testing it here only matched on
+    // coincidental id collisions.
+    if (leadIdsWithStagCheck.has(row.id)) {
       acc.stag_check = true
     }
     out.set(jobId, acc)

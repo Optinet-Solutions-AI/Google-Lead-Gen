@@ -37,6 +37,7 @@ import os
 import re
 import sys
 import time
+from html import unescape
 from typing import Any
 from urllib.parse import quote
 
@@ -146,14 +147,19 @@ def enrich_tme(handle: str, surface: str) -> dict[str, Any] | None:
     if not html:
         return None
     title_m = _OG_TITLE_RE.search(html)
-    title = title_m.group(1) if title_m else None
+    title = unescape(title_m.group(1)) if title_m else None
     # No public channel preview → Telegram serves a generic contact page.
     if not title or title.startswith("Telegram: Contact"):
         return None
     desc_m = _OG_DESC_RE.search(html)
-    desc = desc_m.group(1) if desc_m else None
+    desc = unescape(desc_m.group(1)) if desc_m else None
     sub_m = re.search(r"([\d][\d\s.,]*[KMB]?)\s*subscribers", html, re.I)
-    posts = " ".join(_MSG_RE.findall(html))
+    # The t.me/s SEO HTML entity-encodes ampersands, so a posted link like
+    # casino.com/?ref=AB123&btag=xyz arrives as ...&amp;btag=xyz. Unescape
+    # before link extraction or the stored URL keeps '&amp;', which breaks
+    # query-param parsing (the s_tag after the first '&' is lost) and points
+    # the UI chip at a dead URL. The MTProto path gets already-decoded text.
+    posts = unescape(" ".join(_MSG_RE.findall(html)))
 
     links, seen = [], set()
     for u in _links_from_text(desc or ""):
