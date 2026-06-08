@@ -284,14 +284,24 @@ export async function enqueueScrape(
   const when = scheduledAtIso
     ? ` to run at ${new Date(scheduledAtIso).toLocaleString()}`
     : ''
+  // Label every selectable engine (google stays unlabelled as the implicit
+  // default). Without this, queueing a Kick/X/FB/TikTok/Snapchat/Telegram job
+  // produced a toast with no engine indicator.
+  const ENGINE_LABELS: Record<string, string> = {
+    bing: ' on Bing',
+    youtube: ' on YouTube',
+    kick: ' on Kick',
+    x: ' on X',
+    facebook: ' on Facebook',
+    tiktok: ' on TikTok',
+    snapchat: ' on Snapchat',
+    telegram: ' on Telegram',
+    twitch: ' on Twitch',
+  }
   const engineDescription =
     enginesToRun.length === 2
       ? ' on Google + Bing'
-      : enginesToRun[0] === 'bing'
-        ? ' on Bing'
-        : enginesToRun[0] === 'youtube'
-          ? ' on YouTube'
-          : ''
+      : (ENGINE_LABELS[enginesToRun[0] ?? ''] ?? '')
 
   await logActivity({
     action: 'scrape.enqueue',
@@ -1749,11 +1759,13 @@ export async function runXCreatorAnalysis(
     // Monday, OR the @handle itself isn't on Monday (only for likely affiliates).
     const hasNewTag = creatorLinks.some(l => l.is_known_on_monday === false)
     let handleIsNew = false
+    let handleChecked = false
     if (result.isLikelyAffiliate) {
       const handle = (c.username ?? '').replace(/^@/, '').trim()
       if (handle.length >= 2) {
         const known = await checkMonday(handle)
         handleIsNew = !known
+        handleChecked = true
       }
     }
     const isNewCandidate = result.isLikelyAffiliate && (hasNewTag || handleIsNew)
@@ -1762,7 +1774,10 @@ export async function runXCreatorAnalysis(
       is_likely_affiliate: result.isLikelyAffiliate,
       niche_score: result.nicheScore,
       is_new_lead_candidate: isNewCandidate,
-      is_known_on_monday: result.isLikelyAffiliate ? !handleIsNew : null,
+      // Only assert known/unknown when Monday was actually queried — a likely
+      // affiliate with a missing/too-short handle stays null (unknown) rather
+      // than defaulting to "known".
+      is_known_on_monday: result.isLikelyAffiliate && handleChecked ? !handleIsNew : null,
       contact_email: contacts.email,
       telegram_url: contacts.telegram_url,
       discord_url: contacts.discord_url,
@@ -2068,11 +2083,13 @@ export async function runTiktokCreatorAnalysis(
     // Monday, OR the @handle itself isn't on Monday (only for likely affiliates).
     const hasNewTag = creatorLinks.some(l => l.is_known_on_monday === false)
     let handleIsNew = false
+    let handleChecked = false
     if (result.isLikelyAffiliate) {
       const handle = (c.username ?? '').replace(/^@/, '').trim()
       if (handle.length >= 2) {
         const known = await checkMonday(handle)
         handleIsNew = !known
+        handleChecked = true
       }
     }
     const isNewCandidate = result.isLikelyAffiliate && (hasNewTag || handleIsNew)
@@ -2081,7 +2098,10 @@ export async function runTiktokCreatorAnalysis(
       is_likely_affiliate: result.isLikelyAffiliate,
       niche_score: result.nicheScore,
       is_new_lead_candidate: isNewCandidate,
-      is_known_on_monday: result.isLikelyAffiliate ? !handleIsNew : null,
+      // Only assert known/unknown when Monday was actually queried — a likely
+      // affiliate with a missing/too-short handle stays null (unknown) rather
+      // than defaulting to "known".
+      is_known_on_monday: result.isLikelyAffiliate && handleChecked ? !handleIsNew : null,
       contact_email: contacts.email,
       telegram_url: contacts.telegram_url,
       discord_url: contacts.discord_url,
@@ -2266,11 +2286,13 @@ export async function runSnapchatCreatorAnalysis(
 
     const hasNewTag = creatorLinks.some(l => l.is_known_on_monday === false)
     let handleIsNew = false
+    let handleChecked = false
     if (result.isLikelyAffiliate) {
       const handle = (c.username ?? '').replace(/^@/, '').trim()
       if (handle.length >= 2) {
         const known = await checkMonday(handle)
         handleIsNew = !known
+        handleChecked = true
       }
     }
     const isNewCandidate = result.isLikelyAffiliate && (hasNewTag || handleIsNew)
@@ -2279,7 +2301,10 @@ export async function runSnapchatCreatorAnalysis(
       is_likely_affiliate: result.isLikelyAffiliate,
       niche_score: result.nicheScore,
       is_new_lead_candidate: isNewCandidate,
-      is_known_on_monday: result.isLikelyAffiliate ? !handleIsNew : null,
+      // Only assert known/unknown when Monday was actually queried — a likely
+      // affiliate with a missing/too-short handle stays null (unknown) rather
+      // than defaulting to "known".
+      is_known_on_monday: result.isLikelyAffiliate && handleChecked ? !handleIsNew : null,
       contact_email: contacts.email,
       telegram_url: contacts.telegram_url,
       discord_url: contacts.discord_url,
@@ -2464,11 +2489,13 @@ export async function runTelegramChannelAnalysis(
 
     const hasNewTag = channelLinks.some(l => l.is_known_on_monday === false)
     let handleIsNew = false
+    let handleChecked = false
     if (result.isLikelyAffiliate) {
       const handle = (c.username ?? '').replace(/^@/, '').trim()
       if (handle.length >= 2) {
         const known = await checkMonday(handle)
         handleIsNew = !known
+        handleChecked = true
       }
     }
     const isNewCandidate = result.isLikelyAffiliate && (hasNewTag || handleIsNew)
@@ -2477,7 +2504,10 @@ export async function runTelegramChannelAnalysis(
       is_likely_affiliate: result.isLikelyAffiliate,
       niche_score: result.nicheScore,
       is_new_lead_candidate: isNewCandidate,
-      is_known_on_monday: result.isLikelyAffiliate ? !handleIsNew : null,
+      // Only assert known/unknown when Monday was actually queried — a likely
+      // affiliate with a missing/too-short handle stays null (unknown) rather
+      // than defaulting to "known".
+      is_known_on_monday: result.isLikelyAffiliate && handleChecked ? !handleIsNew : null,
       contact_email: contacts.email,
       telegram_url: contacts.telegram_url,
       discord_url: contacts.discord_url,

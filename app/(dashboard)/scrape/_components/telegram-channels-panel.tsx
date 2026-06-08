@@ -9,8 +9,9 @@ const initialState: StageRunState = null
 
 /**
  * Telegram channel panel. Shown only for search_engine='telegram' jobs.
- * Telegram is single-pass (the scrape discovers via lyzem AND enriches each
- * channel via t.me/s in one pure-HTTP run), so — like Snapchat/Facebook — the
+ * Telegram is single-pass (the no-auth default discovers via a built-in
+ * gambling-seed list + @mention snowball AND enriches each channel via t.me/s
+ * in one pure-HTTP run), so — like Snapchat/Facebook — the
  * only operator action is Phase 3:
  *   - Score & check → affiliate scoring + shortener resolution + Monday
  *     new-vs-known (runTelegramChannelAnalysis, runs inline)
@@ -101,8 +102,9 @@ export function TelegramChannelsPanel({
       </div>
 
       <p className="mt-1.5 text-[11px] leading-snug text-[color:var(--color-text-secondary)]">
-        The Telegram scrape discovers channels from a keyword search and captures each channel&apos;s title, description,
-        subscriber count, and the links it posts — in one pure-HTTP pass (it also snowballs through @mentions).{' '}
+        The Telegram scrape discovers channels by crawling a built-in set of gambling channels and snowballing through
+        the @mentions they cross-promote — the keyword is recorded but doesn&apos;t drive discovery in this mode. It
+        captures each channel&apos;s title, description, subscriber count, and the links it posts in one pure-HTTP pass.{' '}
         <strong className="font-medium">Score &amp; check</strong> flags likely casino affiliates (niche score), resolves
         shortener / hub links, mines contacts, and checks each affiliate ID / @handle against Monday. Re-runnable.
       </p>
