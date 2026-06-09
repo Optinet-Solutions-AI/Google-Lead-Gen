@@ -359,13 +359,16 @@ export type YoutubeChannelSummary = {
   likelyAffiliates: number
   /** Likely affiliates carrying ≥1 S-tag not already on Monday. */
   newCandidates: number
+  /** Scored channels with no casino funnel link — slot-gameplay vloggers /
+   *  land-based casino / news. Hidden from the default results view. */
+  notRelevant: number
   inflight: boolean
   inflightStatus: 'pending' | 'running' | null
 }
 
 export async function fetchYoutubeChannelSummary(jobId: string): Promise<YoutubeChannelSummary> {
   const svc = createServiceClient()
-  const [discoveredRes, enrichedRes, captchaRes, scoredRes, affiliateRes, newRes, inflightRes] =
+  const [discoveredRes, enrichedRes, captchaRes, scoredRes, affiliateRes, newRes, notRelevantRes, inflightRes] =
     await Promise.all([
       svc.from('youtube_channels').select('id', { count: 'exact', head: true }).eq('scrape_queue_id', jobId),
       svc
@@ -383,16 +386,26 @@ export async function fetchYoutubeChannelSummary(jobId: string): Promise<Youtube
         .select('id', { count: 'exact', head: true })
         .eq('scrape_queue_id', jobId)
         .not('niche_score', 'is', null),
+      // Affiliate / new-lead counts exclude the no-funnel non-affiliates the
+      // relevance gate flagged — keeps the headline numbers consistent with the
+      // default (relevant-only) results view.
       svc
         .from('youtube_channels')
         .select('id', { count: 'exact', head: true })
         .eq('scrape_queue_id', jobId)
-        .eq('is_likely_affiliate', true),
+        .eq('is_likely_affiliate', true)
+        .not('is_not_relevant', 'is', true),
       svc
         .from('youtube_channels')
         .select('id', { count: 'exact', head: true })
         .eq('scrape_queue_id', jobId)
-        .eq('is_new_lead_candidate', true),
+        .eq('is_new_lead_candidate', true)
+        .not('is_not_relevant', 'is', true),
+      svc
+        .from('youtube_channels')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .eq('is_not_relevant', true),
       svc
         .from('scrape_queue')
         .select('status')
@@ -413,6 +426,7 @@ export async function fetchYoutubeChannelSummary(jobId: string): Promise<Youtube
     scored: scoredRes.count ?? 0,
     likelyAffiliates: affiliateRes.count ?? 0,
     newCandidates: newRes.count ?? 0,
+    notRelevant: notRelevantRes.count ?? 0,
     inflight,
     inflightStatus: inflight ? (running ? 'running' : 'pending') : null,
   }
@@ -441,6 +455,8 @@ export type YoutubeChannelRow = {
   is_likely_affiliate: boolean | null
   niche_score: number | null
   is_new_lead_candidate: boolean | null
+  /** Phase 3 relevance gate: no casino funnel link → hidden from default view. */
+  is_not_relevant: boolean | null
   about_tab_scraped_at: string | null
   about_tab_captcha_blocked: boolean | null
   links: YoutubeChannelLinkRow[]
@@ -456,7 +472,7 @@ export async function fetchYoutubeChannelRows(jobId: string): Promise<YoutubeCha
     .select(
       'id, channel_url, channel_name, channel_handle, subscriber_count, email, website_url, ' +
         'twitter_url, instagram_url, tiktok_url, telegram_url, discord_url, ' +
-        'is_likely_affiliate, niche_score, is_new_lead_candidate, ' +
+        'is_likely_affiliate, niche_score, is_new_lead_candidate, is_not_relevant, ' +
         'about_tab_scraped_at, about_tab_captcha_blocked',
     )
     .eq('scrape_queue_id', jobId)

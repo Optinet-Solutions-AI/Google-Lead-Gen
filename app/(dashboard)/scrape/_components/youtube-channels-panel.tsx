@@ -85,6 +85,17 @@ export function YoutubeChannelsPanel({
               {summary.captchaBlocked > 0 && (
                 <> · <span className="text-amber-700">{summary.captchaBlocked} captcha-blocked</span></>
               )}
+              {summary.notRelevant > 0 && (
+                <>
+                  {' '}·{' '}
+                  <span
+                    className="cursor-help text-[color:var(--color-text-secondary)]"
+                    title="Scored but no casino funnel link — slot-gameplay vloggers, land-based-casino vlogs, news. Not actionable affiliates. Hidden from the results table by default; use “Show all” there to review them."
+                  >
+                    {summary.notRelevant} no-funnel filtered
+                  </span>
+                </>
+              )}
               {summary.scored > 0 && (
                 <> · <span className="font-medium text-blue-700">{summary.likelyAffiliates} likely affiliate{summary.likelyAffiliates === 1 ? '' : 's'}</span></>
               )}

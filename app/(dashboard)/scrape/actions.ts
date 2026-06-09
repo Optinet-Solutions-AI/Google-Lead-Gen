@@ -1384,6 +1384,7 @@ export async function runYoutubeChannelAnalysis(
 
     const update: Record<string, unknown> = {
       is_likely_affiliate: result.isLikelyAffiliate,
+      is_not_relevant: result.isNotRelevant,
       niche_score: result.nicheScore,
       is_new_lead_candidate: result.isLikelyAffiliate && (hasNewTag || channelIsNew),
     }

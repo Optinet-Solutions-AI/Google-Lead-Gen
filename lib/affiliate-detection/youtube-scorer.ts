@@ -34,14 +34,14 @@ export type YoutubeScoreLink = {
 
 export type YoutubeScoreResult = {
   isLikelyAffiliate: boolean
+  /** No outbound casino affiliate link → slot-gameplay vlogger / land-based
+   *  casino channel / news, not an actionable affiliate. Hidden from the
+   *  default results view (a "Show all" toggle reveals it). */
+  isNotRelevant: boolean
   /** 0–100, two decimals — fits youtube_channels.niche_score numeric(5,2). */
   nicheScore: number
   indicators: string[]
 }
-
-/** niche_score at/above which a channel is flagged an affiliate even
- *  without a directly-classified casino affiliate link. */
-const AFFILIATE_THRESHOLD = 30
 
 export function scoreYoutubeChannel(
   channel: YoutubeScoreChannel,
@@ -104,9 +104,20 @@ export function scoreYoutubeChannel(
   }
 
   const nicheScore = Math.min(Math.round(score * 100) / 100, 100)
-  // Affiliate if it links to a casino at all, OR clears the threshold on the
-  // softer signals (name + keywords + a resolved promo destination).
-  const isLikelyAffiliate = casinoHosts.size > 0 || nicheScore >= AFFILIATE_THRESHOLD
 
-  return { isLikelyAffiliate, nicheScore, indicators }
+  // Relevance gate (Darren 2026-06-09: ~90% of AU "pokies big win"-style
+  // scrapes are slot-gameplay vloggers / land-based-casino vlogs / even a news
+  // program — irrelevant). YouTube's twist vs TikTok: gambling/slots GAMEPLAY
+  // content is allowed and EVERYWHERE here, so a gambling name/keywords/bonus-
+  // language signal is NOT evidence of an affiliate — every pokie vlogger trips
+  // it (and used to clear the old soft 30-point threshold with zero links). The
+  // only actionable tell of a casino affiliate is an outbound casino affiliate
+  // FUNNEL link in the channel / video descriptions. No such link → content,
+  // not a lead → not relevant (hidden by default; "Show all" reveals it, and
+  // niche_score is still kept so the soft signals rank within the full set).
+  const hasCasinoFunnel = casinoHosts.size > 0
+  const isLikelyAffiliate = hasCasinoFunnel
+  const isNotRelevant = !hasCasinoFunnel
+
+  return { isLikelyAffiliate, isNotRelevant, nicheScore, indicators }
 }

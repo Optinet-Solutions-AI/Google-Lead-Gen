@@ -1,17 +1,85 @@
-import type { ReactNode } from 'react'
-import { CheckCircle2, ExternalLink, Globe, Mail, MessageCircle, Send, ShieldAlert, Sparkles } from 'lucide-react'
+'use client'
+
+import { useState, type ReactNode } from 'react'
+import { CheckCircle2, ExternalLink, Eye, Filter, Globe, Mail, MessageCircle, Send, ShieldAlert, Sparkles } from 'lucide-react'
 import type { YoutubeChannelRow } from '../_lib/queries'
 
 /**
  * Per-channel results table for YouTube jobs (Phase 3). New-lead candidates
  * first, showing the niche score, subscribers, contacts, socials, and the
  * affiliate S-tags mined from video descriptions (with a new/known badge per
- * tag). Server component — pure render, no interactivity. Mirrors
- * KickStreamersTable.
+ * tag). Mirrors KickStreamersTable / TiktokCreatorsTable.
+ *
+ * Relevance filter (Darren 2026-06-09): YouTube pokie/slot-keyword scrapes
+ * surface ~90% irrelevant channels — gameplay vloggers, land-based-casino
+ * vlogs, even a news program. By default the table shows only the relevant
+ * rows: once scoring has run, the likely affiliates (a casino funnel link is
+ * the only actionable tell on YouTube), hiding both the no-funnel non-affiliates
+ * (is_not_relevant) and scored non-affiliates. A "Show all" toggle reveals the
+ * full discovery set. Client component for the toggle.
  */
 export function YoutubeChannelsTable({ rows }: { rows: YoutubeChannelRow[] }) {
+  const [showAll, setShowAll] = useState(false)
   if (rows.length === 0) return null
 
+  const anyScored = rows.some(r => r.niche_score != null)
+  // Default ("relevant only"): drop the no-funnel non-affiliates, and — once
+  // scoring has run — keep only the likely affiliates. Before scoring there are
+  // no affiliate flags yet, so we keep everything (the discovery set can't be
+  // relevance-judged until "Score & check" runs).
+  const relevant = rows.filter(r => {
+    if (r.is_not_relevant) return false
+    if (anyScored) return r.is_likely_affiliate === true
+    return true
+  })
+  const visible = showAll ? rows : relevant
+  const hidden = rows.length - relevant.length
+
+  return (
+    <div className="space-y-2">
+      {hidden > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-[color:var(--color-text-secondary)]">
+          <span>
+            Showing <span className="font-medium text-[color:var(--color-text-primary)]">{visible.length}</span> of{' '}
+            {rows.length} discovered ·{' '}
+            {showAll
+              ? `${hidden} hidden in the relevant view (no-funnel gameplay / land-based / non-affiliates)`
+              : `${hidden} hidden (no-funnel gameplay / land-based${anyScored ? ' / non-affiliates' : ''})`}
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowAll(v => !v)}
+            className="inline-flex items-center gap-1 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2 py-0.5 text-[11px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)]"
+          >
+            {showAll ? (
+              <>
+                <Filter className="h-3 w-3" /> Relevant only
+              </>
+            ) : (
+              <>
+                <Eye className="h-3 w-3" /> Show all {rows.length}
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {visible.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-[color:var(--color-border)] px-3 py-4 text-[12px] text-[color:var(--color-text-secondary)]">
+          {anyScored ? (
+            <>No likely affiliates among the {rows.length} discovered channel{rows.length === 1 ? '' : 's'} — YouTube pokie/slot-keyword scrapes mostly surface gameplay vloggers &amp; land-based-casino channels with no casino funnel link. Use <strong>Show all</strong> above to review the full set.</>
+          ) : (
+            <>The {rows.length} discovered channel{rows.length === 1 ? '' : 's'} {rows.length === 1 ? 'is' : 'are'} not scored yet — run <strong>Enrich contacts</strong> then <strong>Score &amp; check</strong> to flag affiliates. Use <strong>Show all</strong> to review them now.</>
+          )}
+        </div>
+      ) : (
+        <YoutubeTable rows={visible} />
+      )}
+    </div>
+  )
+}
+
+function YoutubeTable({ rows }: { rows: YoutubeChannelRow[] }) {
   return (
     <div className="rounded-lg border border-[color:var(--color-border)]">
       <table className="w-full border-collapse text-[12px]">
