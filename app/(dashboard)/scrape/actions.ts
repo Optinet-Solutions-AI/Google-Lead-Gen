@@ -2300,6 +2300,7 @@ export async function runSnapchatCreatorAnalysis(
 
     const update: Record<string, unknown> = {
       is_likely_affiliate: result.isLikelyAffiliate,
+      is_not_relevant: result.isNotRelevant,
       niche_score: result.nicheScore,
       is_new_lead_candidate: isNewCandidate,
       // Only assert known/unknown when Monday was actually queried — a likely

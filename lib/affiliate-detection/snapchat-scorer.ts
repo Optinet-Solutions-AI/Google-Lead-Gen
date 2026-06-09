@@ -29,12 +29,14 @@ export type SnapchatScoreLink = {
 
 export type SnapchatScoreResult = {
   isLikelyAffiliate: boolean
+  /** No outbound affiliate funnel link in the bio → a lifestyle / land-based /
+   *  slot-gameplay account, not an actionable affiliate. Hidden from the
+   *  default results view (a "Show all" toggle reveals it). */
+  isNotRelevant: boolean
   /** 0–100, two decimals — fits snapchat_creators.niche_score numeric(5,2). */
   nicheScore: number
   indicators: string[]
 }
-
-const AFFILIATE_THRESHOLD = 30
 
 const NAME_GAMBLING_RE = /casino|slots?|pokies?|gambl|\bbet(ting)?\b|roulette|blackjack|poker|jackpot|wager|stake|bonus/i
 
@@ -133,12 +135,25 @@ export function scoreSnapchatCreator(
   }
 
   const nicheScore = Math.min(Math.round(score * 100) / 100, 100)
-  const isLikelyAffiliate =
+
+  // Relevance gate (Darren 2026-06-09 "Snapchat - Leads Relevance": the AU/DE
+  // casino scrapes surfaced 35/26 creators — a university, hotels, Ford, travel
+  // / lifestyle vloggers, slot-gameplay accounts — none affiliates). Snapchat's
+  // only actionable affiliate tell is an outbound FUNNEL in the bio link: a
+  // classified casino host, a link hub / shortener alongside gambling context,
+  // or an affiliate referral code in the link path. A gambling-flavoured name
+  // or bio keywords WITHOUT such a link is content, not a lead — it used to
+  // clear the old soft 30-point threshold (e.g. @rajaslots, a slot-gameplay
+  // site, with zero funnel) and flood the results. No funnel → not relevant
+  // (hidden by default; "Show all" reveals it, and niche_score is still kept so
+  // the soft signals rank within the full set).
+  const hasFunnelLink =
     casinoHosts.size > 0 ||
     (hubHosts.size > 0 && hasGamblingContext) ||
     (shortenerHit && hasGamblingContext) ||
-    affiliatePathHit ||
-    nicheScore >= AFFILIATE_THRESHOLD
+    affiliatePathHit
+  const isLikelyAffiliate = hasFunnelLink
+  const isNotRelevant = !hasFunnelLink
 
-  return { isLikelyAffiliate, nicheScore, indicators }
+  return { isLikelyAffiliate, isNotRelevant, nicheScore, indicators }
 }

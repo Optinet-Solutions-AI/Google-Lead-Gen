@@ -1,18 +1,86 @@
-import type { ReactNode } from 'react'
-import { BadgeCheck, CheckCircle2, ExternalLink, Mail, MessageCircle, Send, Sparkles } from 'lucide-react'
+'use client'
+
+import { useState, type ReactNode } from 'react'
+import { BadgeCheck, CheckCircle2, Eye, ExternalLink, Filter, Mail, MessageCircle, Send, Sparkles } from 'lucide-react'
 import type { SnapchatCreatorRow } from '../_lib/queries'
 
 /**
  * Per-creator results table for Snapchat jobs (Phase 3). New lead candidates
  * first, then affiliates, showing the niche score + NEW badge, subscriber
  * count, contacts (email › Telegram › Discord, mined from the bio), and the
- * bio-link funnel that drove the flag. Server component.
+ * bio-link funnel that drove the flag.
  *
- * Sibling of tiktok-creators-table.tsx.
+ * Relevance filter (Darren 2026-06-09 "Snapchat - Leads Relevance"): casino
+ * keyword scrapes surface mostly irrelevant accounts — lifestyle / land-based /
+ * slot-gameplay creators with no affiliate funnel link. By default the table
+ * shows only the relevant rows: once scoring has run, the likely affiliates (an
+ * affiliate funnel link in the bio is the only actionable tell), hiding both
+ * the no-funnel non-affiliates (is_not_relevant) and scored non-affiliates. A
+ * "Show all" toggle reveals the full discovery set. Mirrors
+ * YoutubeChannelsTable / TiktokCreatorsTable. Client component for the toggle.
  */
 export function SnapchatCreatorsTable({ rows }: { rows: SnapchatCreatorRow[] }) {
+  const [showAll, setShowAll] = useState(false)
   if (rows.length === 0) return null
 
+  const anyScored = rows.some(r => r.niche_score != null)
+  // Default ("relevant only"): drop the no-funnel non-affiliates, and — once
+  // scoring has run — keep only the likely affiliates. Before scoring there are
+  // no affiliate flags yet, so we keep everything (the discovery set can't be
+  // relevance-judged until "Score & check" runs).
+  const relevant = rows.filter(r => {
+    if (r.is_not_relevant) return false
+    if (anyScored) return r.is_likely_affiliate === true
+    return true
+  })
+  const visible = showAll ? rows : relevant
+  const hidden = rows.length - relevant.length
+
+  return (
+    <div className="space-y-2">
+      {hidden > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-[color:var(--color-text-secondary)]">
+          <span>
+            Showing <span className="font-medium text-[color:var(--color-text-primary)]">{visible.length}</span> of{' '}
+            {rows.length} discovered ·{' '}
+            {showAll
+              ? `${hidden} hidden in the relevant view (no-funnel lifestyle / land-based / non-affiliates)`
+              : `${hidden} hidden (no-funnel lifestyle / land-based${anyScored ? ' / non-affiliates' : ''})`}
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowAll(v => !v)}
+            className="inline-flex items-center gap-1 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2 py-0.5 text-[11px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)]"
+          >
+            {showAll ? (
+              <>
+                <Filter className="h-3 w-3" /> Relevant only
+              </>
+            ) : (
+              <>
+                <Eye className="h-3 w-3" /> Show all {rows.length}
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {visible.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-[color:var(--color-border)] px-3 py-4 text-[12px] text-[color:var(--color-text-secondary)]">
+          {anyScored ? (
+            <>No likely affiliates among the {rows.length} discovered creator{rows.length === 1 ? '' : 's'} — Snapchat casino-keyword scrapes mostly surface lifestyle, land-based &amp; slot-gameplay accounts with no affiliate funnel link. Use <strong>Show all</strong> above to review the full set.</>
+          ) : (
+            <>The {rows.length} discovered creator{rows.length === 1 ? '' : 's'} {rows.length === 1 ? 'is' : 'are'} not scored yet — run <strong>Score &amp; check</strong> to flag affiliates. Use <strong>Show all</strong> to review them now.</>
+          )}
+        </div>
+      ) : (
+        <SnapchatTable rows={visible} />
+      )}
+    </div>
+  )
+}
+
+function SnapchatTable({ rows }: { rows: SnapchatCreatorRow[] }) {
   return (
     <div className="rounded-lg border border-[color:var(--color-border)]">
       <table className="w-full border-collapse text-[12px]">
@@ -21,7 +89,7 @@ export function SnapchatCreatorsTable({ rows }: { rows: SnapchatCreatorRow[] }) 
             <th className="px-3 py-2 font-medium">Creator</th>
             <th
               className="cursor-help px-3 py-2 font-medium"
-              title="Affiliate likelihood + niche score (0–100). “affiliate” = scored ≥30 (or links a casino directly). NEW = a likely affiliate whose affiliate ID / @handle isn’t on Monday yet. Hover a badge for the breakdown."
+              title="Affiliate likelihood + niche score (0–100). “affiliate” = the bio link is an affiliate funnel (a casino host, or a link hub / shortener / referral-code link with gambling context) — the only actionable tell on Snapchat. NEW = a likely affiliate whose affiliate ID / @handle isn’t on Monday yet. Hover a badge for the breakdown."
             >
               Affiliate
             </th>
@@ -76,14 +144,14 @@ function SnapchatCreatorRowView({ r }: { r: SnapchatCreatorRow }) {
             {r.is_likely_affiliate ? (
               <span
                 className="inline-flex cursor-help items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800"
-                title={`Likely casino affiliate. Niche score ${niche}/100 (≥30 is flagged). Built from the bio link (hub / shortener / casino), gambling keywords in the bio, and a gambling-flavoured name — higher = stronger signal.`}
+                title={`Likely casino affiliate — the bio link is an affiliate funnel (casino host, or a link hub / shortener / referral-code link with gambling context). Niche score ${niche}/100 ranks the soft signals (bio keywords, gambling-flavoured name) — higher = stronger.`}
               >
                 <CheckCircle2 className="h-3 w-3" /> affiliate · {niche}
               </span>
             ) : (
               <span
                 className="cursor-help rounded-full bg-[color:var(--color-bg-secondary)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]"
-                title={`Not flagged as an affiliate. Niche score ${niche}/100 (below the 30 threshold).`}
+                title={`Not flagged as an affiliate — no affiliate funnel link in the bio. Niche score ${niche}/100 reflects soft signals only (bio keywords / gambling-flavoured name).`}
               >
                 no · {niche}
               </span>

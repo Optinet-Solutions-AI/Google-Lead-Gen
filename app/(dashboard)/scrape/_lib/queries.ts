@@ -952,27 +952,40 @@ export type SnapchatCreatorSummary = {
   likelyAffiliates: number
   /** Likely affiliates with an unknown S-tag/operator or @handle not on Monday. */
   newCandidates: number
+  /** Scored creators with no affiliate funnel link — lifestyle / land-based /
+   *  slot-gameplay non-affiliates. Hidden from the default results view. */
+  notRelevant: number
 }
 
 export async function fetchSnapchatCreatorSummary(jobId: string): Promise<SnapchatCreatorSummary> {
   const svc = createServiceClient()
-  const [discoveredRes, scoredRes, affiliateRes, newRes] = await Promise.all([
+  const [discoveredRes, scoredRes, affiliateRes, newRes, notRelevantRes] = await Promise.all([
     svc.from('snapchat_creators').select('id', { count: 'exact', head: true }).eq('scrape_queue_id', jobId),
     svc
       .from('snapchat_creators')
       .select('id', { count: 'exact', head: true })
       .eq('scrape_queue_id', jobId)
       .not('niche_score', 'is', null),
+    // Affiliate / new-lead counts exclude the no-funnel non-affiliates the
+    // relevance gate flagged — keeps the headline numbers consistent with the
+    // default (relevant-only) results view.
     svc
       .from('snapchat_creators')
       .select('id', { count: 'exact', head: true })
       .eq('scrape_queue_id', jobId)
-      .eq('is_likely_affiliate', true),
+      .eq('is_likely_affiliate', true)
+      .not('is_not_relevant', 'is', true),
     svc
       .from('snapchat_creators')
       .select('id', { count: 'exact', head: true })
       .eq('scrape_queue_id', jobId)
-      .eq('is_new_lead_candidate', true),
+      .eq('is_new_lead_candidate', true)
+      .not('is_not_relevant', 'is', true),
+    svc
+      .from('snapchat_creators')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .eq('is_not_relevant', true),
   ])
 
   const discovered = discoveredRes.count ?? 0
@@ -983,6 +996,7 @@ export async function fetchSnapchatCreatorSummary(jobId: string): Promise<Snapch
     unscored: Math.max(0, discovered - scored),
     likelyAffiliates: affiliateRes.count ?? 0,
     newCandidates: newRes.count ?? 0,
+    notRelevant: notRelevantRes.count ?? 0,
   }
 }
 
@@ -1009,6 +1023,8 @@ export type SnapchatCreatorRow = {
   is_likely_affiliate: boolean | null
   niche_score: number | null
   is_new_lead_candidate: boolean | null
+  /** Phase 3 relevance gate: no affiliate funnel link → hidden from default view. */
+  is_not_relevant: boolean | null
   links: SnapchatLinkRow[]
 }
 
@@ -1022,7 +1038,7 @@ export async function fetchSnapchatCreatorRows(jobId: string): Promise<SnapchatC
     .select(
       'id, username, profile_url, display_name, bio, bio_link, subscriber_count, is_snap_star, ' +
         'contact_email, telegram_url, discord_url, ' +
-        'is_likely_affiliate, niche_score, is_new_lead_candidate',
+        'is_likely_affiliate, niche_score, is_new_lead_candidate, is_not_relevant',
     )
     .eq('scrape_queue_id', jobId)
   if (error) throw error

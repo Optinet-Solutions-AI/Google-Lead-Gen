@@ -54,6 +54,17 @@ export function SnapchatCreatorsPanel({
           ) : (
             <>
               {summary.discovered} discovered
+              {summary.notRelevant > 0 && (
+                <>
+                  {' '}·{' '}
+                  <span
+                    className="cursor-help text-[color:var(--color-text-secondary)]"
+                    title="Scored but no affiliate funnel link — lifestyle / land-based / slot-gameplay accounts, not actionable affiliates. Hidden from the results table by default; use “Show all” there to review them."
+                  >
+                    {summary.notRelevant} no-funnel filtered
+                  </span>
+                </>
+              )}
               {summary.scored > 0 && (
                 <> · <span className="font-medium text-blue-700">{summary.likelyAffiliates} likely affiliate{summary.likelyAffiliates === 1 ? '' : 's'}</span></>
               )}
