@@ -190,7 +190,10 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
             {/* <option value="twitch">Twitch</option> */}
             <option value="kick">Kick</option>
             <option value="youtube">YouTube</option>
-            <option value="x">X (Twitter)</option>
+            {/* X (Twitter) temporarily hidden — login rate-limited, pending
+                Enigma resi-proxy routing. DB enum + server-side dispatch still
+                accept 'x'; this only gates new job creation from the UI. */}
+            {/* <option value="x">X (Twitter)</option> */}
             <option value="facebook">Facebook (Ad Library)</option>
             <option value="tiktok">TikTok</option>
             <option value="snapchat">Snapchat</option>
