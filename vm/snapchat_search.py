@@ -50,6 +50,14 @@ UA = (
 SNAP_TIMEOUT_S = int(os.environ.get("SNAP_HTTP_TIMEOUT_SECONDS", "20"))
 SNAP_PROFILE_DELAY_S = float(os.environ.get("SNAP_PROFILE_DELAY_SECONDS", "0.5"))
 
+# Snapchat's edge (Akamai) returns HTTP 403 for any /explore/{path} whose
+# URL-encoded segment exceeds 50 chars. Non-ASCII keywords hit this almost
+# immediately — each Arabic letter encodes to 6 chars (e.g. %D9%83) — so a
+# 2-word Arabic query is already well over the limit and hard-403s every time
+# (verified 2026-06-09: 50 url-chars → 200, 51 → 403). We trim over-length
+# keywords to the longest word-boundary prefix that fits before fetching.
+SNAP_EXPLORE_PATH_LIMIT = int(os.environ.get("SNAP_EXPLORE_PATH_LIMIT", "50"))
+
 # Snapchat system / non-creator handles to skip when harvesting the explore page.
 _SYS_HANDLES = {
     "snapchat", "team.snapchat", "snap", "snapchatsupport", "snapads",
@@ -103,8 +111,33 @@ def _collect_fields(obj: Any, targets: set[str], out: dict[str, Any]) -> None:
             _collect_fields(v, targets, out)
 
 
+def fit_explore_keyword(keyword: str) -> str:
+    """Trim `keyword` so its URL-encoded form fits Snapchat's 50-char explore
+    path limit (see SNAP_EXPLORE_PATH_LIMIT). Returns the longest leading
+    word-boundary prefix that fits; if even the first word is over the limit,
+    falls back to a hard character cut of that word."""
+    if len(quote(keyword)) <= SNAP_EXPLORE_PATH_LIMIT:
+        return keyword
+    words = keyword.split()
+    acc: list[str] = []
+    for w in words:
+        cand = " ".join(acc + [w])
+        if len(quote(cand)) > SNAP_EXPLORE_PATH_LIMIT:
+            break
+        acc.append(w)
+    if acc:
+        return " ".join(acc)
+    # Even the first word is too long on its own — cut it down char by char.
+    first = words[0] if words else keyword
+    while first and len(quote(first)) > SNAP_EXPLORE_PATH_LIMIT:
+        first = first[:-1]
+    return first
+
+
 def discover_handles(keyword: str, max_results: int) -> list[str]:
-    """Harvest unique creator handles from the explore page for `keyword`."""
+    """Harvest unique creator handles from the explore page for `keyword`.
+    `keyword` is expected to already be within the explore path limit (see
+    fit_explore_keyword) — main() trims it before calling here."""
     html = _fetch(f"{SNAP_BASE}/explore/{quote(keyword)}")
     if not html:
         return []
@@ -236,12 +269,24 @@ def main() -> None:
     language = (args.language or "en").strip().lower() or "en"
     print(f"[INFO] Snapchat search | keyword={args.keyword!r} maxResults={args.max_results} job={args.job_id[:8]}")
 
-    handles = discover_handles(args.keyword, args.max_results)
+    # Snapchat's explore page 403s on URL-encoded keywords over 50 chars, so
+    # search a trimmed term that fits. The original keyword is still recorded
+    # as discovered_from_keyword for traceability.
+    search_kw = fit_explore_keyword(args.keyword)
+    if search_kw != args.keyword:
+        print(f"[INFO] keyword too long for Snapchat explore "
+              f"({len(quote(args.keyword))} > {SNAP_EXPLORE_PATH_LIMIT} url-chars) — "
+              f"searching trimmed term {search_kw!r}")
+
+    handles = discover_handles(search_kw, args.max_results)
     if not handles:
         print("[WARN] explore page returned no creator handles (unreachable or empty)")
         # Distinguish a genuinely-empty result from an unreachable page: if the
-        # explore fetch itself failed, that's a hard error worth a retry.
-        if _fetch(f"{SNAP_BASE}/explore/{quote(args.keyword)}") is None:
+        # explore fetch itself failed, that's a hard error worth a retry. Emit a
+        # distinctive marker so the worker can classify it instead of falling
+        # back to the unhelpful "no specific cause detected" message.
+        if _fetch(f"{SNAP_BASE}/explore/{quote(search_kw)}") is None:
+            print("[ERROR] Snapchat explore page was unreachable or edge-blocked (HTTP non-200)", file=sys.stderr)
             print("[RESULT] FAILED")
             sys.exit(2)
         _write_summary(args.output, args.keyword, language, 0)

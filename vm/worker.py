@@ -346,6 +346,14 @@ _FAILURE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
                 r"|GL Driver Message|gpu_init|skia.*gpu", re.I),
      "Browser closed unexpectedly during the scrape. Auto-retry will run."),
 
+    # ---- Snapchat explore edge-block (HTTP 403 / unreachable) ----
+    # Snapchat's CDN 403s any /explore/{kw} path over 50 url-chars. The scraper
+    # auto-trims long keywords to fit, so reaching this means a genuine reach
+    # failure rather than the over-length case — make it actionable instead of
+    # letting it fall through to "no specific cause detected".
+    (re.compile(r"Snapchat explore page was unreachable or edge-blocked", re.I),
+     "Couldn't reach Snapchat's explore page (unreachable or edge-blocked). It auto-retries; if it persists, try a shorter keyword (one or two short words) and re-queue."),
+
     # ---- Sign-up / consent walls (Chris's meeting concern) ----
     (re.compile(r"sign[- ]?up|create.*account|consent.*wall|join now", re.I),
      "Search engine showed a sign-up wall — browser refresh didn't clear it."),
