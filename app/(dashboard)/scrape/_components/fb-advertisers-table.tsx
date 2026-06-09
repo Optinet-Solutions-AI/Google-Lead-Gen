@@ -8,9 +8,14 @@ import type { FbAdvertiserRow } from '../_lib/queries'
  * active-ad count, contacts mined from the ad copy, the Page website, and the
  * ad landing/CTA affiliate links that drove the flag. Server component.
  *
- * Sibling of x-creators-table.tsx. The Page link points at the Page's public
- * Ad Library view (page_url), not facebook.com/{vanity}, so the operator lands
- * straight on the ads.
+ * Sibling of x-creators-table.tsx. The Advertiser link points at the Page's
+ * Ad Library view (…/ads/library/?view_all_page_id={page_id}) whenever we have
+ * the numeric page id, NOT facebook.com/{vanity}. The bare FB profile is
+ * login-walled and often shows "This content isn't available" or an empty
+ * shell — these are thin ad-only Pages whose gambling content lives in their
+ * ads, not on the profile (the cause of the "does not exist / no gambling
+ * content" QA feedback). The Ad Library view shows those ads even when the
+ * profile is restricted. Vanity-only Pages (no page_id) fall back to page_url.
  */
 export function FbAdvertisersTable({ rows }: { rows: FbAdvertiserRow[] }) {
   if (rows.length === 0) return null
@@ -58,9 +63,14 @@ function FbAdvertiserRowView({ r, n }: { r: FbAdvertiserRow; n: number }) {
       <td className="px-3 py-2 text-right tabular-nums text-[color:var(--color-text-secondary)]">{n}</td>
       <td className="px-3 py-2">
         <a
-          href={r.page_url}
+          href={advertiserAdLibraryHref(r)}
           target="_blank"
           rel="noreferrer"
+          title={
+            r.page_id
+              ? "Opens this advertiser's ads in the Ad Library — these thin Pages often show nothing on the profile, but their gambling ads live here."
+              : r.page_url
+          }
           className="inline-flex items-center gap-1 font-medium text-[color:var(--color-text-primary)] hover:underline"
         >
           {r.page_name}
@@ -256,6 +266,21 @@ function LinkChip({ href, label, isNew }: { href: string; label: string; isNew?:
       <span className="truncate">{label}</span>
     </a>
   )
+}
+
+/** Where the Advertiser name links. Prefer the Ad Library "see all ads from
+ *  this advertiser" view (view_all_page_id) when we have the numeric page id —
+ *  that's where a thin ad-only Page's gambling ads are visible, even when the
+ *  public facebook.com/{id} profile is login-walled or empty. Fall back to the
+ *  stored page_url for vanity-only Pages we couldn't pin a numeric id to. */
+function advertiserAdLibraryHref(r: FbAdvertiserRow): string {
+  if (r.page_id && /^\d+$/.test(r.page_id)) {
+    return (
+      'https://www.facebook.com/ads/library/?active_status=all&ad_type=all' +
+      `&country=ALL&view_all_page_id=${r.page_id}`
+    )
+  }
+  return r.page_url
 }
 
 function hostLabel(url: string): string {

@@ -163,10 +163,18 @@ function findCards(){
       if (nm && (nm.length > 100 || /https?:\/\//i.test(nm))) nm = null;
       // A purely-numeric slug (>=5 digits) is the page's numeric id.
       const pid = /^\d{5,}$/.test(slug) ? slug : null;
+      // When we have the numeric page id, point page_url at the Ad Library
+      // "see all ads from this advertiser" view (same as the primary signal
+      // above) — not facebook.com/{id}, which is login-walled and shows "This
+      // content isn't available" for these thin ad-only Pages. The advertiser's
+      // gambling ads are visible in the Ad Library view even when the profile
+      // isn't. Vanity-only slugs (no numeric id) keep the profile URL.
       cards.set(card, {
         page_id: pid,
         page_name: nm,
-        page_url: 'https://www.facebook.com/' + slug,
+        page_url: pid
+          ? 'https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&view_all_page_id=' + pid
+          : 'https://www.facebook.com/' + slug,
       });
     }
   }
