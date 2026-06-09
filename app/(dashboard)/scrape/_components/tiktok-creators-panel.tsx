@@ -90,6 +90,17 @@ export function TiktokCreatorsPanel({
               {summary.failed > 0 && (
                 <> · <span className="text-red-600">{summary.failed} failed</span></>
               )}
+              {summary.notRelevant > 0 && (
+                <>
+                  {' '}·{' '}
+                  <span
+                    className="cursor-help text-[color:var(--color-text-secondary)]"
+                    title="Enriched but no funnel link — name-squatters (accounts named “casino” that post nothing casino-related). Hidden from the results table by default; use “Show all” there to review them."
+                  >
+                    {summary.notRelevant} no-funnel filtered
+                  </span>
+                </>
+              )}
               {summary.scored > 0 && (
                 <> · <span className="font-medium text-blue-700">{summary.likelyAffiliates} likely affiliate{summary.likelyAffiliates === 1 ? '' : 's'}</span></>
               )}

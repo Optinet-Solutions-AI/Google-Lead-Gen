@@ -659,13 +659,16 @@ export type TiktokCreatorSummary = {
   likelyAffiliates: number
   /** Likely affiliates with an unknown S-tag/operator or @handle not on Monday. */
   newCandidates: number
+  /** Enriched creators with no funnel link — name-squatters the Phase 2 gate
+   *  flagged not-relevant. Hidden from the default results view. */
+  notRelevant: number
   inflight: boolean
   inflightStatus: 'pending' | 'running' | null
 }
 
 export async function fetchTiktokCreatorSummary(jobId: string): Promise<TiktokCreatorSummary> {
   const svc = createServiceClient()
-  const [discoveredRes, enrichedRes, failedRes, scoredRes, affiliateRes, newRes, inflightRes] =
+  const [discoveredRes, enrichedRes, failedRes, scoredRes, affiliateRes, newRes, notRelevantRes, inflightRes] =
     await Promise.all([
       svc.from('tiktok_creators').select('id', { count: 'exact', head: true }).eq('scrape_queue_id', jobId),
       svc
@@ -683,16 +686,26 @@ export async function fetchTiktokCreatorSummary(jobId: string): Promise<TiktokCr
         .select('id', { count: 'exact', head: true })
         .eq('scrape_queue_id', jobId)
         .not('niche_score', 'is', null),
+      // Affiliate / new-lead counts exclude the no-funnel name-squatters the
+      // Phase 2 gate flagged — keeps the headline numbers consistent with the
+      // default (relevant-only) results view.
       svc
         .from('tiktok_creators')
         .select('id', { count: 'exact', head: true })
         .eq('scrape_queue_id', jobId)
-        .eq('is_likely_affiliate', true),
+        .eq('is_likely_affiliate', true)
+        .not('is_not_relevant', 'is', true),
       svc
         .from('tiktok_creators')
         .select('id', { count: 'exact', head: true })
         .eq('scrape_queue_id', jobId)
-        .eq('is_new_lead_candidate', true),
+        .eq('is_new_lead_candidate', true)
+        .not('is_not_relevant', 'is', true),
+      svc
+        .from('tiktok_creators')
+        .select('id', { count: 'exact', head: true })
+        .eq('scrape_queue_id', jobId)
+        .eq('is_not_relevant', true),
       svc
         .from('scrape_queue')
         .select('status')
@@ -717,6 +730,7 @@ export async function fetchTiktokCreatorSummary(jobId: string): Promise<TiktokCr
     scored: scoredRes.count ?? 0,
     likelyAffiliates: affiliateRes.count ?? 0,
     newCandidates: newRes.count ?? 0,
+    notRelevant: notRelevantRes.count ?? 0,
     inflight,
     inflightStatus: inflight ? (running ? 'running' : 'pending') : null,
   }
@@ -745,6 +759,8 @@ export type TiktokCreatorRow = {
   is_likely_affiliate: boolean | null
   niche_score: number | null
   is_new_lead_candidate: boolean | null
+  /** Phase 2 gate: no funnel link → name-squatter, hidden from default view. */
+  is_not_relevant: boolean | null
   about_scraped_at: string | null
   links: TiktokLinkRow[]
 }
@@ -759,7 +775,7 @@ export async function fetchTiktokCreatorRows(jobId: string): Promise<TiktokCreat
     .select(
       'id, username, profile_url, display_name, bio, bio_link, follower_count, verified, ' +
         'contact_email, telegram_url, discord_url, ' +
-        'is_likely_affiliate, niche_score, is_new_lead_candidate, about_scraped_at',
+        'is_likely_affiliate, niche_score, is_new_lead_candidate, is_not_relevant, about_scraped_at',
     )
     .eq('scrape_queue_id', jobId)
   if (error) throw error

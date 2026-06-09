@@ -219,6 +219,18 @@ def enrich_one(driver, username: str) -> dict[str, Any]:
         print(f"[WARN] {username}: profile did not hydrate (no follower count)", file=sys.stderr)
         return {"ok": False, "fields": {}, "links": []}
 
+    # Relevance gate (Andrei 2026-06-09): on TikTok gambling content is banned,
+    # so a genuine casino affiliate's only tell is the bio-link funnel. An
+    # enriched account with NO outbound link at all (no bio link, no caption
+    # URL) can't be an actionable affiliate lead regardless of a "casino"-
+    # flavoured name — the name-squatters Andrei flagged (a dog named "Casino",
+    # a 1-video "Casino Online"). Flag them is_not_relevant so they're hidden
+    # from the default results view. Keep-uncertain: any link → left relevant
+    # for Phase 3 scoring to judge.
+    fields["is_not_relevant"] = len(links) == 0
+    if fields["is_not_relevant"]:
+        print(f"[INFO] {username}: no funnel link — flagged not-relevant", file=sys.stderr)
+
     return {"ok": True, "fields": fields, "links": links}
 
 

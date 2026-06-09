@@ -1,19 +1,86 @@
-import type { ReactNode } from 'react'
-import { BadgeCheck, CheckCircle2, ExternalLink, Mail, MessageCircle, Send, Sparkles } from 'lucide-react'
+'use client'
+
+import { useState, type ReactNode } from 'react'
+import { BadgeCheck, CheckCircle2, ExternalLink, Eye, Filter, Mail, MessageCircle, Send, Sparkles } from 'lucide-react'
 import type { TiktokCreatorRow } from '../_lib/queries'
 
 /**
  * Per-creator results table for TikTok jobs (Phase 3). New lead candidates
  * first, then affiliates, showing the niche score + NEW badge, follower count,
  * contacts (email › Telegram › Discord, mined from the bio + captions), and the
- * bio-link / caption affiliate links that drove the flag. Server component.
+ * bio-link / caption affiliate links that drove the flag.
+ *
+ * Relevance filter (Andrei 2026-06-09): TikTok keyword scrapes surface a lot of
+ * name-squatters (accounts named "casino" that post nothing casino-related). By
+ * default the table shows only the relevant rows — the likely affiliates once
+ * scoring has run, hiding both the Phase-2 no-funnel rejects (is_not_relevant)
+ * and scored non-affiliates. A "Show all" toggle reveals the full discovery set.
  *
  * Sibling of x-creators-table.tsx — TikTok has no per-platform social columns
- * (the funnel is the single bio link), so the Socials column is dropped.
+ * (the funnel is the single bio link), so the Socials column is dropped. Client
+ * component for the filter toggle.
  */
 export function TiktokCreatorsTable({ rows }: { rows: TiktokCreatorRow[] }) {
+  const [showAll, setShowAll] = useState(false)
   if (rows.length === 0) return null
 
+  const anyScored = rows.some(r => r.niche_score != null)
+  // Default ("relevant only"): drop the Phase-2 no-funnel rejects, and — once
+  // scoring has run — keep only the likely affiliates. Before scoring there are
+  // no affiliate flags yet, so we keep everything that passed the Phase-2 gate.
+  const relevant = rows.filter(r => {
+    if (r.is_not_relevant) return false
+    if (anyScored) return r.is_likely_affiliate === true
+    return true
+  })
+  const visible = showAll ? rows : relevant
+  const hidden = rows.length - relevant.length
+
+  return (
+    <div className="space-y-2">
+      {hidden > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-[11px] text-[color:var(--color-text-secondary)]">
+          <span>
+            Showing <span className="font-medium text-[color:var(--color-text-primary)]">{visible.length}</span> of{' '}
+            {rows.length} discovered ·{' '}
+            {showAll
+              ? `${hidden} hidden in the relevant view (no-funnel name-squatters / non-affiliates)`
+              : `${hidden} hidden (no-funnel name-squatters${anyScored ? ' / non-affiliates' : ''})`}
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowAll(v => !v)}
+            className="inline-flex items-center gap-1 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2 py-0.5 text-[11px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)]"
+          >
+            {showAll ? (
+              <>
+                <Filter className="h-3 w-3" /> Relevant only
+              </>
+            ) : (
+              <>
+                <Eye className="h-3 w-3" /> Show all {rows.length}
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {visible.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-[color:var(--color-border)] px-3 py-4 text-[12px] text-[color:var(--color-text-secondary)]">
+          {anyScored ? (
+            <>No likely affiliates among the {rows.length} discovered creator{rows.length === 1 ? '' : 's'} — TikTok keyword scrapes mostly surface accounts merely <em>named</em> &ldquo;casino&rdquo;. Use <strong>Show all</strong> above to review the full set.</>
+          ) : (
+            <>The {rows.length} discovered creator{rows.length === 1 ? '' : 's'} {rows.length === 1 ? 'is' : 'are'} not scored yet — run <strong>Enrich profiles</strong> then <strong>Score &amp; check</strong> to flag affiliates. Use <strong>Show all</strong> to review them now.</>
+          )}
+        </div>
+      ) : (
+        <TiktokTable rows={visible} />
+      )}
+    </div>
+  )
+}
+
+function TiktokTable({ rows }: { rows: TiktokCreatorRow[] }) {
   return (
     <div className="rounded-lg border border-[color:var(--color-border)]">
       <table className="w-full border-collapse text-[12px]">
