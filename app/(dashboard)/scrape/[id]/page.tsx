@@ -15,6 +15,7 @@ import {
   queryLeads,
 } from '../../leads/_lib/query'
 import { AutoRefresh } from '../_components/auto-refresh'
+import { PushToMondayButton } from '../_components/push-to-monday-button'
 import { CaptchaRecoveryBanner } from '../_components/captcha-recovery-banner'
 import { MobileSkippedRetryBanner } from '../_components/mobile-skipped-retry-banner'
 import { EnrichmentStages } from '../_components/enrichment-stages'
@@ -314,7 +315,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
               )}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-start gap-2">
+            {job.status === 'completed' && <PushToMondayButton jobId={job.id} />}
             {(showHidden || hiddenCount > 0) && (
               <Link
                 href={toggleHref}
