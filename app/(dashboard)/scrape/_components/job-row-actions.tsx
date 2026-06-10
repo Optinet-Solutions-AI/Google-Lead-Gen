@@ -9,6 +9,7 @@ import {
   Pause,
   Play,
   RotateCcw,
+  Send,
   Trash2,
   X,
 } from 'lucide-react'
@@ -18,12 +19,14 @@ import {
   forceCompleteEnrichment,
   pauseEnrichmentForJob,
   pauseScrapeJob,
+  pushJobToMondayAction,
   rerunScrapeFiltered,
   resetCaptchaRetries,
   resumeEnrichmentForJob,
   resumeScrapeJob,
   type EnqueueState,
   type JobActionState,
+  type PushJobState,
 } from '../actions'
 import type { ScrapeJob } from '../_lib/queries'
 
@@ -99,6 +102,7 @@ function ActionsModal({ job, onClose }: { job: ScrapeJob; onClose: () => void })
           <ScrapeLifecycleSection job={job} />
           {job.status === 'captcha' && <CaptchaResetSection job={job} />}
           {enrichmentInFlight && <EnrichmentLifecycleSection job={job} />}
+          {job.status === 'completed' && <PushToMondaySection job={job} />}
           <RerunSection job={job} />
           <DangerZone job={job} onDeleted={onClose} />
         </div>
@@ -293,6 +297,52 @@ function RerunSection({ job }: { job: ScrapeJob }) {
           </button>
         </form>
       </div>
+      {state && (
+        <p
+          className={[
+            'rounded-md px-2 py-1 text-[11px]',
+            state.status === 'ok' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
+          ].join(' ')}
+        >
+          {state.status === 'ok' ? state.message : state.error}
+        </p>
+      )}
+    </Section>
+  )
+}
+
+function PushToMondaySection({ job }: { job: ScrapeJob }) {
+  const initialPush: PushJobState = null
+  const [state, action, pending] = useActionState(pushJobToMondayAction, initialPush)
+
+  // The engine drives which lead-set gets pushed. Google/Bing push
+  // s-tagged leads; the social engines push their likely-affiliate
+  // creators/advertisers. Both reuse the proven per-lead push plumbing.
+  const isSocial =
+    job.search_engine != null &&
+    !['google', 'bing'].includes(job.search_engine)
+
+  return (
+    <Section title="Push to Monday">
+      <p className="text-[11px] text-[color:var(--color-text-secondary)]">
+        Send this scrape&apos;s{' '}
+        {isSocial ? 'likely-affiliate results' : 's-tagged leads'} onto the
+        Rooster Leads board in one go. Already-pushed and not-relevant rows are
+        skipped automatically, so it&apos;s safe to click again later as
+        enrichment finds more.
+      </p>
+      <form action={action}>
+        <input type="hidden" name="job_id" value={job.id} />
+        <button
+          type="submit"
+          disabled={pending}
+          className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/15 px-2.5 py-1 text-[11px] font-semibold text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent)]/30 disabled:cursor-not-allowed disabled:opacity-40"
+          title="Create Monday Leads-board items for this scrape's eligible results"
+        >
+          {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+          {pending ? 'Pushing…' : 'Push leads to Monday'}
+        </button>
+      </form>
       {state && (
         <p
           className={[

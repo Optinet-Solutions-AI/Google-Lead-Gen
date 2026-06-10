@@ -12,6 +12,7 @@ import {
 } from '../_lib/pipeline'
 import { BulkScrapeActionsBar } from './bulk-actions-bar'
 import { JobActionsButton } from './job-row-actions'
+import { ReviewedCheckbox } from './reviewed-checkbox'
 
 type Props = {
   jobs: ScrapeJob[]
@@ -445,6 +446,9 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                 </Th>
               )}
               <Th>{''}</Th>
+              <Th>
+                <span title="Reviewed — tick once an operator has checked this scrape">✓</span>
+              </Th>
               <Th>Keyword</Th>
               <Th>Country</Th>
               <Th>Engine</Th>
@@ -484,6 +488,9 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                   )}
                   <td className="w-8 px-1 py-1 align-middle">
                     <JobActionsButton job={job} />
+                  </td>
+                  <td className="w-8 px-1 py-1 text-center align-middle">
+                    <ReviewedCheckbox job={job} />
                   </td>
                 <LinkTd
                   href={href}
@@ -566,6 +573,9 @@ export function JobsCardList({ jobs }: Props) {
           <div className="mb-1.5 flex items-start justify-between gap-2">
             <div className="flex min-w-0 items-start gap-1">
               <JobActionsButton job={job} />
+              <span className="pt-0.5">
+                <ReviewedCheckbox job={job} />
+              </span>
               <p className="truncate pt-0.5 text-[13px] font-medium text-[color:var(--color-text-primary)]">
                 {job.keyword}
               </p>

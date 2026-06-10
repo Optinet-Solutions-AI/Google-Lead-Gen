@@ -1250,6 +1250,7 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
         'with_enrichment, enrichment_status, language, search_engine, view_mode',
         'created_by_email, created_by_username, created_by_display',
         'error_message, result_summary, batch_id, created_at',
+        'reviewed_at, reviewed_by',
       ].join(', '),
       { count: 'exact' },
     )

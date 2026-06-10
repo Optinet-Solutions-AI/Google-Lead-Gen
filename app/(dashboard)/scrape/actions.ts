@@ -28,6 +28,7 @@ import {
 import { parseStagFromUrl, guessBrandFromUrl } from '@/lib/stag-extraction/extract'
 import { decodeAdUrl } from '@/lib/decode-ad-url'
 import { logActivity } from '@/lib/activity-log'
+import { pushJobToMonday as pushJobToMondayLib } from '@/lib/monday/push-job'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
 import { translateKeywordsToEnglish } from '@/lib/translate'
 
@@ -3692,4 +3693,174 @@ export async function bulkDeleteScrapeJobs(
     status: 'ok',
     message: `Deleted ${deleted} scrape${deleted === 1 ? '' : 's'} and ${leadsDeleted} lead${leadsDeleted === 1 ? '' : 's'} with all enrichment data wiped.`,
   }
+}
+
+// ============================================================
+// Mark / unmark a scrape job as "reviewed" — a shared (team-wide) flag so
+// operators can see at a glance which scrapes have already been eyeballed
+// on the /scrape Recent-jobs table. Open to any signed-in user (like the
+// Monday duplicate check) — it's an informational flag, not a destructive
+// or proxy-spending action, so restricting it to the owner would just block
+// testers. Records who last toggled it.
+// ============================================================
+
+export async function toggleJobReviewed(
+  _prev: JobActionState,
+  fd: FormData,
+): Promise<JobActionState> {
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const reviewed = String(fd.get('reviewed') ?? '') === 'true'
+
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { status: 'error', error: 'Not signed in.' }
+
+  const svc = createServiceClient()
+  // Resolve a friendly name so the row records WHO reviewed it.
+  const { data: profileRow } = await svc
+    .from('user_profiles')
+    .select('username, display_name')
+    .eq('id', user.id)
+    .maybeSingle()
+  const profile = profileRow as { username: string | null; display_name: string | null } | null
+  const reviewerName = profile?.display_name ?? profile?.username ?? user.email ?? user.id
+
+  const { error } = await svc
+    .from('scrape_queue')
+    .update({
+      reviewed_at: reviewed ? new Date().toISOString() : null,
+      reviewed_by: reviewed ? reviewerName : null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', jobId)
+  if (error) return { status: 'error', error: safeError(error, 'Failed to update reviewed flag.') }
+
+  await logActivity({
+    action: reviewed ? 'scrape.mark_reviewed' : 'scrape.unmark_reviewed',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { reviewed_by: reviewerName },
+  })
+
+  revalidatePath('/scrape')
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: reviewed ? 'Marked as reviewed.' : 'Marked as not reviewed.',
+  }
+}
+
+// ============================================================
+// Push to Monday — job level. Sends every worth-pushing result of this
+// scrape (affiliate-flagged leads for Google/Bing, likely-affiliate
+// entities for the social engines) onto the Rooster Leads board in one
+// action. Reuses the proven per-lead push and the generic per-entity push.
+//
+// Gated owner-or-admin (via requireJobAccess) because it creates real
+// items on a shared external board — same trust level as the per-lead push
+// in the leads drawer.
+// ============================================================
+
+export type PushJobState =
+  | { status: 'ok'; message: string }
+  | { status: 'error'; error: string }
+  | null
+
+export async function pushJobToMondayAction(
+  _prev: PushJobState,
+  fd: FormData,
+): Promise<PushJobState> {
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const note = String(fd.get('note') ?? '').trim().slice(0, 5000)
+
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { status: 'error', error: 'Not signed in.' }
+
+  // Resolve the pushing user's Monday id so items land under their name —
+  // same rule as the per-lead push. Block when unlinked rather than
+  // silently impersonating a shared default owner.
+  const svc = createServiceClient()
+  const { data: profileRow } = await svc
+    .from('user_profiles')
+    .select('username, display_name, monday_user_id')
+    .eq('id', user.id)
+    .maybeSingle()
+  const profile = profileRow as
+    | { username: string | null; display_name: string | null; monday_user_id: number | null }
+    | null
+  const pushedByDisplay = profile?.display_name ?? profile?.username ?? user.email ?? user.id
+  const ownerId = profile?.monday_user_id ?? null
+  if (ownerId == null) {
+    return {
+      status: 'error',
+      error:
+        'Your account is not linked to a Monday user yet. Ask an admin to set your Monday ID at /admin/users so pushes land under you.',
+    }
+  }
+
+  let result: Awaited<ReturnType<typeof pushJobToMondayLib>>
+  try {
+    result = await pushJobToMondayLib(jobId, {
+      pushedBy: pushedByDisplay,
+      ownerId,
+      note,
+    })
+  } catch (err) {
+    return { status: 'error', error: safeError(err, 'Failed to push this scrape to Monday.') }
+  }
+  if (!result.ok) return { status: 'error', error: result.error }
+
+  await logActivity({
+    action: 'monday.push_job',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: {
+      engine: result.engine,
+      kind: result.kind,
+      attempted: result.attempted,
+      pushed: result.pushed,
+      skipped_already_pushed: result.skippedAlreadyPushed,
+      failed: result.failed,
+      monday_owner_id: ownerId,
+    },
+  })
+
+  revalidatePath('/scrape')
+  revalidatePath(`/scrape/${jobId}`)
+  revalidatePath('/leads')
+
+  if (result.attempted === 0) {
+    const skipNote =
+      result.skippedAlreadyPushed > 0
+        ? ` (${result.skippedAlreadyPushed} already on Monday)`
+        : ''
+    return {
+      status: 'ok',
+      message: `No new affiliate leads to push for this scrape${skipNote}.`,
+    }
+  }
+  const tail = [
+    result.skippedAlreadyPushed > 0 ? `${result.skippedAlreadyPushed} already pushed` : '',
+    result.failed > 0 ? `${result.failed} failed` : '',
+  ]
+    .filter(Boolean)
+    .join(', ')
+  const errTail =
+    result.failed > 0 && result.errors.length > 0 ? ` — ${result.errors.slice(0, 2).join(' · ')}` : ''
+  return {
+    status: result.failed > 0 ? 'error' : 'ok',
+    ...(result.failed > 0
+      ? { error: `Pushed ${result.pushed}/${result.attempted} to Monday${tail ? ` (${tail})` : ''}${errTail}` }
+      : { message: `Pushed ${result.pushed} lead${result.pushed === 1 ? '' : 's'} to Monday${tail ? ` (${tail})` : ''}.` }),
+  } as PushJobState
 }

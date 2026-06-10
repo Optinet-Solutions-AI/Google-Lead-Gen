@@ -100,6 +100,10 @@ export type ScrapeJob = {
   result_summary: Record<string, unknown> | null
   batch_id: number | null
   created_at: string
+  /** Team-wide "an operator has eyeballed this scrape" flag. NULL = not yet
+   *  reviewed. `reviewed_by` is the display name of whoever last ticked it. */
+  reviewed_at: string | null
+  reviewed_by: string | null
   /** Per-stage applied flags. Only present for completed jobs that have rows. */
   enrichment: EnrichmentStatus
   /** Kick-only progression counts. Present for completed Kick jobs; the
