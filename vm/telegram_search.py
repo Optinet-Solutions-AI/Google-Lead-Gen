@@ -12,13 +12,16 @@ TWO discovery paths, AUTO-SELECTED at runtime:
     gen_telegram_session.py). contacts.Search resolves a keyword to public
     channels; GetFullChannel + recent messages enrich them. Highest yield.
 
-  • t.me/s seeded-snowball (NO-AUTH FALLBACK) — used when those env vars are
-    absent. There's no pure-HTTP keyword search for Telegram, so we seed from
-    a built-in set of gambling channels and crawl outward through the @mentions
-    in their posts (casino channels cross-promote heavily), enriching each via
-    the public t.me/s/{handle} SEO preview (title, description, subscribers,
-    posted links). No login, no verification code — a stopgap until the MTProto
-    session is in place, at which point the engine auto-upgrades.
+  • lyzem + t.me/s snowball (NO-AUTH FALLBACK) — used when those env vars are
+    absent. KEYWORD-DRIVEN: lyzem.com/search?q={kw}&type=channels (a Telegram
+    search engine) returns keyword-relevant public channel handles over plain
+    HTTP. We seed the frontier from those, then crawl outward through the
+    @mentions in their posts (casino channels cross-promote heavily), enriching
+    each via the public t.me/s/{handle} SEO preview (title, description,
+    subscribers, posted links). A built-in gambling seed set is kept ONLY as a
+    last-resort backstop if lyzem returns nothing. No login, no verification
+    code — a stopgap until the MTProto session is in place, at which point the
+    engine auto-upgrades.
 
 Either way it's a single pass (discover + enrich), no GoLogin/Selenium/browser.
 Phase 3 (runTelegramChannelAnalysis, inline) scores + resolves links + Monday.
@@ -44,6 +47,7 @@ from urllib.parse import quote
 import requests
 
 TME_BASE = "https://t.me"
+LYZEM_SEARCH = "https://lyzem.com/search"
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -55,9 +59,11 @@ TG_MSG_LIMIT = int(os.environ.get("TG_MSG_LIMIT", "30"))
 TG_SNOWBALL_SEEDS = int(os.environ.get("TG_SNOWBALL_SEEDS", "15"))
 TG_PER_CHANNEL_DELAY_S = float(os.environ.get("TG_PER_CHANNEL_DELAY_SECONDS", "0.6"))
 
-# Built-in gambling seed channels for the no-auth t.me/s fallback (catalogs +
-# affiliate channels that tend to have public previews and cross-link heavily).
-# Ones without a public preview self-skip; the snowball does the real work.
+# Last-resort backstop seeds for the no-auth fallback, used ONLY when the
+# keyword-driven lyzem search returns nothing. These are generic global
+# gambling channels and are NOT keyword/country relevant — returning them for
+# every query is exactly the "irrelevant leads" failure mode, so they are a
+# fallback of last resort, never the primary discovery path.
 # Env-overridable so seeds can be refreshed without a redeploy.
 TG_SEEDS = [
     s.strip() for s in os.environ.get(
@@ -79,6 +85,9 @@ _SYS_HOST_RE = re.compile(
     r"cdn-telegram\.org|google\.com|gstatic\.com|w3\.org)$", re.I,
 )
 _SKIP_HANDLES = {"share", "telegram", "telegramtips", "durov", "joinchat", "addstickers", "s", "iv", "proxy"}
+# lyzem's own infrastructure handles surface on every results page — never seed from them.
+_LYZEM_SKIP = {"lyzemcom", "lyzembot", "mlyzembot", "editorpost_bot"}
+_LYZEM_HREF_RE = re.compile(r'href="https?://t\.me/([A-Za-z0-9_]{4,32})"', re.I)
 
 
 def _host(url: str) -> str:
@@ -177,13 +186,49 @@ def enrich_tme(handle: str, surface: str) -> dict[str, Any] | None:
     }
 
 
+def _lyzem_search(keyword: str, limit: int) -> list[str]:
+    """Keyword-driven channel discovery over plain HTTP (the path the engine was
+    designed around). Returns keyword-relevant public channel @handles, lyzem
+    infra + bots filtered out. Empty list on any failure → caller falls back to
+    the built-in backstop seeds."""
+    try:
+        r = requests.get(
+            LYZEM_SEARCH, params={"q": keyword, "type": "channels"},
+            headers={"user-agent": UA, "accept": "text/html"}, timeout=TG_TIMEOUT_S,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] lyzem search failed {keyword!r}: {exc}", file=sys.stderr)
+        return []
+    if r.status_code != 200:
+        print(f"[WARN] lyzem search HTTP {r.status_code} for {keyword!r}", file=sys.stderr)
+        return []
+    out, seen = [], set()
+    for h in _LYZEM_HREF_RE.findall(r.text):
+        key = h.lower()
+        if key in seen or key in _SKIP_HANDLES or key in _LYZEM_SKIP or key.endswith("bot"):
+            continue
+        seen.add(key)
+        out.append(h)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def collect_tme_snowball(keyword: str, max_results: int) -> list[dict[str, Any]]:
-    """No-auth discovery: enrich the built-in gambling seeds, then snowball
-    through @mentions (two hops) until max_results. Keyword is recorded for the
-    scorer; discovery is seed-driven since Telegram has no pure-HTTP search."""
+    """No-auth discovery: seed from a KEYWORD-DRIVEN lyzem channel search, then
+    snowball through @mentions (up to two hops) until max_results, enriching
+    each via t.me/s. Falls back to the built-in backstop seeds only if lyzem
+    yields nothing (so a lyzem outage degrades to generic results rather than
+    zero, but the keyword drives discovery in the normal case)."""
     out: list[dict[str, Any]] = []
     enriched: set[str] = set()
-    frontier: list[str] = list(TG_SEEDS)
+    seeds = _lyzem_search(keyword, max(max_results, TG_SNOWBALL_SEEDS))
+    if not seeds:
+        print("[WARN] lyzem returned no channels; falling back to built-in backstop seeds", file=sys.stderr)
+        seeds = list(TG_SEEDS)
+    else:
+        print(f"[INFO] lyzem seeded {len(seeds)} keyword-relevant channels for {keyword!r}")
+    frontier: list[str] = seeds
     next_frontier: list[str] = []
     hops = 0
 
