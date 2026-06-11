@@ -1431,36 +1431,35 @@ def attempt_x_login(driver, username, password):
     return "failed"
 
 
-def _request_login_checkpoint(driver):
-    """Park the scrape at a Captcha solver checkpoint with reason='google_login_required'.
-    Auto-refreshes + re-parks up to CHECKPOINT_MAX_REFRESH_ATTEMPTS times if
-    the operator times out or finishes but the profile isn't signed in yet.
-    Returns True if the operator finished the login and the profile is now
-    signed in, False otherwise. Raises InteractiveCancelException on cancel."""
-    if not _CAPTCHA_SOLVER_CTX.get("interactive") or not _CAPTCHA_SOLVER_CTX.get("job_id"):
-        print("[WARN] google login: Captcha solver disabled, continuing without login",
-              file=sys.stderr)
-        return False
-    country_code = _CAPTCHA_SOLVER_CTX.get("country_code")
-    cleared = _request_interactive_checkpoint_with_refresh(
-        driver,
-        job_id=_CAPTCHA_SOLVER_CTX.get("job_id"),
-        worker_id=_CAPTCHA_SOLVER_CTX.get("worker_id"),
-        worker_port=_CAPTCHA_SOLVER_CTX.get("worker_port", 9222),
-        reason="google_login_required",
-        is_still_blocked=lambda: detect_login_state(driver) is not True,
+def _continue_logged_out_after_login_block(driver, country_code, why):
+    """Google auto sign-in couldn't complete on its own (challenge / failed /
+    no creds). Per the no-manual-intervention policy (2026-06-11), we no longer
+    park a human Captcha-solver checkpoint with reason='google_login_required'
+    and wait for an operator to click Resume. Instead we log the reason, reset
+    the browser to a clean google.com, and let the scrape proceed signed-out
+    (best-effort).
+
+    Most Google SERP scraping still works logged-out; for countries flagged
+    requires_google_login the personalized / PPC blocks may just come back
+    thinner. The trade-off is intentional — zero operator clicks beats a
+    paused job nobody resumes.
+
+    Resets to google.com so the scrape doesn't start from inside the
+    accounts.google.com challenge/login page the auto-login left us on.
+    """
+    print(
+        f"[INFO] google login: auto sign-in did not complete ({why}, "
+        f"country={country_code}) — skipping human checkpoint, continuing logged-out"
     )
-    if not cleared:
-        mark_google_login_used(country_code, "checkpoint_unresolved")
-        return False
-    # Helper verified detect_login_state is True at the moment of return.
-    # Re-check defensively in case state flipped during the brief window.
-    new_state = detect_login_state(driver)
-    if new_state is True:
-        mark_google_login_used(country_code, "checkpoint_success")
-        return True
-    mark_google_login_used(country_code, "checkpoint_unverified")
-    return False
+    try:
+        # ?hl=en keeps the UI in English regardless of proxy geo.
+        driver.get("https://www.google.com/?hl=en")
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] google login: reset to google.com failed: {exc}",
+              file=sys.stderr)
 
 
 def ensure_google_login_if_required(driver):
@@ -1472,11 +1471,15 @@ def ensure_google_login_if_required(driver):
       2. detect_login_state(driver) → True ⇒ already signed in, return.
       3. Logged-out + creds in DB ⇒ run attempt_google_login.
          - 'success'   → stamp + return.
-         - 'challenge' → escalate to the Captcha solver.
-         - 'failed'    → stamp; if country requires login, escalate to the Captcha solver,
-                         otherwise continue best-effort.
-      4. Logged-out + NO creds ⇒ if country requires login, escalate to the Captcha solver,
-         otherwise continue without login.
+         - 'challenge' → stamp + continue logged-out (no human checkpoint).
+         - 'failed'    → stamp + continue logged-out (no human checkpoint).
+      4. Logged-out + NO creds ⇒ stamp + continue logged-out (no human checkpoint).
+
+    No-manual-intervention policy (2026-06-11): a Google login wall NEVER
+    parks a human Captcha-solver checkpoint anymore. The auto sign-in is
+    still attempted (best path), but if it can't finish we continue the
+    scrape signed-out rather than waiting for an operator to click Resume.
+    See _continue_logged_out_after_login_block for the trade-off.
     """
     country_code = _CAPTCHA_SOLVER_CTX.get("country_code")
     requires_login = bool(_CAPTCHA_SOLVER_CTX.get("requires_google_login"))
@@ -1526,20 +1529,16 @@ def ensure_google_login_if_required(driver):
             return
         if outcome == "challenge":
             mark_google_login_used(country_code, "challenge")
-            _request_login_checkpoint(driver)
+            _continue_logged_out_after_login_block(driver, country_code, "challenge")
             return
         # outcome == 'failed'
         mark_google_login_used(country_code, "failed_login")
-        if requires_login:
-            _request_login_checkpoint(driver)
+        _continue_logged_out_after_login_block(driver, country_code, "failed_login")
         return
 
     # No creds available -----------------------------------------------------
-    if requires_login:
-        print(f"[INFO] google login: no creds for {country_code} — escalating to the Captcha solver")
-        _request_login_checkpoint(driver)
-    else:
-        print(f"[INFO] google login: no creds for {country_code} — continuing without login")
+    mark_google_login_used(country_code, "no_creds")
+    _continue_logged_out_after_login_block(driver, country_code, "no_creds")
 
 
 # ---------------------------
@@ -3165,9 +3164,10 @@ def main():
             # Step 2.5: Google login state. If the profile is signed-out
             # (rotating IPs invalidate Google sessions) and we have
             # credentials in DB for this country, drive the sign-in
-            # form. If Google throws 2FA / verify-it's-you / captcha,
-            # escalate to a Captcha solver checkpoint with reason
-            # 'google_login_required'. See ensure_google_login_if_required
+            # form. If Google throws 2FA / verify-it's-you / captcha, or
+            # the auto sign-in otherwise can't finish, we continue the
+            # scrape logged-out (no human checkpoint — no-manual-intervention
+            # policy, 2026-06-11). See ensure_google_login_if_required
             # for the full decision tree.
             #
             # Skip for Bing: Bing SERPs don't depend on a Google session.
