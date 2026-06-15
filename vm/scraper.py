@@ -1957,6 +1957,46 @@ def _record_auto_solve_outcome(page_url: str) -> None:
               file=sys.stderr)
 
 
+# Substrings that reliably mark a Google block / captcha interstitial — as
+# opposed to the bare word "captcha", which appears all over ordinary SERPs:
+# Google's own `hasCaptchaSupport=true` search-config flag, ad/script
+# manifests listing providers like "googlerecaptcha", and organic snippets
+# for gambling queries that mention reCAPTCHA. Matching the bare word made
+# the detector fire on virtually every casino results page and park phantom
+# Captcha-solver checkpoints — the root cause of the "captcha volume" reports
+# (operators kept opening noVNC to a normal SERP and clicking Resume). A real
+# Google block ALWAYS redirects to /sorry/, so the URL check below is the
+# primary, language-agnostic signal; these page markers are the secondary
+# guard for an inline challenge that still carries a genuine reCAPTCHA widget
+# or the /sorry/ block form.
+_GOOGLE_BLOCK_PAGE_MARKERS = (
+    'id="captcha-form"',              # Google /sorry/ block form
+    'class="g-recaptcha"',            # rendered reCAPTCHA v2 widget
+    'id="g-recaptcha-response"',      # reCAPTCHA response field
+    '/recaptcha/api2/anchor',         # reCAPTCHA challenge iframe src
+    '/recaptcha/enterprise/anchor',
+    'our systems have detected unusual traffic',  # English block copy
+)
+
+
+def _url_is_google_block(url: str) -> bool:
+    """True when the URL is Google's block redirect. Language-agnostic and
+    the single most reliable captcha signal — Google routes every block
+    through /sorry/ regardless of locale."""
+    u = (url or "").lower()
+    return "/sorry/" in u or "/sorry?" in u
+
+
+def _page_shows_google_block(page_lower: str) -> bool:
+    """True when the page HTML carries a genuine block/captcha marker.
+    Deliberately precise — a bare 'captcha'/'recaptcha' substring is NOT
+    enough (see _GOOGLE_BLOCK_PAGE_MARKERS for why). `page_lower` must
+    already be lower-cased by the caller."""
+    if not page_lower:
+        return False
+    return any(m in page_lower for m in _GOOGLE_BLOCK_PAGE_MARKERS)
+
+
 def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, interactive=None):
     """Detect if Google is showing a CAPTCHA or unusual traffic page.
 
@@ -1982,15 +2022,13 @@ def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, 
             cur = driver.current_url or ""
         except Exception:  # noqa: BLE001
             cur = ""
-        if "/sorry/" in cur or "captcha" in cur.lower():
+        if _url_is_google_block(cur):
             return True
         try:
             page = (driver.page_source or "").lower()
         except Exception:  # noqa: BLE001
             page = ""
-        if "unusual traffic" in page or "recaptcha" in page or "captcha" in page:
-            return True
-        return False
+        return _page_shows_google_block(page)
 
     if not _is_captcha():
         return
@@ -2117,16 +2155,16 @@ def _is_captcha_silent(driver) -> bool:
     already-saved desktop results, rather than freezing the whole scrape
     in a Captcha solver checkpoint over an enhancement pass."""
     try:
-        cur = (driver.current_url or "").lower()
+        cur = driver.current_url or ""
     except Exception:  # noqa: BLE001
         cur = ""
-    if "/sorry/" in cur or "captcha" in cur:
+    if _url_is_google_block(cur):
         return True
     try:
         page = (driver.page_source or "").lower()
     except Exception:  # noqa: BLE001
         page = ""
-    return "unusual traffic" in page or "recaptcha" in page or "captcha" in page
+    return _page_shows_google_block(page)
 
 
 # ---------------------------
