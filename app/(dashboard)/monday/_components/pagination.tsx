@@ -47,6 +47,19 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
     router.push(`${pathname}?${params.toString()}`, { scroll: false })
   }
 
+  // Jump-to-page box. Lets you type a page number instead of clicking the
+  // next chevron N times — the real ask behind "can I see all rows" (you
+  // don't want every row, you want page 45 without 44 clicks). The input is
+  // uncontrolled and keyed by `page` (below) so it remounts with the live
+  // page after each navigation, which keeps it in sync without a setState
+  // effect; we just read the typed value on Enter/blur and navigate.
+  function jumpToPage(raw: string) {
+    const n = Number.parseInt(raw, 10)
+    if (!Number.isFinite(n)) return
+    const target = Math.min(Math.max(n, 1), totalPages)
+    if (target !== page) router.push(hrefForPage(target), { scroll: false })
+  }
+
   const canPrev = page > 1
   const canNext = page < totalPages
 
@@ -98,9 +111,31 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
             </span>
           )}
 
-          <span className="px-2 text-[color:var(--color-text-primary)]">
-            Page {page.toLocaleString()} / {totalPages.toLocaleString()}
-          </span>
+          {showingAll || totalPages <= 1 ? (
+            <span className="px-2 text-[color:var(--color-text-primary)]">
+              Page {page.toLocaleString()} / {totalPages.toLocaleString()}
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 px-2 text-[color:var(--color-text-primary)]">
+              Page
+              <input
+                key={page}
+                type="text"
+                inputMode="numeric"
+                aria-label="Go to page"
+                defaultValue={String(page)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    jumpToPage(e.currentTarget.value)
+                  }
+                }}
+                onBlur={e => jumpToPage(e.currentTarget.value)}
+                className="w-12 rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-1 py-0.5 text-center text-[12px] tabular-nums"
+              />
+              / {totalPages.toLocaleString()}
+            </span>
+          )}
 
           {canNext ? (
             <Link
