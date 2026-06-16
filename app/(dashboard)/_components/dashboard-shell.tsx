@@ -9,6 +9,7 @@ import {
   BookOpen,
   ChevronLeft,
   Clock,
+  DollarSign,
   Database,
   Gauge,
   Globe,
@@ -139,6 +140,12 @@ const ADMIN_NAV_ITEMS = [
     match: (p: string) => p.startsWith('/admin/feedback'),
     // Carries the unresolved-feedback count badge.
     badge: 'openFeedback' as const,
+  },
+  {
+    label: 'Operations (Admin)',
+    href: '/admin/operations',
+    icon: DollarSign,
+    match: (p: string) => p.startsWith('/admin/operations'),
   },
   {
     label: 'System (Admin)',
