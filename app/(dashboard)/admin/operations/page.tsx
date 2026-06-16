@@ -3,10 +3,17 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { BYTES_PER_GB, loadOperationsData } from './_lib/queries'
 import { CostRow } from './_components/cost-row'
+import { SincePicker } from './_components/since-picker'
 
 export const dynamic = 'force-dynamic'
 
-export default async function OperationsPage() {
+type SearchParams = Record<string, string | string[] | undefined>
+
+export default async function OperationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>
+}) {
   const supabase = await createServerClient()
   const {
     data: { user },
@@ -17,7 +24,10 @@ export default async function OperationsPage() {
   const { data: isAdmin } = await svc.rpc('is_admin', { p_user_id: user.id })
   if (!isAdmin) redirect('/')
 
-  const data = await loadOperationsData()
+  const sp = await searchParams
+  const sinceParam =
+    typeof sp.since === 'string' && sp.since.length > 0 ? sp.since : undefined
+  const data = await loadOperationsData(sinceParam)
   const latest = data.latest
 
   return (
@@ -32,6 +42,56 @@ export default async function OperationsPage() {
           the queue.
         </p>
       </header>
+
+      {/* ---------- "Since" window (ad-hoc) ---------- */}
+      <section className="rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-bg-primary)] p-4">
+        <header className="mb-3 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-[13px] font-semibold text-[color:var(--color-text-primary)]">
+              Since…
+            </h2>
+            <p className="mt-1 max-w-2xl text-[11px] text-[color:var(--color-text-secondary)]">
+              How much have we burned + how many scrapes / leads have we
+              produced since a specific moment. Defaults to month start. Pick a
+              datetime in your local clock — we&apos;ll convert to UTC for the
+              query.
+            </p>
+          </div>
+          <SincePicker defaultIso={data.since.sinceIso} />
+        </header>
+
+        <p className="mb-2 text-[11px] text-[color:var(--color-text-secondary)]">
+          Window starts at <strong>{fmtDateTime(data.since.sinceIso)}</strong> UTC.
+        </p>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <Stat
+            label="Bandwidth consumed"
+            value={fmtGB(data.since.consumedBytes)}
+            hint={
+              data.costPerGbUsd > 0
+                ? `≈ ${fmtUsd(data.since.bandwidthCostUsd)} at $${data.costPerGbUsd.toFixed(2)}/GB`
+                : 'Set the per-GB rate below to get a dollar figure'
+            }
+            tone="emphasis"
+          />
+          <Stat
+            label="Scrape jobs completed"
+            value={data.since.scrapeJobsCompleted.toLocaleString()}
+            hint="status=completed since the window start"
+          />
+          <Stat
+            label="Scrape jobs started"
+            value={data.since.scrapeJobsStarted.toLocaleString()}
+            hint="includes still-running / failed jobs"
+          />
+          <Stat
+            label="New leads"
+            value={data.since.newLeads.toLocaleString()}
+            hint="google_lead_gen_table.created_at"
+          />
+        </div>
+      </section>
 
       {/* ---------- Bandwidth status ---------- */}
       <section className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-4">
@@ -306,3 +366,4 @@ function fmtDateTime(iso: string): string {
     return iso
   }
 }
+

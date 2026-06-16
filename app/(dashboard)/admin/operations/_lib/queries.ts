@@ -33,6 +33,21 @@ export type FixedCostLine = {
   amountUsd: number
 }
 
+export type SinceWindow = {
+  /** ISO string of the start of the window (UTC). */
+  sinceIso: string
+  /** Bytes consumed since `sinceIso` (positive deltas only). */
+  consumedBytes: number
+  /** scrape_queue rows that finished (status=completed) since `sinceIso`. */
+  scrapeJobsCompleted: number
+  /** scrape_queue rows that started running since `sinceIso`. */
+  scrapeJobsStarted: number
+  /** google_lead_gen_table rows created since `sinceIso`. */
+  newLeads: number
+  /** USD = consumed × per-GB rate. */
+  bandwidthCostUsd: number
+}
+
 export type OperationsData = {
   /** Most recent successful snapshot (null if none captured yet). */
   latest: BandwidthSnapshot | null
@@ -54,6 +69,12 @@ export type OperationsData = {
   monthToDateOpExUsd: number
   /** monthProjected + fixed. */
   monthProjectedOpExUsd: number
+  /**
+   * Ad-hoc window starting at the operator-supplied `sinceIso`
+   * (default = month start). Lets the operator answer "what's happened
+   * since I topped up at 2:30pm PHT today" without writing SQL.
+   */
+  since: SinceWindow
 }
 
 const FIXED_COST_KEYS = [
@@ -69,8 +90,14 @@ const FIXED_COST_KEYS = [
  * batch. We pull the snapshot history once and reuse it across all
  * three burn-rate windows + the month-to-date total to avoid a
  * fan-out of round trips.
+ *
+ * `sinceIso` (optional) anchors the "since" window panel. Default
+ * is the start of the current UTC month, which matches the
+ * month-to-date numbers everywhere else. Pass a custom ISO string
+ * (e.g. "today at 2:30 PM PHT" → "<date>T06:30:00Z") to answer
+ * ad-hoc questions like "how much have we burned since I topped up".
  */
-export async function loadOperationsData(): Promise<OperationsData> {
+export async function loadOperationsData(sinceIso?: string): Promise<OperationsData> {
   const svc = createServiceClient()
   const now = Date.now()
   const last7dIso = new Date(now - 7 * DAY_MS).toISOString()
@@ -80,12 +107,31 @@ export async function loadOperationsData(): Promise<OperationsData> {
     d.setUTCHours(0, 0, 0, 0)
     return d.toISOString()
   })()
+  // Validate the supplied sinceIso — fall back to month start if it's
+  // unparseable or in the future. Future timestamps would yield
+  // nonsense counts so we don't bother sending them to PostgREST.
+  const sinceWindowIso = (() => {
+    if (!sinceIso) return monthStartIso
+    const t = Date.parse(sinceIso)
+    if (!Number.isFinite(t) || t > now) return monthStartIso
+    return new Date(t).toISOString()
+  })()
 
-  // Pull all the settings + snapshots in parallel.
+  // Pull all the settings + snapshots + counts in parallel.
+  // The "since" window needs its own snapshot fetch because it could
+  // legitimately reach back further than the 7-day burn-rate window
+  // (an operator might ask "since two weeks ago"). We also fan out
+  // three head-only count queries for the scrape/lead counters in the
+  // same Promise.all so the page payload only adds one extra round
+  // trip of latency.
   const [
     { data: snapshots },
     { data: monthAnchor },
     settingsResult,
+    { data: sinceSnapshots },
+    { count: scrapeJobsCompleted },
+    { count: scrapeJobsStarted },
+    { count: newLeads },
   ] = await Promise.all([
     svc
       .from('proxy_bandwidth_snapshots')
@@ -107,6 +153,24 @@ export async function loadOperationsData(): Promise<OperationsData> {
         'proxy_bandwidth_cost_usd_per_gb',
         ...FIXED_COST_KEYS.map(k => k.key),
       ]),
+    svc
+      .from('proxy_bandwidth_snapshots')
+      .select('used_bytes, remaining_bytes, captured_at')
+      .gte('captured_at', sinceWindowIso)
+      .order('captured_at', { ascending: false }),
+    svc
+      .from('scrape_queue')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'completed')
+      .gte('completed_at', sinceWindowIso),
+    svc
+      .from('scrape_queue')
+      .select('*', { count: 'exact', head: true })
+      .gte('started_at', sinceWindowIso),
+    svc
+      .from('google_lead_gen_table')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', sinceWindowIso),
   ])
 
   const rows = (snapshots ?? []) as BandwidthSnapshot[]
@@ -184,6 +248,27 @@ export async function loadOperationsData(): Promise<OperationsData> {
 
   const monthProjectedOpExUsd = monthProjectedBandwidthCostUsd + fixedMonthlyTotalUsd
 
+  // "Since" window — bandwidth + activity counts. The snapshot list is
+  // newest-first, same shape as the main `rows` list; positiveDeltaSum
+  // takes a newest-first input so we pass it as-is.
+  const sinceRows = (sinceSnapshots ?? []) as Array<{
+    used_bytes: number
+    remaining_bytes: number
+    captured_at: string
+  }>
+  const consumedSinceBytes = positiveDeltaSum(
+    sinceRows.map(r => r.used_bytes),
+    sinceRows.map(r => r.remaining_bytes),
+  )
+  const sinceWindow: SinceWindow = {
+    sinceIso: sinceWindowIso,
+    consumedBytes: consumedSinceBytes,
+    scrapeJobsCompleted: scrapeJobsCompleted ?? 0,
+    scrapeJobsStarted: scrapeJobsStarted ?? 0,
+    newLeads: newLeads ?? 0,
+    bandwidthCostUsd: (consumedSinceBytes / BYTES_PER_GB) * costPerGbUsd,
+  }
+
   return {
     latest,
     burns,
@@ -196,6 +281,7 @@ export async function loadOperationsData(): Promise<OperationsData> {
     fixedMonthlyTotalUsd,
     monthToDateOpExUsd,
     monthProjectedOpExUsd,
+    since: sinceWindow,
   }
 }
 
