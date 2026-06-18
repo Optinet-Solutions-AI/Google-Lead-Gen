@@ -391,13 +391,19 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
   }, [contextToast])
 
   function onJobContextMenu(e: React.MouseEvent, jobId: string) {
+    // Plain right-click → browser default OS menu (no preventDefault).
+    // Ctrl/Cmd+Right-Click → toggle this row in the selection,
+    // mirror of Ctrl+Click for operators whose right hand prefers
+    // the right mouse button.
+    if (!(e.ctrlKey || e.metaKey)) return
     e.preventDefault()
-    if (!selectedIds.has(jobId) && selectedIds.size === 0) {
-      setSelectedIds(new Set([jobId]))
-      if (!selectMode) setSelectMode(true)
-    }
-    setContextRowId(jobId)
-    setContextCursor({ x: e.clientX, y: e.clientY })
+    if (!selectMode) setSelectMode(true)
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(jobId)) next.delete(jobId)
+      else next.add(jobId)
+      return next
+    })
   }
 
   function buildJobContextActions(): ContextMenuAction[] {

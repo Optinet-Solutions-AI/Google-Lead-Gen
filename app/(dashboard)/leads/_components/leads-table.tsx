@@ -310,17 +310,24 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
   }
 
   function onRowContextMenu(e: React.MouseEvent, leadId: number) {
+    // Right-click no longer pops our actions menu — falls through
+    // to the browser's OS context menu instead. The actions menu is
+    // reached via left-click on a selected row (or a single-row
+    // ctrl+click that selected it first).
+    //
+    // Ctrl/Cmd+Right-Click is the exception: it toggles the row in
+    // the selection (mirror of Ctrl+Click), giving operators an
+    // alternative when their middle finger is already near the
+    // right mouse button.
+    if (!(e.ctrlKey || e.metaKey)) return
     e.preventDefault()
-    // If the right-clicked row isn't already selected, treat the
-    // context menu as scoped to just that row (don't disturb an
-    // existing selection — the menu's "N selected" hint makes it
-    // clear which scope an action will apply to).
-    if (!selectedIds.has(leadId) && selectedIds.size === 0) {
-      setSelectedIds(new Set([leadId]))
-      if (!selectMode) setSelectMode(true)
-    }
-    setContextRowId(leadId)
-    setContextCursor({ x: e.clientX, y: e.clientY })
+    if (!selectMode) setSelectMode(true)
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(leadId)) next.delete(leadId)
+      else next.add(leadId)
+      return next
+    })
   }
 
   function buildContextActions(): ContextMenuAction[] {
