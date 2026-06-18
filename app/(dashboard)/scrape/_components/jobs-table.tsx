@@ -470,6 +470,32 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
               return (
                 <tr
                   key={job.id}
+                  onMouseDownCapture={e => {
+                    // Block the browser's "open in new tab" decision
+                    // when ctrl/meta + left button is the combo —
+                    // some links inside the row would otherwise trip
+                    // the new-tab opener before our click handler.
+                    if (e.button !== 0) return
+                    if (!(e.ctrlKey || e.metaKey)) return
+                    e.preventDefault()
+                  }}
+                  onClickCapture={e => {
+                    // Ctrl/Cmd+Click toggles selection. Capture phase
+                    // intercepts BEFORE any child link cell can fire
+                    // its default action (Job row contains a `Link`
+                    // to /scrape/<id> which would otherwise open a
+                    // new tab on ctrl+click).
+                    if (!(e.ctrlKey || e.metaKey)) return
+                    e.preventDefault()
+                    e.stopPropagation()
+                    if (!selectMode) setSelectMode(true)
+                    setSelectedIds(prev => {
+                      const next = new Set(prev)
+                      if (next.has(job.id)) next.delete(job.id)
+                      else next.add(job.id)
+                      return next
+                    })
+                  }}
                   className={[
                     'group border-b border-[color:var(--color-border)] last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]',
                     selectMode && isSelected ? 'bg-[color:var(--color-accent)]/10' : '',

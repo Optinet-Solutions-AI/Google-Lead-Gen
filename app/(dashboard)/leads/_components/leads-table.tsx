@@ -252,21 +252,34 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
     return () => clearTimeout(t)
   }, [contextToast])
 
-  function onRowClick(e: React.MouseEvent, leadId: number) {
-    // Ctrl+Click / Cmd+Click → toggle selection without opening the
-    // drawer. Plain click on a cell still drills into the drawer via
-    // the existing onOpen handlers below; this only fires when the
-    // user explicitly modified the click.
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault()
-      if (!selectMode) setSelectMode(true)
-      setSelectedIds(prev => {
-        const next = new Set(prev)
-        if (next.has(leadId)) next.delete(leadId)
-        else next.add(leadId)
-        return next
-      })
-    }
+  function onRowClickCapture(e: React.MouseEvent, leadId: number) {
+    // Ctrl/Cmd+Click → toggle selection. Handled in the CAPTURE phase
+    // so that child link cells (URL, domain, scrape-job link) don't
+    // get a chance to perform their default actions before we
+    // preventDefault. Without capture, ctrl+clicking a `<a
+    // target="_blank">` cell would open a new tab BEFORE our row
+    // handler ran — exactly the bug the user reported.
+    if (!(e.ctrlKey || e.metaKey)) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (!selectMode) setSelectMode(true)
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(leadId)) next.delete(leadId)
+      else next.add(leadId)
+      return next
+    })
+  }
+
+  function onRowMouseDownCapture(e: React.MouseEvent) {
+    // Belt-and-suspenders: some browsers also kick off "open new
+    // tab" decisions on mousedown when ctrl/meta + primary button
+    // are combined. preventDefault here removes the focus-/select-
+    // text side-effect of the modified click without affecting
+    // subsequent click handlers.
+    if (e.button !== 0) return
+    if (!(e.ctrlKey || e.metaKey)) return
+    e.preventDefault()
   }
 
   function onRowContextMenu(e: React.MouseEvent, leadId: number) {
@@ -472,7 +485,8 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
             {rows.map((row, index) => (
               <tr
                 key={row.id}
-                onClick={e => onRowClick(e, row.id)}
+                onMouseDownCapture={onRowMouseDownCapture}
+                onClickCapture={e => onRowClickCapture(e, row.id)}
                 onContextMenu={e => onRowContextMenu(e, row.id)}
                 className={[
                   'border-b border-[color:var(--color-border)] transition-colors last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]',
