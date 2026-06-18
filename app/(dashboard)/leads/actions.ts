@@ -6,6 +6,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { logActivity } from '@/lib/activity-log'
 import { pushLeadToMonday, MAX_OPERATOR_NOTE_LEN } from '@/lib/monday/push-lead'
+import { pushLeadToMondayNotRelevant } from '@/lib/monday/push-not-relevant'
 import { requireLeadAccess, requireLeadsAccess } from '@/lib/auth/require-lead-access'
 
 /** Log the raw Supabase/Postgrest error server-side for debugging but
@@ -57,6 +58,56 @@ export async function forceEnrichLeadsAction(leadIds: number[]): Promise<ForceEn
   revalidatePath('/leads')
   revalidatePath('/scrape', 'layout')
   return { ok: true, queued }
+}
+
+/**
+ * Push a lead to Monday's Not Relevant board AND mark it
+ * not-relevant locally in one action. Used by the drawer's
+ * "Push to Monday Not Relevant" button and by the
+ * mark-not-relevant prompt's "Also push to Monday" branch.
+ */
+export type PushNotRelevantState =
+  | { status: 'ok'; message: string }
+  | { status: 'error'; error: string }
+  | null
+
+export async function pushLeadToMondayNotRelevantAction(
+  _prev: PushNotRelevantState,
+  fd: FormData,
+): Promise<PushNotRelevantState> {
+  const leadId = Number(fd.get('lead_id'))
+  if (!Number.isInteger(leadId) || leadId <= 0) {
+    return { status: 'error', error: 'Missing lead id.' }
+  }
+  const access = await requireLeadAccess(leadId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const supabase = await createServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { status: 'error', error: 'Not signed in.' }
+
+  const note = String(fd.get('note') ?? '').trim().slice(0, MAX_OPERATOR_NOTE_LEN)
+  const pushedBy = user.email ?? 'unknown@local'
+
+  const result = await pushLeadToMondayNotRelevant(leadId, {
+    pushedBy,
+    ...(note ? { note } : {}),
+  })
+  if (!result.ok) return { status: 'error', error: result.error }
+
+  await logActivity({
+    action: 'leads.push_monday_not_relevant',
+    entity_type: 'lead',
+    entity_id: String(leadId),
+    details: { monday_item_id: result.monday_item_id, has_note: note.length > 0 },
+  })
+
+  revalidatePath('/leads')
+  revalidatePath('/scrape', 'layout')
+  return {
+    status: 'ok',
+    message: `Pushed to Monday Not Relevant board (item ${result.monday_item_id}). Lead is now hidden by default; force-enrich to override.`,
+  }
 }
 
 /**

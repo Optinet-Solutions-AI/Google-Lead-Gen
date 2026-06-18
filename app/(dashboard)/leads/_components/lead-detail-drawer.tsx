@@ -30,8 +30,10 @@ import {
   deleteLeadScreenshot,
   forceEnrichLeadsAction,
   pushLeadToMondayAction,
+  pushLeadToMondayNotRelevantAction,
   setNotRelevantAction,
   type MarkNotRelevantState,
+  type PushNotRelevantState,
   type PushToMondayState,
 } from '../actions'
 import { MAX_OPERATOR_NOTE_LEN } from '@/lib/monday/push-constants'
@@ -361,6 +363,10 @@ function DetailBody({
         markedAt={lead.not_relevant_marked_at}
         markedBy={lead.not_relevant_marked_by}
       />
+
+      {!lead.is_not_relevant && lead.monday_board !== 'not_relevant_leads' && (
+        <PushNotRelevantButton leadId={lead.id} />
+      )}
 
       <PushToMondayPanel
         leadId={lead.id}
@@ -1016,11 +1022,24 @@ function NotRelevantPanel({
 }) {
   const initial: MarkNotRelevantState = null
   const [state, action, pending] = useActionState(setNotRelevantAction, initial)
+  const pushInitial: PushNotRelevantState = null
+  const [pushState, pushAction, pushPending] = useActionState(
+    pushLeadToMondayNotRelevantAction,
+    pushInitial,
+  )
   const [confirming, setConfirming] = useState(false)
+  // Default true — most operators want the Monday-side record too,
+  // and the prompt's UX clearer when the heavier action is the
+  // default rather than buried.
+  const [alsoPushToMonday, setAlsoPushToMonday] = useState(true)
 
   useEffect(() => {
     if (state?.status === 'ok') invalidateLeadDetailCache(leadId)
   }, [state, leadId])
+
+  useEffect(() => {
+    if (pushState?.status === 'ok') invalidateLeadDetailCache(leadId)
+  }, [pushState, leadId])
 
   // Optimistic flip — server action revalidates the lead drawer's data
   // source on next open, but the panel updates immediately so the user
@@ -1081,30 +1100,134 @@ function NotRelevantPanel({
         and prevents future enrichment passes from picking it up. Reversible.
       </p>
       {confirming && (
-        <form action={action} className="flex items-center gap-2">
-          <input type="hidden" name="lead_id" value={leadId} />
-          <input type="hidden" name="value" value="true" />
-          <button
-            type="submit"
-            disabled={pending}
-            className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : <EyeOff className="h-3 w-3" />}
-            Confirm
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfirming(false)}
-            disabled={pending}
-            className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] hover:bg-[color:var(--color-bg-secondary)]"
-          >
-            Cancel
-          </button>
-        </form>
+        <div className="flex flex-col gap-2 rounded-md border border-amber-200 bg-amber-50/50 px-2.5 py-2">
+          <label className="flex cursor-pointer items-start gap-2 text-[11px] text-amber-900">
+            <input
+              type="checkbox"
+              checked={alsoPushToMonday}
+              onChange={e => setAlsoPushToMonday(e.target.checked)}
+              className="mt-0.5 h-3.5 w-3.5 cursor-pointer accent-amber-700"
+            />
+            <span>
+              <strong>Also push to Monday Not Relevant board</strong>
+              <span className="block text-[10px] text-amber-800/80">
+                Recommended — adds a permanent record so future scrapes of the
+                same domain auto-skip via the Monday duplicate check, not just
+                the local flag.
+              </span>
+            </span>
+          </label>
+          {alsoPushToMonday ? (
+            <form action={pushAction} className="flex items-center gap-2">
+              <input type="hidden" name="lead_id" value={leadId} />
+              <button
+                type="submit"
+                disabled={pushPending}
+                className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {pushPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                Push to Monday + mark not relevant
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                disabled={pushPending}
+                className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] hover:bg-[color:var(--color-bg-secondary)]"
+              >
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <form action={action} className="flex items-center gap-2">
+              <input type="hidden" name="lead_id" value={leadId} />
+              <input type="hidden" name="value" value="true" />
+              <button
+                type="submit"
+                disabled={pending}
+                className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : <EyeOff className="h-3 w-3" />}
+                Confirm (local only)
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                disabled={pending}
+                className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] hover:bg-[color:var(--color-bg-secondary)]"
+              >
+                Cancel
+              </button>
+            </form>
+          )}
+        </div>
       )}
       {state?.status === 'error' && (
         <p className="rounded-md bg-red-50 px-2 py-1 text-[11px] text-red-700">
           {state.error}
+        </p>
+      )}
+      {pushState?.status === 'error' && (
+        <p className="rounded-md bg-red-50 px-2 py-1 text-[11px] text-red-700">
+          {pushState.error}
+        </p>
+      )}
+      {pushState?.status === 'ok' && (
+        <p className="rounded-md bg-emerald-50 px-2 py-1 text-[11px] text-emerald-800">
+          {pushState.message}
+        </p>
+      )}
+    </section>
+  )
+}
+
+/**
+ * Standalone "Push to Monday Not Relevant" button — sits between
+ * the Not-Relevant panel and the regular Push-to-Monday panel.
+ * One click pushes the lead to Monday's Not Relevant board AND
+ * marks it not-relevant locally, so the operator doesn't have to
+ * tick the prompt checkbox in the not-relevant flow.
+ */
+function PushNotRelevantButton({ leadId }: { leadId: number }) {
+  const initial: PushNotRelevantState = null
+  const [state, action, pending] = useActionState(
+    pushLeadToMondayNotRelevantAction,
+    initial,
+  )
+
+  useEffect(() => {
+    if (state?.status === 'ok') invalidateLeadDetailCache(leadId)
+  }, [state, leadId])
+
+  return (
+    <section className="rounded-md border border-amber-200 bg-amber-50/40 px-3 py-2.5">
+      <form action={action} className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[12px] font-semibold text-amber-900">
+            Push to Monday — Not Relevant
+          </p>
+          <p className="mt-0.5 text-[10px] text-amber-800">
+            Adds the domain to Monday&apos;s Not Relevant board and marks it
+            not-relevant locally. Future scrapes of the same domain auto-skip.
+          </p>
+        </div>
+        <input type="hidden" name="lead_id" value={leadId} />
+        <button
+          type="submit"
+          disabled={pending}
+          className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+          Push & mark
+        </button>
+      </form>
+      {state?.status === 'error' && (
+        <p className="mt-2 rounded-md bg-red-100 px-2 py-1 text-[11px] text-red-800">
+          {state.error}
+        </p>
+      )}
+      {state?.status === 'ok' && (
+        <p className="mt-2 rounded-md bg-emerald-100 px-2 py-1 text-[11px] text-emerald-900">
+          {state.message}
         </p>
       )}
     </section>
