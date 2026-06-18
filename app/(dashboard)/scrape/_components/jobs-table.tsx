@@ -391,36 +391,30 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
   }, [contextToast])
 
   function onJobContextMenu(e: React.MouseEvent, jobId: string) {
-    // Ctrl/Cmd+Right-Click → toggle row in selection (primary
-    // multi-select gesture).
-    if (e.ctrlKey || e.metaKey) {
+    const isSelected = selectedIds.has(jobId)
+    const hasSelection = selectedIds.size > 0
+
+    // Right-click on a SELECTED row → pop the actions menu.
+    if (hasSelection && isSelected) {
       e.preventDefault()
-      if (!selectMode) setSelectMode(true)
-      setSelectedIds(prev => {
-        const next = new Set(prev)
-        if (next.has(jobId)) next.delete(jobId)
-        else next.add(jobId)
-        return next
-      })
+      setContextRowId(jobId)
+      setContextCursor({ x: e.clientX, y: e.clientY })
       return
     }
-    // Plain right-click WHILE a selection is active → clear and
-    // back to normal browsing.
-    if (selectedIds.size > 0) {
+    // Right-click on UNSELECTED row while selection is active →
+    // suppress OS menu but don't disturb the selection.
+    if (hasSelection && !isSelected) {
       e.preventDefault()
-      setSelectedIds(new Set())
-      setSelectMode(false)
       return
     }
-    // No selection + no ctrl → native OS menu.
+    // No selection → native OS menu.
   }
 
-  function onJobCheckboxContextMenu(e: React.MouseEvent, jobId: string) {
-    // The exception to "right-click clears": right-clicking a row's
-    // checkbox ADDS the row instead. stopPropagation prevents the
-    // row-level onContextMenu from running and clearing the
+  function onJobCheckboxClick(e: React.MouseEvent, jobId: string) {
+    // Exception to "left-click clears": clicking the checkbox ADDS
+    // (or toggles) the row instead. stopPropagation prevents the
+    // row-level click handler from running and clearing the
     // selection.
-    e.preventDefault()
     e.stopPropagation()
     if (!selectMode) setSelectMode(true)
     setSelectedIds(prev => {
@@ -508,15 +502,6 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
       return next
     })
   }
-  const toggleOne = (id: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
   if (jobs.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-10 text-center text-[12px] text-[color:var(--color-text-secondary)]">
@@ -618,24 +603,31 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                     e.preventDefault()
                   }}
                   onClickCapture={e => {
+                    const isCtrl = e.ctrlKey || e.metaKey
                     const hasSelection = selectedIds.size > 0
-                    const isSelected = selectedIds.has(job.id)
-                    // Left-click on a SELECTED row while in select-mode
-                    // → pop the actions menu (Re-run / Delete / Open).
-                    if (hasSelection && isSelected) {
+                    // Ctrl+Left-Click → toggle selection.
+                    if (isCtrl) {
                       e.preventDefault()
                       e.stopPropagation()
-                      setContextRowId(job.id)
-                      setContextCursor({ x: e.clientX, y: e.clientY })
+                      if (!selectMode) setSelectMode(true)
+                      setSelectedIds(prev => {
+                        const next = new Set(prev)
+                        if (next.has(job.id)) next.delete(job.id)
+                        else next.add(job.id)
+                        return next
+                      })
                       return
                     }
-                    // Left-click on an UNSELECTED row while a
-                    // selection is active → no-op. Selection mode
-                    // claims the gesture; operator clears selection
-                    // (right-click elsewhere) to navigate again.
-                    if (hasSelection && !isSelected) {
+                    // Plain left-click WHILE a selection is active
+                    // → clear selection + exit select-mode. Back to
+                    // normal browsing. Checkbox-cell click is the
+                    // exception (its handler stopPropagation's so
+                    // this code doesn't fire).
+                    if (hasSelection) {
                       e.preventDefault()
                       e.stopPropagation()
+                      setSelectedIds(new Set())
+                      setSelectMode(false)
                       return
                     }
                     // No selection → fall through to the row's
@@ -650,14 +642,14 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                   {selectMode && (
                     <td
                       className="w-8 px-2 py-1 align-middle"
-                      onContextMenu={e => onJobCheckboxContextMenu(e, job.id)}
+                      onClick={e => onJobCheckboxClick(e, job.id)}
                     >
                       <input
                         type="checkbox"
                         aria-label={`Select job ${job.keyword}`}
                         checked={isSelected}
-                        onChange={() => toggleOne(job.id)}
-                        onContextMenu={e => onJobCheckboxContextMenu(e, job.id)}
+                        onChange={() => {/* handled by onClick */}}
+                        onClick={e => onJobCheckboxClick(e, job.id)}
                         className="h-3.5 w-3.5 cursor-pointer accent-[color:var(--color-accent)]"
                       />
                     </td>

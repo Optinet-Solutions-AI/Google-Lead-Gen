@@ -254,52 +254,15 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
   }, [contextToast])
 
   function onRowClickCapture(e: React.MouseEvent, leadId: number) {
-    const isSelected = selectedIds.has(leadId)
+    const isCtrl = e.ctrlKey || e.metaKey
     const hasSelection = selectedIds.size > 0
 
-    // Plain left-click on a row in the active selection → pop the
-    // actions menu at the cursor. The menu scopes its actions to
-    // the entire selection.
-    if (hasSelection && isSelected) {
+    // Ctrl/Cmd+Left-Click → toggle this row in the selection.
+    // Primary multi-select gesture. Capture phase intercepts before
+    // any child link / button default action fires.
+    if (isCtrl) {
       e.preventDefault()
       e.stopPropagation()
-      setContextRowId(leadId)
-      setContextCursor({ x: e.clientX, y: e.clientY })
-      return
-    }
-
-    // Plain left-click on an UNSELECTED row while a selection
-    // exists → do nothing. The selection is the active mode; only
-    // selected rows respond to clicks. Operator must clear the
-    // selection (right-click elsewhere) to resume normal row
-    // navigation.
-    if (hasSelection && !isSelected) {
-      e.preventDefault()
-      e.stopPropagation()
-      return
-    }
-
-    // No selection → fall through. DomainButton opens the drawer,
-    // URL link opens a new tab.
-  }
-
-  function onRowMouseDownCapture(e: React.MouseEvent) {
-    if (e.button !== 0) return
-    const hasSelection = selectedIds.size > 0
-    // While a selection is active, swallow the mousedown side
-    // effects (focus, text-selection) on any row click so the
-    // capture-phase click handler can decide what to do without
-    // visible flicker.
-    if (!hasSelection) return
-    e.preventDefault()
-  }
-
-  function onRowContextMenu(e: React.MouseEvent, leadId: number) {
-    // Ctrl/Cmd+Right-Click → toggle this row in the selection.
-    // Primary gesture for multi-select; works whether or not a
-    // selection already exists.
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault()
       if (!selectMode) setSelectMode(true)
       setSelectedIds(prev => {
         const next = new Set(prev)
@@ -310,26 +273,61 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
       return
     }
 
-    // Plain right-click anywhere on a row WHILE a selection is
-    // active → clear the selection and exit select-mode. Back to
-    // normal navigation in one gesture.
-    if (selectedIds.size > 0) {
+    // Plain left-click anywhere on a row WHILE a selection is
+    // active → clear selection + exit select-mode. Back to normal
+    // navigation in one gesture. Exception: the checkbox cell
+    // stops propagation so its own onChange (toggle) wins.
+    if (hasSelection) {
       e.preventDefault()
+      e.stopPropagation()
       setSelectedIds(new Set())
       setSelectMode(false)
       return
     }
 
-    // No selection + no ctrl → let the browser show its native
-    // context menu.
+    // No selection + no ctrl → fall through. DomainButton opens
+    // the drawer, URL link opens a new tab.
   }
 
-  // Per-checkbox-cell right-click handler. The exception to the
-  // "right-click clears" rule: right-clicking the row's checkbox
-  // ADDS the row to the selection (or toggles it). stopPropagation
-  // stops the row-level onContextMenu from running and clearing.
-  function onCheckboxContextMenu(e: React.MouseEvent, leadId: number) {
+  function onRowMouseDownCapture(e: React.MouseEvent) {
+    if (e.button !== 0) return
+    const isCtrl = e.ctrlKey || e.metaKey
+    const hasSelection = selectedIds.size > 0
+    // Swallow mousedown side effects (focus, text-select) when our
+    // capture-phase click handler is going to intercept.
+    if (!isCtrl && !hasSelection) return
     e.preventDefault()
+  }
+
+  function onRowContextMenu(e: React.MouseEvent, leadId: number) {
+    const isSelected = selectedIds.has(leadId)
+    const hasSelection = selectedIds.size > 0
+
+    // Right-click on a SELECTED row → pop the actions menu.
+    if (hasSelection && isSelected) {
+      e.preventDefault()
+      setContextRowId(leadId)
+      setContextCursor({ x: e.clientX, y: e.clientY })
+      return
+    }
+
+    // Right-click on an UNSELECTED row while a selection is active
+    // → nothing. preventDefault suppresses the OS menu so the
+    // operator doesn't get a confusing native menu in the middle
+    // of multi-select work; the selection stays intact.
+    if (hasSelection && !isSelected) {
+      e.preventDefault()
+      return
+    }
+
+    // No selection → let the browser show its native context menu.
+  }
+
+  // Per-checkbox-cell click handler. Exception to the "left-click
+  // clears" rule: clicking the row's checkbox ADDS the row instead
+  // of clearing. stopPropagation prevents the row-level handler
+  // from running and wiping the selection.
+  function onCheckboxClick(e: React.MouseEvent, leadId: number) {
     e.stopPropagation()
     if (!selectMode) setSelectMode(true)
     setSelectedIds(prev => {
@@ -442,15 +440,6 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
       return next
     })
   }
-  const toggleOne = (id: number) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
   if (rows.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-10 text-center text-[12px] text-[color:var(--color-text-secondary)]">
@@ -567,14 +556,14 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
                 {selectMode && (
                   <Td
                     className="w-8 px-2"
-                    onContextMenu={e => onCheckboxContextMenu(e, row.id)}
+                    onClick={e => onCheckboxClick(e, row.id)}
                   >
                     <input
                       type="checkbox"
                       aria-label={`Select lead ${row.id}`}
                       checked={selectedIds.has(row.id)}
-                      onChange={() => toggleOne(row.id)}
-                      onContextMenu={e => onCheckboxContextMenu(e, row.id)}
+                      onChange={() => {/* handled by cell onClick */}}
+                      onClick={e => onCheckboxClick(e, row.id)}
                       className="h-3.5 w-3.5 cursor-pointer accent-[color:var(--color-accent)]"
                     />
                   </Td>
@@ -722,8 +711,8 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
                     type="checkbox"
                     aria-label={`Select lead ${row.id}`}
                     checked={selectedIds.has(row.id)}
-                    onChange={() => toggleOne(row.id)}
-                    onContextMenu={e => onCheckboxContextMenu(e, row.id)}
+                    onChange={() => {/* handled by onClick */}}
+                    onClick={e => onCheckboxClick(e, row.id)}
                     className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[color:var(--color-accent)]"
                   />
                 )}
@@ -1015,16 +1004,19 @@ function Td({
   children,
   className,
   title,
+  onClick,
   onContextMenu,
 }: {
   children: React.ReactNode
   className?: string
   title?: string
+  onClick?: (e: React.MouseEvent<HTMLTableCellElement>) => void
   onContextMenu?: (e: React.MouseEvent<HTMLTableCellElement>) => void
 }) {
   return (
     <td
       {...(title ? { title } : {})}
+      {...(onClick ? { onClick } : {})}
       {...(onContextMenu ? { onContextMenu } : {})}
       className={['whitespace-nowrap px-3 py-2 align-top text-[color:var(--color-text-primary)]', className ?? ''].join(' ')}
     >
