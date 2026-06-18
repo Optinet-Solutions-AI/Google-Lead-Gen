@@ -253,13 +253,23 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
   }, [contextToast])
 
   function onRowClickCapture(e: React.MouseEvent, leadId: number) {
-    // Ctrl/Cmd+Click → toggle selection. Handled in the CAPTURE phase
-    // so that child link cells (URL, domain, scrape-job link) don't
-    // get a chance to perform their default actions before we
-    // preventDefault. Without capture, ctrl+clicking a `<a
-    // target="_blank">` cell would open a new tab BEFORE our row
-    // handler ran — exactly the bug the user reported.
-    if (!(e.ctrlKey || e.metaKey)) return
+    // Once a selection exists (or the operator is in select-mode),
+    // EVERY click on a row is a selection click — toggles that row
+    // in/out, no drawer / no new tab. Mirrors Finder / Excel /
+    // Gmail behaviour: the selection is the active mode and clicks
+    // belong to it. To exit and resume normal clicking, the
+    // operator clears the selection via the toolbar's "Selecting"
+    // toggle or ctrl+clicks the last selected row off.
+    //
+    // Plain click with no selection → fall through to children
+    // (DomainButton opens the drawer, URL link opens a new tab).
+    const isCtrl = e.ctrlKey || e.metaKey
+    const inSelectMode = selectMode || selectedIds.size > 0
+    if (!isCtrl && !inSelectMode) return
+
+    // Capture phase fires before any descendant default action, so
+    // ctrl-clicking a `<a target="_blank">` URL cell doesn't open a
+    // new tab and clicking a DomainButton doesn't open the drawer.
     e.preventDefault()
     e.stopPropagation()
     if (!selectMode) setSelectMode(true)
@@ -276,9 +286,12 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
     // tab" decisions on mousedown when ctrl/meta + primary button
     // are combined. preventDefault here removes the focus-/select-
     // text side-effect of the modified click without affecting
-    // subsequent click handlers.
+    // subsequent click handlers. Also fires for plain clicks while
+    // in select-mode so the row doesn't briefly focus a child link.
     if (e.button !== 0) return
-    if (!(e.ctrlKey || e.metaKey)) return
+    const isCtrl = e.ctrlKey || e.metaKey
+    const inSelectMode = selectMode || selectedIds.size > 0
+    if (!isCtrl && !inSelectMode) return
     e.preventDefault()
   }
 

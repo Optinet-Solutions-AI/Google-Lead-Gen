@@ -471,21 +471,26 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                 <tr
                   key={job.id}
                   onMouseDownCapture={e => {
-                    // Block the browser's "open in new tab" decision
-                    // when ctrl/meta + left button is the combo —
-                    // some links inside the row would otherwise trip
-                    // the new-tab opener before our click handler.
+                    // Capture-phase preventDefault for ctrl+click AND
+                    // for plain click while a selection is active —
+                    // both modes treat the row as a selection target,
+                    // not a navigation target.
                     if (e.button !== 0) return
-                    if (!(e.ctrlKey || e.metaKey)) return
+                    const isCtrl = e.ctrlKey || e.metaKey
+                    const inSelectMode = selectMode || selectedIds.size > 0
+                    if (!isCtrl && !inSelectMode) return
                     e.preventDefault()
                   }}
                   onClickCapture={e => {
-                    // Ctrl/Cmd+Click toggles selection. Capture phase
-                    // intercepts BEFORE any child link cell can fire
-                    // its default action (Job row contains a `Link`
-                    // to /scrape/<id> which would otherwise open a
-                    // new tab on ctrl+click).
-                    if (!(e.ctrlKey || e.metaKey)) return
+                    // While in select-mode (or on any ctrl+click) the
+                    // entire row behaves like a checkbox: toggling
+                    // selection, never opening the /scrape/<id> link.
+                    // Operator exits select-mode via the toolbar's
+                    // "Selecting" pill or by clearing the last
+                    // selected row.
+                    const isCtrl = e.ctrlKey || e.metaKey
+                    const inSelectMode = selectMode || selectedIds.size > 0
+                    if (!isCtrl && !inSelectMode) return
                     e.preventDefault()
                     e.stopPropagation()
                     if (!selectMode) setSelectMode(true)
