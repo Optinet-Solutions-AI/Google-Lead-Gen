@@ -391,12 +391,37 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
   }, [contextToast])
 
   function onJobContextMenu(e: React.MouseEvent, jobId: string) {
-    // Plain right-click → browser default OS menu (no preventDefault).
-    // Ctrl/Cmd+Right-Click → toggle this row in the selection,
-    // mirror of Ctrl+Click for operators whose right hand prefers
-    // the right mouse button.
-    if (!(e.ctrlKey || e.metaKey)) return
+    // Ctrl/Cmd+Right-Click → toggle row in selection (primary
+    // multi-select gesture).
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault()
+      if (!selectMode) setSelectMode(true)
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        if (next.has(jobId)) next.delete(jobId)
+        else next.add(jobId)
+        return next
+      })
+      return
+    }
+    // Plain right-click WHILE a selection is active → clear and
+    // back to normal browsing.
+    if (selectedIds.size > 0) {
+      e.preventDefault()
+      setSelectedIds(new Set())
+      setSelectMode(false)
+      return
+    }
+    // No selection + no ctrl → native OS menu.
+  }
+
+  function onJobCheckboxContextMenu(e: React.MouseEvent, jobId: string) {
+    // The exception to "right-click clears": right-clicking a row's
+    // checkbox ADDS the row instead. stopPropagation prevents the
+    // row-level onContextMenu from running and clearing the
+    // selection.
     e.preventDefault()
+    e.stopPropagation()
     if (!selectMode) setSelectMode(true)
     setSelectedIds(prev => {
       const next = new Set(prev)
@@ -593,32 +618,28 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                     e.preventDefault()
                   }}
                   onClickCapture={e => {
-                    const isCtrl = e.ctrlKey || e.metaKey
                     const hasSelection = selectedIds.size > 0
-                    // Ctrl/Cmd+Click → toggle selection.
-                    if (isCtrl) {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      if (!selectMode) setSelectMode(true)
-                      setSelectedIds(prev => {
-                        const next = new Set(prev)
-                        if (next.has(job.id)) next.delete(job.id)
-                        else next.add(job.id)
-                        return next
-                      })
-                      return
-                    }
-                    // Plain click with an active selection → pop the
-                    // actions menu (Re-run / Delete / Open).
-                    if (hasSelection) {
+                    const isSelected = selectedIds.has(job.id)
+                    // Left-click on a SELECTED row while in select-mode
+                    // → pop the actions menu (Re-run / Delete / Open).
+                    if (hasSelection && isSelected) {
                       e.preventDefault()
                       e.stopPropagation()
                       setContextRowId(job.id)
                       setContextCursor({ x: e.clientX, y: e.clientY })
                       return
                     }
-                    // Otherwise fall through to the Link inside the
-                    // row — navigates to /scrape/<id>.
+                    // Left-click on an UNSELECTED row while a
+                    // selection is active → no-op. Selection mode
+                    // claims the gesture; operator clears selection
+                    // (right-click elsewhere) to navigate again.
+                    if (hasSelection && !isSelected) {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      return
+                    }
+                    // No selection → fall through to the row's
+                    // <Link> → /scrape/<id>.
                   }}
                   onContextMenu={e => onJobContextMenu(e, job.id)}
                   className={[
@@ -627,12 +648,16 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                   ].join(' ')}
                 >
                   {selectMode && (
-                    <td className="w-8 px-2 py-1 align-middle">
+                    <td
+                      className="w-8 px-2 py-1 align-middle"
+                      onContextMenu={e => onJobCheckboxContextMenu(e, job.id)}
+                    >
                       <input
                         type="checkbox"
                         aria-label={`Select job ${job.keyword}`}
                         checked={isSelected}
                         onChange={() => toggleOne(job.id)}
+                        onContextMenu={e => onJobCheckboxContextMenu(e, job.id)}
                         className="h-3.5 w-3.5 cursor-pointer accent-[color:var(--color-accent)]"
                       />
                     </td>
