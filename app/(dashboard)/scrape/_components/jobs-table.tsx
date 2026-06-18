@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import {
   Ban,
   Bot,
@@ -37,6 +38,12 @@ type Props = {
    *  underlying server actions are independently gated, but hiding the
    *  UI from non-admins keeps the table cleaner for normal users. */
   isAdmin?: boolean
+  /** Pagination metadata to enable infinite scroll. When provided AND
+   *  size > 0, an IntersectionObserver near the bottom of the table
+   *  fetches the next page from /api/jobs and appends rows. When omitted
+   *  or size === 0 (the "All" sentinel), the table renders only what
+   *  was server-rendered and the operator pages via the chevrons below. */
+  pageInfo?: { page: number; size: number; total: number }
 }
 
 const STATUS_STYLES: Record<ScrapeJob['status'], string> = {
@@ -354,7 +361,100 @@ function PipelineBadges({
   )
 }
 
-export function JobsTable({ jobs, isAdmin = false }: Props) {
+export function JobsTable({ jobs: initialJobs, isAdmin = false, pageInfo }: Props) {
+  // ----- Infinite scroll -----
+  // The page server-renders the first chunk (size rows for `page`).
+  // After hydration, an IntersectionObserver near the bottom of the
+  // table fires a fetch for the NEXT page and appends the rows. The
+  // URL stays on the server-rendered page so the pagination chevrons
+  // below still work — they just jump straight to that page and
+  // reset the appended list. Disabled when size === 0 ("All") because
+  // the server already returns everything (up to the cap).
+  const scrollEnabled = pageInfo !== undefined && pageInfo.size > 0
+  const [extraRows, setExtraRows] = useState<ScrapeJob[]>([])
+  const [extraLoading, setExtraLoading] = useState(false)
+  const [extraError, setExtraError] = useState<string | null>(null)
+  const [nextPage, setNextPage] = useState<number>(
+    pageInfo && pageInfo.size > 0 ? pageInfo.page + 1 : 2,
+  )
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const sp = useSearchParams()
+  const jobs = useMemo(
+    () => (extraRows.length === 0 ? initialJobs : [...initialJobs, ...extraRows]),
+    [initialJobs, extraRows],
+  )
+
+  // Reset the cursor whenever a NEW server-rendered chunk arrives —
+  // filter change, sort change, size change, or a pagination chevron
+  // click. Watching initialJobs' id signature (not the merged `jobs`
+  // signature) avoids a reset-and-re-fetch loop while extras grow.
+  const initialIdSig = useMemo(
+    () => initialJobs.map(j => j.id).join(','),
+    [initialJobs],
+  )
+  useEffect(() => {
+    const resetCursor = () => {
+      setExtraRows([])
+      setExtraError(null)
+      setNextPage(pageInfo && pageInfo.size > 0 ? pageInfo.page + 1 : 2)
+    }
+    resetCursor()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialIdSig, pageInfo?.page, pageInfo?.size])
+
+  const accumulatedCount = initialJobs.length + extraRows.length
+  const hasMore =
+    scrollEnabled &&
+    pageInfo!.size > 0 &&
+    accumulatedCount < pageInfo!.total &&
+    accumulatedCount > 0
+
+  const loadMore = useCallback(async () => {
+    if (!scrollEnabled || !pageInfo) return
+    if (extraLoading) return
+    if (!hasMore) return
+    setExtraLoading(true)
+    setExtraError(null)
+    try {
+      const params = new URLSearchParams(sp.toString())
+      params.set('page', String(nextPage))
+      params.set('size', String(pageInfo.size))
+      const res = await fetch(`/api/jobs?${params.toString()}`, {
+        cache: 'no-store',
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = (await res.json()) as { rows: ScrapeJob[]; total: number }
+      if (!Array.isArray(data.rows)) {
+        throw new Error('Bad payload: rows is not an array.')
+      }
+      setExtraRows(prev => prev.concat(data.rows))
+      setNextPage(p => p + 1)
+    } catch (err) {
+      setExtraError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setExtraLoading(false)
+    }
+  }, [extraLoading, hasMore, nextPage, pageInfo, scrollEnabled, sp])
+
+  useEffect(() => {
+    const node = sentinelRef.current
+    if (!node) return
+    if (!hasMore) return
+    const obs = new IntersectionObserver(
+      entries => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            loadMore()
+            break
+          }
+        }
+      },
+      { root: null, rootMargin: '200px', threshold: 0 },
+    )
+    obs.observe(node)
+    return () => obs.disconnect()
+  }, [hasMore, loadMore])
+
   // Bulk-select state — only meaningful when isAdmin is true. Drop
   // any selected ids that aren't on the current page so paging away
   // doesn't keep stale selections.
@@ -725,6 +825,43 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
         </tbody>
       </table>
       </div>
+
+      {/* Infinite-scroll sentinel + status row. Only rendered when
+       *  pageInfo is supplied AND size > 0 (size === 0 is the "All"
+       *  sentinel — server already returned everything). The status
+       *  row sits below the table so the operator never wonders why
+       *  the list stopped growing. */}
+      {scrollEnabled && (
+        <>
+          <div ref={sentinelRef} aria-hidden="true" className="h-px w-full" />
+          <div className="flex items-center justify-center py-3 text-[11px] text-[color:var(--color-text-secondary)]">
+            {extraLoading ? (
+              <span>Loading more…</span>
+            ) : extraError ? (
+              <span className="rounded-md bg-red-50 px-2 py-1 text-red-800">
+                Failed to load more: {extraError}{' '}
+                <button
+                  type="button"
+                  onClick={loadMore}
+                  className="ml-2 underline underline-offset-2"
+                >
+                  Retry
+                </button>
+              </span>
+            ) : hasMore ? (
+              <span>
+                Scroll to load more · {accumulatedCount.toLocaleString()} of{' '}
+                {pageInfo!.total.toLocaleString()}
+              </span>
+            ) : accumulatedCount > 0 ? (
+              <span>
+                All {accumulatedCount.toLocaleString()}{' '}
+                {accumulatedCount === 1 ? 'job' : 'jobs'} loaded.
+              </span>
+            ) : null}
+          </div>
+        </>
+      )}
 
       <RowContextMenu
         cursor={contextCursor}

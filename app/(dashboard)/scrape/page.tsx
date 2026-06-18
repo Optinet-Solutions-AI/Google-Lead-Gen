@@ -104,7 +104,11 @@ export default async function ScrapePage({
 
         <AdvancedFilters columns={columns} />
 
-        <JobsTable jobs={rows} isAdmin={isAdmin} />
+        <JobsTable
+          jobs={rows}
+          isAdmin={isAdmin}
+          pageInfo={{ page, size, total }}
+        />
         <JobsCardList jobs={rows} />
       </section>
 
