@@ -1,8 +1,20 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
-import { Ban, Bot, Check, CheckSquare, ShieldAlert, Square, User, XCircle } from 'lucide-react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
+import {
+  Ban,
+  Bot,
+  Check,
+  CheckSquare,
+  ExternalLink,
+  RotateCcw,
+  ShieldAlert,
+  Square,
+  Trash2,
+  User,
+  XCircle,
+} from 'lucide-react'
 import {
   KICK_PIPELINE_STAGES,
   VISIBLE_PIPELINE_STAGES,
@@ -10,6 +22,11 @@ import {
   type KickPipelineStatus,
   type ScrapeJob,
 } from '../_lib/pipeline'
+import { bulkDeleteScrapeJobs, bulkRerunScrapeJobs } from '../actions'
+import {
+  RowContextMenu,
+  type ContextMenuAction,
+} from '../../_components/row-context-menu'
 import { BulkScrapeActionsBar } from './bulk-actions-bar'
 import { JobActionsButton } from './job-row-actions'
 import { ReviewedCheckbox } from './reviewed-checkbox'
@@ -356,6 +373,98 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
 
   const visibleIds = useMemo(() => jobs.map(j => j.id), [jobs])
   const allChecked = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
+
+  // ----- Ctrl+Click multi-select + click-on-selected context menu -----
+  // Same UX shape as /leads. Ctrl/Cmd+Click adds/removes from
+  // selection. Once any row is selected, plain click on any row
+  // opens the actions menu at cursor instead of navigating to
+  // /scrape/<id>. Right-click also opens the menu.
+  const [contextCursor, setContextCursor] = useState<{ x: number; y: number } | null>(null)
+  const [contextRowId, setContextRowId] = useState<string | null>(null)
+  const [actionPending, startAction] = useTransition()
+  const [contextToast, setContextToast] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useEffect(() => {
+    if (!contextToast) return
+    const t = setTimeout(() => setContextToast(null), contextToast.ok ? 4000 : 8000)
+    return () => clearTimeout(t)
+  }, [contextToast])
+
+  function onJobContextMenu(e: React.MouseEvent, jobId: string) {
+    e.preventDefault()
+    if (!selectedIds.has(jobId) && selectedIds.size === 0) {
+      setSelectedIds(new Set([jobId]))
+      if (!selectMode) setSelectMode(true)
+    }
+    setContextRowId(jobId)
+    setContextCursor({ x: e.clientX, y: e.clientY })
+  }
+
+  function buildJobContextActions(): ContextMenuAction[] {
+    const rowId = contextRowId
+    if (rowId === null) return []
+    const targetIds = selectedIds.size > 0 ? Array.from(selectedIds) : [rowId]
+    const n = targetIds.length
+    const isBulk = n > 1
+    return [
+      {
+        label: 'Open job',
+        icon: ExternalLink,
+        disabled: isBulk,
+        hint: isBulk ? 'Disabled — open one job at a time' : undefined,
+        onClick: () => {
+          // Use window.open(_self) to navigate; <Link> isn't accessible here.
+          window.location.href = `/scrape/${rowId}`
+        },
+        separatorAfter: true,
+      },
+      {
+        label: isBulk ? `Re-run ${n} jobs` : 'Re-run job',
+        icon: RotateCcw,
+        disabled: !isAdmin,
+        hint: !isAdmin
+          ? 'Admin only — bulk re-run creates fresh queue rows'
+          : 'Clones the source jobs into the queue, workers pick them up in ~5s',
+        onClick: () =>
+          startAction(async () => {
+            const fd = new FormData()
+            for (const id of targetIds) fd.append('job_ids', id)
+            const result = await bulkRerunScrapeJobs(null, fd)
+            setContextToast(
+              result?.status === 'ok'
+                ? { ok: true, text: result.message }
+                : { ok: false, text: result?.error ?? 'Unknown error.' },
+            )
+            if (result?.status === 'ok') setSelectedIds(new Set())
+          }),
+      },
+      {
+        label: isBulk ? `Delete ${n} jobs` : 'Delete job',
+        icon: Trash2,
+        destructive: true,
+        disabled: !isAdmin,
+        hint: !isAdmin
+          ? 'Admin only — destructive: drops leads, screenshots, s-tags'
+          : 'Wipes the selected jobs AND every lead / screenshot / s-tag they produced',
+        onClick: () =>
+          startAction(async () => {
+            const ok = window.confirm(
+              `Delete ${n} job${n === 1 ? '' : 's'} permanently?\n\nThis also deletes every lead, screenshot, and s-tag row produced by them. Cannot be undone.`,
+            )
+            if (!ok) return
+            const fd = new FormData()
+            for (const id of targetIds) fd.append('job_ids', id)
+            const result = await bulkDeleteScrapeJobs(null, fd)
+            setContextToast(
+              result?.status === 'ok'
+                ? { ok: true, text: result.message }
+                : { ok: false, text: result?.error ?? 'Unknown error.' },
+            )
+            if (result?.status === 'ok') setSelectedIds(new Set())
+          }),
+      },
+    ]
+  }
   const toggleAll = () => {
     setSelectedIds(prev => {
       if (allChecked) {
@@ -471,36 +580,41 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                 <tr
                   key={job.id}
                   onMouseDownCapture={e => {
-                    // Capture-phase preventDefault for ctrl+click AND
-                    // for plain click while a selection is active —
-                    // both modes treat the row as a selection target,
-                    // not a navigation target.
                     if (e.button !== 0) return
                     const isCtrl = e.ctrlKey || e.metaKey
-                    const inSelectMode = selectMode || selectedIds.size > 0
-                    if (!isCtrl && !inSelectMode) return
+                    const hasSelection = selectedIds.size > 0
+                    if (!isCtrl && !hasSelection) return
                     e.preventDefault()
                   }}
                   onClickCapture={e => {
-                    // While in select-mode (or on any ctrl+click) the
-                    // entire row behaves like a checkbox: toggling
-                    // selection, never opening the /scrape/<id> link.
-                    // Operator exits select-mode via the toolbar's
-                    // "Selecting" pill or by clearing the last
-                    // selected row.
                     const isCtrl = e.ctrlKey || e.metaKey
-                    const inSelectMode = selectMode || selectedIds.size > 0
-                    if (!isCtrl && !inSelectMode) return
-                    e.preventDefault()
-                    e.stopPropagation()
-                    if (!selectMode) setSelectMode(true)
-                    setSelectedIds(prev => {
-                      const next = new Set(prev)
-                      if (next.has(job.id)) next.delete(job.id)
-                      else next.add(job.id)
-                      return next
-                    })
+                    const hasSelection = selectedIds.size > 0
+                    // Ctrl/Cmd+Click → toggle selection.
+                    if (isCtrl) {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      if (!selectMode) setSelectMode(true)
+                      setSelectedIds(prev => {
+                        const next = new Set(prev)
+                        if (next.has(job.id)) next.delete(job.id)
+                        else next.add(job.id)
+                        return next
+                      })
+                      return
+                    }
+                    // Plain click with an active selection → pop the
+                    // actions menu (Re-run / Delete / Open).
+                    if (hasSelection) {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setContextRowId(job.id)
+                      setContextCursor({ x: e.clientX, y: e.clientY })
+                      return
+                    }
+                    // Otherwise fall through to the Link inside the
+                    // row — navigates to /scrape/<id>.
                   }}
+                  onContextMenu={e => onJobContextMenu(e, job.id)}
                   className={[
                     'group border-b border-[color:var(--color-border)] last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]',
                     selectMode && isSelected ? 'bg-[color:var(--color-accent)]/10' : '',
@@ -586,6 +700,32 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
         </tbody>
       </table>
       </div>
+
+      <RowContextMenu
+        cursor={contextCursor}
+        actions={buildJobContextActions()}
+        onClose={() => {
+          setContextCursor(null)
+          setContextRowId(null)
+        }}
+      />
+
+      {(actionPending || contextToast) && (
+        <div className="pointer-events-none fixed bottom-4 right-4 z-50">
+          <div
+            className={[
+              'rounded-md px-3 py-2 text-[12px] shadow-lg',
+              actionPending
+                ? 'bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-primary)] border border-[color:var(--color-border)]'
+                : contextToast?.ok
+                  ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                  : 'bg-red-100 text-red-800 border border-red-300',
+            ].join(' ')}
+          >
+            {actionPending ? 'Working…' : contextToast?.text}
+          </div>
+        </div>
+      )}
     </>
   )
 }

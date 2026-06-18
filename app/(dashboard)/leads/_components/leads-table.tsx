@@ -12,6 +12,7 @@ import {
   pushLeadToMondayNotRelevantAction,
   setAffiliateLabel,
   setContactLabel,
+  setNotRelevantAction,
   setRoosterLabel,
   setStagLabel,
 } from '../actions'
@@ -253,45 +254,58 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
   }, [contextToast])
 
   function onRowClickCapture(e: React.MouseEvent, leadId: number) {
-    // Once a selection exists (or the operator is in select-mode),
-    // EVERY click on a row is a selection click — toggles that row
-    // in/out, no drawer / no new tab. Mirrors Finder / Excel /
-    // Gmail behaviour: the selection is the active mode and clicks
-    // belong to it. To exit and resume normal clicking, the
-    // operator clears the selection via the toolbar's "Selecting"
-    // toggle or ctrl+clicks the last selected row off.
-    //
-    // Plain click with no selection → fall through to children
-    // (DomainButton opens the drawer, URL link opens a new tab).
     const isCtrl = e.ctrlKey || e.metaKey
-    const inSelectMode = selectMode || selectedIds.size > 0
-    if (!isCtrl && !inSelectMode) return
+    const isSelected = selectedIds.has(leadId)
+    const hasSelection = selectedIds.size > 0
 
-    // Capture phase fires before any descendant default action, so
-    // ctrl-clicking a `<a target="_blank">` URL cell doesn't open a
-    // new tab and clicking a DomainButton doesn't open the drawer.
-    e.preventDefault()
-    e.stopPropagation()
-    if (!selectMode) setSelectMode(true)
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(leadId)) next.delete(leadId)
-      else next.add(leadId)
-      return next
-    })
+    // Ctrl/Cmd+Click → toggle this row in the selection. Capture
+    // phase intercepts BEFORE descendant link cells fire so the URL
+    // cell can't open a new tab.
+    if (isCtrl) {
+      e.preventDefault()
+      e.stopPropagation()
+      if (!selectMode) setSelectMode(true)
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        if (next.has(leadId)) next.delete(leadId)
+        else next.add(leadId)
+        return next
+      })
+      return
+    }
+
+    // Plain click on a row WHILE a selection exists → pop the
+    // actions menu at the cursor. The menu scopes its actions to
+    // the active selection ("Force enrich 5 leads", "Push 5 to Not
+    // Relevant"). Operator dismisses with Escape or by clicking
+    // outside; ctrl+click is still the way to add/remove from the
+    // selection.
+    if (hasSelection) {
+      e.preventDefault()
+      e.stopPropagation()
+      // If the operator clicked an unselected row, scope the menu
+      // to the existing selection — don't silently add the clicked
+      // row. They can ctrl-click to extend before clicking again.
+      // If they clicked a selected row, also fine — same scope.
+      void isSelected
+      setContextRowId(leadId)
+      setContextCursor({ x: e.clientX, y: e.clientY })
+      return
+    }
+
+    // No selection + no ctrl → fall through. DomainButton opens
+    // the drawer, URL link opens a new tab.
   }
 
   function onRowMouseDownCapture(e: React.MouseEvent) {
-    // Belt-and-suspenders: some browsers also kick off "open new
-    // tab" decisions on mousedown when ctrl/meta + primary button
-    // are combined. preventDefault here removes the focus-/select-
-    // text side-effect of the modified click without affecting
-    // subsequent click handlers. Also fires for plain clicks while
-    // in select-mode so the row doesn't briefly focus a child link.
     if (e.button !== 0) return
     const isCtrl = e.ctrlKey || e.metaKey
-    const inSelectMode = selectMode || selectedIds.size > 0
-    if (!isCtrl && !inSelectMode) return
+    const hasSelection = selectedIds.size > 0
+    // Belt-and-suspenders preventDefault for ctrl+click AND for
+    // plain click while a selection is active. Same two paths the
+    // click handler intercepts, just one event earlier — kills the
+    // focus / text-selection side effects of those modified clicks.
+    if (!isCtrl && !hasSelection) return
     e.preventDefault()
   }
 
@@ -337,6 +351,31 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
                 : { ok: false, text: result.error },
             )
           }),
+      },
+      {
+        label: isBulk ? `Mark ${n} as not relevant` : 'Mark as not relevant',
+        icon: EyeOff,
+        hint: 'Local flag only — hides from /leads + skips enrichment. Does NOT push to Monday.',
+        onClick: () =>
+          startAction(async () => {
+            let updated = 0
+            const errors: string[] = []
+            for (const id of targetIds) {
+              const fd = new FormData()
+              fd.set('lead_id', String(id))
+              fd.set('value', 'true')
+              const result = await setNotRelevantAction(null, fd)
+              if (result?.status === 'ok') updated += 1
+              else if (result?.status === 'error') errors.push(`#${id}: ${result.error}`)
+            }
+            setContextToast(
+              errors.length === 0
+                ? { ok: true, text: `Marked ${updated} lead${updated === 1 ? '' : 's'} as not relevant.` }
+                : { ok: false, text: `Marked ${updated}/${targetIds.length}. Errors: ${errors.slice(0, 2).join('; ')}` },
+            )
+            if (errors.length === 0) setSelectedIds(new Set())
+          }),
+        separatorAfter: true,
       },
       {
         label: isBulk ? `Push ${n} to Not Relevant` : 'Push to Monday Not Relevant',
