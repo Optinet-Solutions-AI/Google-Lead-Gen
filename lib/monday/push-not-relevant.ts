@@ -132,7 +132,6 @@ export async function pushLeadToMondayNotRelevant(
       monday_pushed_item_id: createdItemId,
       monday_pushed_by: opts.pushedBy,
       pushed_to_monday_at: nowIso,
-      updated_at: nowIso,
     })
     .eq('id', leadId)
   if (updErr) {
