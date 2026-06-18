@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { Check, CheckSquare, ExternalLink, EyeOff, Link2, Send, Square, Zap } from 'lucide-react'
 import { SortHeader } from '../../monday/_components/sort-header'
 import { RowContextMenu, type ContextMenuAction } from '../../_components/row-context-menu'
@@ -31,7 +31,29 @@ type Props = {
   pageInfo?: { page: number; size: number; total: number }
 }
 
-export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
+export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: Props) {
+  // ----- Infinite scroll (Bundle 3) -----
+  // The page server-renders the first chunk (size rows for `page`).
+  // After hydration, an IntersectionObserver near the bottom of the
+  // table fires a fetch for the NEXT page and appends the rows. The
+  // URL stays on the server-rendered page so the pagination chevrons
+  // below still work — they just jump straight to that page and
+  // reset the appended list.
+  const [extraRows, setExtraRows] = useState<LeadRow[]>([])
+  const [extraLoading, setExtraLoading] = useState(false)
+  const [extraError, setExtraError] = useState<string | null>(null)
+  // Tracks the next page to fetch after the SSR'd one. When the
+  // server-rendered page changes (filter, sort, size, page click)
+  // we reset back to page+1 and clear extras.
+  const [nextPage, setNextPage] = useState<number>(
+    pageInfo ? pageInfo.page + 1 : 2,
+  )
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const rows = useMemo(
+    () => (extraRows.length === 0 ? initialRows : [...initialRows, ...extraRows]),
+    [initialRows, extraRows],
+  )
+
   // Drawer is URL-driven via `?lead=<id>` so QA can copy a row link
   // and any teammate clicking it lands on this exact lead's drawer.
   // Local state only as fallback for legacy callers.
@@ -114,6 +136,95 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowIdSig])
+
+  // Reset the infinite-scroll cursor whenever a NEW server-rendered
+  // chunk arrives — filter change, sort change, size change, or a
+  // pagination chevron click. We watch the initialRows' id signature
+  // (not the merged `rows` sig) so extras growing in-page doesn't
+  // trigger a reset and re-fetch loop.
+  const initialIdSig = useMemo(
+    () => initialRows.map(r => r.id).join(','),
+    [initialRows],
+  )
+  useEffect(() => {
+    const resetCursor = () => {
+      setExtraRows([])
+      setExtraError(null)
+      setNextPage(pageInfo ? pageInfo.page + 1 : 2)
+    }
+    resetCursor()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialIdSig, pageInfo?.page, pageInfo?.size])
+
+  // Whether there are more rows beyond what we've loaded. true means
+  // the sentinel will keep firing loadMore on intersect. false means
+  // we've reached the end (or pagination metadata isn't available).
+  const accumulatedCount = initialRows.length + extraRows.length
+  const hasMore =
+    pageInfo !== undefined &&
+    pageInfo.size > 0 &&
+    accumulatedCount < pageInfo.total &&
+    accumulatedCount > 0
+
+  const loadMore = useCallback(async () => {
+    if (!pageInfo || pageInfo.size === 0) return
+    if (extraLoading) return
+    if (!hasMore) return
+    setExtraLoading(true)
+    setExtraError(null)
+    try {
+      const params = new URLSearchParams(sp.toString())
+      // Replace pagination knobs with our cursor while leaving filter
+      // params (q, f, s, country_code, result_type, show_hidden, sort,
+      // order) intact.
+      params.set('page', String(nextPage))
+      params.set('size', String(pageInfo.size))
+      // The `lead` (drawer) + `open` (cross-page sentinel) keys aren't
+      // meaningful for a data fetch — strip them so they don't pollute
+      // the API URL.
+      params.delete('lead')
+      params.delete('open')
+      const res = await fetch(`/api/leads?${params.toString()}`, {
+        cache: 'no-store',
+      })
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`)
+      }
+      const data = (await res.json()) as { rows: LeadRow[]; total: number }
+      if (!Array.isArray(data.rows)) {
+        throw new Error('Bad payload: rows is not an array.')
+      }
+      setExtraRows(prev => prev.concat(data.rows))
+      setNextPage(p => p + 1)
+    } catch (err) {
+      setExtraError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setExtraLoading(false)
+    }
+  }, [extraLoading, hasMore, nextPage, pageInfo, sp])
+
+  // Watch the sentinel div with IntersectionObserver. Threshold 0
+  // (any pixel of overlap) + a 200px rootMargin so the next fetch
+  // starts BEFORE the user actually reaches the bottom — smoother
+  // scrolling, no visible "loading more" jump.
+  useEffect(() => {
+    const node = sentinelRef.current
+    if (!node) return
+    if (!hasMore) return
+    const obs = new IntersectionObserver(
+      entries => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            loadMore()
+            break
+          }
+        }
+      },
+      { root: null, rootMargin: '200px', threshold: 0 },
+    )
+    obs.observe(node)
+    return () => obs.disconnect()
+  }, [hasMore, loadMore])
 
   // Absolute rank for the row-number column. Uses pageInfo so the second
   // page picks up where the first left off (size 50 → page 2 starts at 51).
@@ -631,6 +742,37 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
           </div>
         ))}
       </div>
+
+      {/* Infinite-scroll sentinel + status row. The sentinel is a
+       *  small invisible div the IntersectionObserver watches. The
+       *  status row sits below the visible rows and shows the
+       *  Loading/Error/Loaded-all states so the operator never
+       *  wonders why the list stopped growing. */}
+      {pageInfo && pageInfo.size > 0 && (
+        <>
+          <div ref={sentinelRef} aria-hidden="true" className="h-px w-full" />
+          <div className="flex items-center justify-center py-3 text-[11px] text-[color:var(--color-text-secondary)]">
+            {extraLoading ? (
+              <span>Loading more…</span>
+            ) : extraError ? (
+              <span className="rounded-md bg-red-50 px-2 py-1 text-red-800">
+                Failed to load more: {extraError}{' '}
+                <button
+                  type="button"
+                  onClick={loadMore}
+                  className="ml-2 underline underline-offset-2"
+                >
+                  Retry
+                </button>
+              </span>
+            ) : hasMore ? (
+              <span>Scroll to load more · {accumulatedCount.toLocaleString()} of {pageInfo.total.toLocaleString()}</span>
+            ) : accumulatedCount > 0 ? (
+              <span>All {accumulatedCount.toLocaleString()} {accumulatedCount === 1 ? 'row' : 'rows'} loaded.</span>
+            ) : null}
+          </div>
+        </>
+      )}
 
       <LeadDetailDrawer
         leadId={openLeadId}
