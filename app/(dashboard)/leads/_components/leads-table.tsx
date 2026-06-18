@@ -2,11 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, CheckSquare, EyeOff, Link2, Square } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
+import { Check, CheckSquare, ExternalLink, EyeOff, Link2, Send, Square, Zap } from 'lucide-react'
 import { SortHeader } from '../../monday/_components/sort-header'
+import { RowContextMenu, type ContextMenuAction } from '../../_components/row-context-menu'
 import type { LeadRow } from '../_lib/query'
 import {
+  forceEnrichLeadsAction,
+  pushLeadToMondayNotRelevantAction,
   setAffiliateLabel,
   setContactLabel,
   setRoosterLabel,
@@ -119,6 +122,121 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
 
   const visibleIds = useMemo(() => rows.map(r => r.id), [rows])
   const allChecked = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
+
+  // ----- Ctrl+Click selection + right-click context menu -----
+  // Right-clicking a row pops a small menu with row + bulk actions.
+  // Ctrl/Cmd+Click toggles the row in/out of the selection without
+  // entering full select-mode — quick "grab a few rows" UX without
+  // turning on the checkbox column.
+  const [contextCursor, setContextCursor] = useState<{ x: number; y: number } | null>(null)
+  const [contextRowId, setContextRowId] = useState<number | null>(null)
+  const [actionPending, startAction] = useTransition()
+  const [contextToast, setContextToast] = useState<{ ok: boolean; text: string } | null>(null)
+
+  // Auto-dismiss the success/error toast after a few seconds so it
+  // doesn't linger across navigations.
+  useEffect(() => {
+    if (!contextToast) return
+    const t = setTimeout(() => setContextToast(null), contextToast.ok ? 4000 : 8000)
+    return () => clearTimeout(t)
+  }, [contextToast])
+
+  function onRowClick(e: React.MouseEvent, leadId: number) {
+    // Ctrl+Click / Cmd+Click → toggle selection without opening the
+    // drawer. Plain click on a cell still drills into the drawer via
+    // the existing onOpen handlers below; this only fires when the
+    // user explicitly modified the click.
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault()
+      if (!selectMode) setSelectMode(true)
+      setSelectedIds(prev => {
+        const next = new Set(prev)
+        if (next.has(leadId)) next.delete(leadId)
+        else next.add(leadId)
+        return next
+      })
+    }
+  }
+
+  function onRowContextMenu(e: React.MouseEvent, leadId: number) {
+    e.preventDefault()
+    // If the right-clicked row isn't already selected, treat the
+    // context menu as scoped to just that row (don't disturb an
+    // existing selection — the menu's "N selected" hint makes it
+    // clear which scope an action will apply to).
+    if (!selectedIds.has(leadId) && selectedIds.size === 0) {
+      setSelectedIds(new Set([leadId]))
+      if (!selectMode) setSelectMode(true)
+    }
+    setContextRowId(leadId)
+    setContextCursor({ x: e.clientX, y: e.clientY })
+  }
+
+  function buildContextActions(): ContextMenuAction[] {
+    const rowId = contextRowId
+    if (rowId === null) return []
+    const targetIds = selectedIds.size > 0 ? Array.from(selectedIds) : [rowId]
+    const n = targetIds.length
+    const isBulk = n > 1
+    return [
+      {
+        label: 'Open lead',
+        icon: ExternalLink,
+        disabled: isBulk,
+        hint: isBulk ? 'Disabled — drawer only opens one lead at a time' : undefined,
+        onClick: () => setOpenLeadId(rowId),
+        separatorAfter: true,
+      },
+      {
+        label: isBulk ? `Force enrich ${n} leads` : 'Force enrich',
+        icon: Zap,
+        hint: 'Re-run enrichment even if already on Monday / not relevant',
+        onClick: () =>
+          startAction(async () => {
+            const result = await forceEnrichLeadsAction(targetIds)
+            setContextToast(
+              result.ok
+                ? { ok: true, text: `Queued ${result.queued} lead${result.queued === 1 ? '' : 's'} for re-enrichment.` }
+                : { ok: false, text: result.error },
+            )
+          }),
+      },
+      {
+        label: isBulk ? `Push ${n} to Not Relevant` : 'Push to Monday Not Relevant',
+        icon: Send,
+        // Bulk push is heavy — N sequential create_item calls. Keep
+        // bulk allowed but warn via the hint so operators know what
+        // they're triggering.
+        hint: isBulk
+          ? `Creates ${n} items on Monday — runs sequentially, may take a minute`
+          : 'Creates a Not Relevant board item and marks this lead not-relevant',
+        onClick: () =>
+          startAction(async () => {
+            let pushed = 0
+            const errors: string[] = []
+            for (const id of targetIds) {
+              const fd = new FormData()
+              fd.set('lead_id', String(id))
+              const result = await pushLeadToMondayNotRelevantAction(null, fd)
+              if (result?.status === 'ok') pushed += 1
+              else if (result?.status === 'error') errors.push(`#${id}: ${result.error}`)
+            }
+            setContextToast(
+              errors.length === 0
+                ? { ok: true, text: `Pushed ${pushed} lead${pushed === 1 ? '' : 's'} to Monday Not Relevant.` }
+                : {
+                    ok: false,
+                    text: `Pushed ${pushed}/${targetIds.length}. Errors: ${errors.slice(0, 2).join('; ')}`,
+                  },
+            )
+            // Clear selection after a successful bulk push so the
+            // next right-click starts fresh.
+            if (errors.length === 0) setSelectedIds(new Set())
+          }),
+      },
+    ]
+  }
+
   const toggleAll = () => {
     setSelectedIds(prev => {
       if (allChecked) {
@@ -243,6 +361,8 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
             {rows.map((row, index) => (
               <tr
                 key={row.id}
+                onClick={e => onRowClick(e, row.id)}
+                onContextMenu={e => onRowContextMenu(e, row.id)}
                 className={[
                   'border-b border-[color:var(--color-border)] transition-colors last:border-b-0 hover:bg-[color:var(--color-bg-secondary)]',
                   selectMode && selectedIds.has(row.id)
@@ -521,6 +641,32 @@ export function LeadsTable({ rows, jobContext = false, pageInfo }: Props) {
         canGoPrevPage={canGoPrevPage}
         canGoNextPage={canGoNextPage}
       />
+
+      <RowContextMenu
+        cursor={contextCursor}
+        actions={buildContextActions()}
+        onClose={() => {
+          setContextCursor(null)
+          setContextRowId(null)
+        }}
+      />
+
+      {(actionPending || contextToast) && (
+        <div className="pointer-events-none fixed bottom-4 right-4 z-50">
+          <div
+            className={[
+              'rounded-md px-3 py-2 text-[12px] shadow-lg',
+              actionPending
+                ? 'bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-primary)] border border-[color:var(--color-border)]'
+                : contextToast?.ok
+                  ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                  : 'bg-red-100 text-red-800 border border-red-300',
+            ].join(' ')}
+          >
+            {actionPending ? 'Working…' : contextToast?.text}
+          </div>
+        </div>
+      )}
     </>
   )
 }
