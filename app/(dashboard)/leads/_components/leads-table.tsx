@@ -235,11 +235,14 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
   const visibleIds = useMemo(() => rows.map(r => r.id), [rows])
   const allChecked = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
 
-  // ----- Ctrl+Click selection + right-click context menu -----
+  // ----- Alt+Click selection + right-click context menu -----
   // Right-clicking a row pops a small menu with row + bulk actions.
-  // Ctrl/Cmd+Click toggles the row in/out of the selection without
-  // entering full select-mode — quick "grab a few rows" UX without
-  // turning on the checkbox column.
+  // Alt+Click (Option+Click on Mac) toggles the row in/out of the
+  // selection without entering full select-mode — quick "grab a few
+  // rows" UX without turning on the checkbox column. We deliberately
+  // do NOT use Ctrl/Cmd: those open links in a new tab in every
+  // browser, and operators rely on that to spawn tabs from the URL
+  // column.
   const [contextCursor, setContextCursor] = useState<{ x: number; y: number } | null>(null)
   const [contextRowId, setContextRowId] = useState<number | null>(null)
   const [actionPending, startAction] = useTransition()
@@ -254,13 +257,14 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
   }, [contextToast])
 
   function onRowClickCapture(e: React.MouseEvent, leadId: number) {
-    const isCtrl = e.ctrlKey || e.metaKey
+    const isAlt = e.altKey
     const hasSelection = selectedIds.size > 0
 
-    // Ctrl/Cmd+Left-Click → toggle this row in the selection.
-    // Primary multi-select gesture. Capture phase intercepts before
-    // any child link / button default action fires.
-    if (isCtrl) {
+    // Alt+Left-Click → toggle this row in the selection. Primary
+    // multi-select gesture. Capture phase intercepts before any child
+    // link / button default action fires. Ctrl/Cmd are reserved for
+    // the browser's "open in new tab" gesture on the URL column.
+    if (isAlt) {
       e.preventDefault()
       e.stopPropagation()
       if (!selectMode) setSelectMode(true)
@@ -291,11 +295,11 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
 
   function onRowMouseDownCapture(e: React.MouseEvent) {
     if (e.button !== 0) return
-    const isCtrl = e.ctrlKey || e.metaKey
+    const isAlt = e.altKey
     const hasSelection = selectedIds.size > 0
     // Swallow mousedown side effects (focus, text-select) when our
     // capture-phase click handler is going to intercept.
-    if (!isCtrl && !hasSelection) return
+    if (!isAlt && !hasSelection) return
     e.preventDefault()
   }
 

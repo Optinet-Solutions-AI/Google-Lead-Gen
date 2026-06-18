@@ -374,11 +374,13 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
   const visibleIds = useMemo(() => jobs.map(j => j.id), [jobs])
   const allChecked = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
 
-  // ----- Ctrl+Click multi-select + click-on-selected context menu -----
-  // Same UX shape as /leads. Ctrl/Cmd+Click adds/removes from
-  // selection. Once any row is selected, plain click on any row
-  // opens the actions menu at cursor instead of navigating to
-  // /scrape/<id>. Right-click also opens the menu.
+  // ----- Alt+Click multi-select + click-on-selected context menu -----
+  // Same UX shape as /leads. Alt+Click (Option+Click on Mac)
+  // adds/removes from selection. Once any row is selected, plain
+  // click on any row opens the actions menu at cursor instead of
+  // navigating to /scrape/<id>. Right-click also opens the menu.
+  // We avoid Ctrl/Cmd because users rely on those to open links
+  // in a new tab.
   const [contextCursor, setContextCursor] = useState<{ x: number; y: number } | null>(null)
   const [contextRowId, setContextRowId] = useState<string | null>(null)
   const [actionPending, startAction] = useTransition()
@@ -597,16 +599,16 @@ export function JobsTable({ jobs, isAdmin = false }: Props) {
                   key={job.id}
                   onMouseDownCapture={e => {
                     if (e.button !== 0) return
-                    const isCtrl = e.ctrlKey || e.metaKey
+                    const isAlt = e.altKey
                     const hasSelection = selectedIds.size > 0
-                    if (!isCtrl && !hasSelection) return
+                    if (!isAlt && !hasSelection) return
                     e.preventDefault()
                   }}
                   onClickCapture={e => {
-                    const isCtrl = e.ctrlKey || e.metaKey
+                    const isAlt = e.altKey
                     const hasSelection = selectedIds.size > 0
-                    // Ctrl+Left-Click → toggle selection.
-                    if (isCtrl) {
+                    // Alt+Left-Click → toggle selection.
+                    if (isAlt) {
                       e.preventDefault()
                       e.stopPropagation()
                       if (!selectMode) setSelectMode(true)
