@@ -89,6 +89,14 @@ export type LeadDetail = {
     is_not_relevant: boolean
     not_relevant_marked_at: string | null
     not_relevant_marked_by: string | null
+    /** Recognition memory: which prior lead-row's enrichment we
+     *  inherited from, if any (set by complete_scrape_job). */
+    inherited_from_lead_id: number | null
+    inherited_at: string | null
+    /** When true, this lead bypasses the is_on_monday / is_not_relevant
+     *  auto-skip in the enrichment chain. Operators flip it via the
+     *  drawer's Force-enrich button or the bulk action. */
+    force_enrich: boolean
     serp_screenshot_path: string | null
     /** Which device view this lead was seen on:
      *   'desktop' — only in the desktop SERP scrape
@@ -133,6 +141,9 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
           'screenshot_content_link, serp_screenshot_path',
           'pushed_to_monday_at, monday_pushed_item_id, monday_pushed_by',
           'is_not_relevant, not_relevant_marked_at, not_relevant_marked_by',
+          // Recognition memory + force-enrich override (added by
+          // 20260618000000_memory_recognition).
+          'inherited_from_lead_id, inherited_at, force_enrich',
           // Shadow-isolation columns — used below to gate access before
           // any data is returned to the client.
           'created_by_is_shadow, created_by_email',
@@ -224,7 +235,50 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
     lead?.serp_screenshot_path ? sign(lead.serp_screenshot_path) : Promise.resolve(null),
   ])
 
-  const stags = (stagsRes.data ?? []) as unknown as StagDetail[]
+  let stags = (stagsRes.data ?? []) as unknown as StagDetail[]
+  let contact = (contactRes.data ?? null) as ContactDetail | null
+
+  // Recognition memory: when this lead was inherited from a prior
+  // run (same domain, scraped before), the actual s_tags_table /
+  // contact_table rows are still attached to the OLD lead id. The
+  // booleans were copied forward (has_s_tags, has_contact_details)
+  // but the drawer needs to display the data itself. Pull from the
+  // ancestor if we have nothing local.
+  const ancestorId = (rawForGate as { inherited_from_lead_id?: number | null } | null)
+    ?.inherited_from_lead_id ?? null
+  if (ancestorId && (stags.length === 0 || !contact)) {
+    const [ancestorStagsRes, ancestorContactRes] = await Promise.all([
+      stags.length === 0
+        ? svc
+            .from('s_tags_table')
+            .select(
+              [
+                's_tag, source_param, brand',
+                'tracking_url, final_url',
+                'is_existing_on_monday, monday_match_kind, monday_match_item_id',
+                'redirect_chain, screenshot_path, is_rooster_brand, extracted_via',
+              ].join(', '),
+            )
+            .eq('lead_id', ancestorId)
+            .order('id', { ascending: true })
+        : Promise.resolve({ data: null, error: null }),
+      !contact
+        ? svc
+            .from('contact_table')
+            .select('emails, phones, contact_page_url, source, raw')
+            .eq('lead_id', ancestorId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ])
+    if (stags.length === 0 && ancestorStagsRes.data) {
+      stags = ancestorStagsRes.data as unknown as StagDetail[]
+    }
+    if (!contact && ancestorContactRes.data) {
+      contact = ancestorContactRes.data as ContactDetail
+    }
+  }
   await Promise.all(
     stags.map(async tag => {
       tag.screenshot_url = tag.screenshot_path ? await sign(tag.screenshot_path) : null
@@ -253,7 +307,7 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
 
   return {
     lead,
-    contact: (contactRes.data ?? null) as ContactDetail | null,
+    contact,
     stags,
     cohort,
     screenshot_url: screenshotUrl,

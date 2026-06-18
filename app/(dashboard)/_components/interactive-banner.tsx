@@ -26,10 +26,18 @@ export async function InteractiveBanner() {
     .eq('status', 'waiting')
   if (!count || count <= 0) return null
 
+  // Intentionally NOT sticky. A `sticky top-0 z-30` banner sits at the
+  // viewport top and visually hides the tables' own `sticky top-0 z-20`
+  // header cells whenever it's showing — operators with a backlog of
+  // captchas (i.e. the common case) lose the column headers as soon as
+  // they scroll past row ~10. Letting this banner scroll with the page
+  // keeps it visible on first paint, surfaces persistently via the
+  // sidebar bandwidth meter + /admin/interactive nav, and stops fighting
+  // every table on the dashboard for the top-of-viewport slot.
   return (
     <Link
       href="/admin/interactive"
-      className="sticky top-0 z-30 block border-b border-amber-300 bg-amber-50 px-4 py-2 text-[12px] text-amber-900 hover:bg-amber-100"
+      className="block border-b border-amber-300 bg-amber-50 px-4 py-2 text-[12px] text-amber-900 hover:bg-amber-100"
     >
       <span className="inline-flex items-center gap-2">
         <Hand className="h-4 w-4 shrink-0" />

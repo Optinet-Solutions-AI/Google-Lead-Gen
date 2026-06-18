@@ -24,6 +24,42 @@ function safeError(err: unknown, fallback: string): string {
 // app/(dashboard)/leads/_lib/detail-query.ts for the shared loader.
 
 /**
+ * Force-enrich a set of leads — override the auto-skip that fires
+ * when a domain is already known on Monday or marked not-relevant.
+ * Calls the force_enrich_leads RPC which flips the flag, clears
+ * the checked_at timestamps so the chain re-enqueues, and resets
+ * the parent job's enrichment_status so the chain comes off
+ * "complete" for the next tick.
+ *
+ * Used by the lead drawer's "Force enrich" button and the
+ * leads/scrape table bulk action.
+ */
+export type ForceEnrichResult = { ok: true; queued: number } | { ok: false; error: string }
+
+export async function forceEnrichLeadsAction(leadIds: number[]): Promise<ForceEnrichResult> {
+  const sanitized = leadIds.filter(n => Number.isInteger(n) && n > 0)
+  if (sanitized.length === 0) return { ok: false, error: 'No leads selected.' }
+  const access = await requireLeadsAccess(sanitized)
+  if (!access.ok) return { ok: false, error: access.error }
+
+  const svc = createServiceClient()
+  const { data, error } = await svc.rpc('force_enrich_leads', { p_lead_ids: sanitized })
+  if (error) return { ok: false, error: safeError(error, 'Failed to queue enrichment.') }
+
+  const queued = typeof data === 'number' ? data : 0
+  await logActivity({
+    action: 'leads.force_enrich',
+    entity_type: 'lead',
+    entity_id: sanitized.length === 1 ? String(sanitized[0]) : null,
+    details: { lead_count: sanitized.length, queued },
+  })
+
+  revalidatePath('/leads')
+  revalidatePath('/scrape', 'layout')
+  return { ok: true, queued }
+}
+
+/**
  * Delete the screenshot attached to a lead. Removes the file from
  * Supabase Storage and clears the screenshot_*_link columns. Used by
  * the "Delete screenshot" button in the row-detail drawer.

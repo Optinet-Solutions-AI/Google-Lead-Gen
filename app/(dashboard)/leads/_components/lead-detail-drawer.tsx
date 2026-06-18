@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState, useTransition } from 'react'
 import Link from 'next/link'
 import {
+  Brain,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -17,6 +18,7 @@ import {
   Trash2,
   User,
   X,
+  Zap,
 } from 'lucide-react'
 import type { LeadDetail } from '../_lib/detail-query'
 import {
@@ -26,6 +28,7 @@ import {
 } from '../_lib/detail-cache'
 import {
   deleteLeadScreenshot,
+  forceEnrichLeadsAction,
   pushLeadToMondayAction,
   setNotRelevantAction,
   type MarkNotRelevantState,
@@ -340,6 +343,18 @@ function DetailBody({
 
   return (
     <div className="flex flex-col gap-4 p-4 text-[12px]">
+      {lead.inherited_from_lead_id !== null && (
+        <MemoryPanel
+          leadId={lead.id}
+          inheritedFromLeadId={lead.inherited_from_lead_id}
+          inheritedAt={lead.inherited_at}
+          isOnMonday={lead.is_on_monday === true}
+          mondayBoard={lead.monday_board}
+          isNotRelevant={lead.is_not_relevant}
+          forceEnrich={lead.force_enrich}
+        />
+      )}
+
       <NotRelevantPanel
         leadId={lead.id}
         isNotRelevant={lead.is_not_relevant}
@@ -870,6 +885,121 @@ function KV({ label, value }: { label: string; value: React.ReactNode }) {
       <dt className="shrink-0 text-[11px] text-[color:var(--color-text-secondary)]">{label}:</dt>
       <dd className="min-w-0 flex-1 text-[11px] text-[color:var(--color-text-primary)]">{value}</dd>
     </div>
+  )
+}
+
+function MemoryPanel({
+  leadId,
+  inheritedFromLeadId,
+  inheritedAt,
+  isOnMonday,
+  mondayBoard,
+  isNotRelevant,
+  forceEnrich,
+}: {
+  leadId: number
+  inheritedFromLeadId: number
+  inheritedAt: string | null
+  isOnMonday: boolean
+  mondayBoard: string | null
+  isNotRelevant: boolean
+  forceEnrich: boolean
+}) {
+  const [pending, startTransition] = useTransition()
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
+
+  function onForceEnrich() {
+    startTransition(async () => {
+      const result = await forceEnrichLeadsAction([leadId])
+      if (result.ok) {
+        setMessage({
+          ok: true,
+          text:
+            result.queued > 0
+              ? 'Queued — enrichment will refresh this lead on the next chain tick (~30s).'
+              : 'Already queued — the previous request is still in flight.',
+        })
+        invalidateLeadDetailCache(leadId)
+      } else {
+        setMessage({ ok: false, text: result.error })
+      }
+    })
+  }
+
+  // Reason this lead was auto-skipped from enrichment. We compute a
+  // friendly label rather than show the raw boolean trio so the
+  // operator knows WHY the data is from memory (Monday vs prior
+  // local scrape) at a glance.
+  const reason = isOnMonday
+    ? mondayBoard === 'affiliates'
+      ? 'Already a confirmed affiliate on Monday'
+      : mondayBoard === 'not_relevant_leads'
+        ? 'Already on Monday Not Relevant board'
+        : 'Already on Monday'
+    : isNotRelevant
+      ? 'Previously flagged not-relevant'
+      : 'Same domain seen in an earlier scrape'
+
+  const inheritedDate = inheritedAt
+    ? new Date(inheritedAt).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      })
+    : null
+
+  return (
+    <section className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2.5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-[12px] font-semibold text-violet-900">
+            <Brain className="h-3.5 w-3.5" />
+            Memory
+            {forceEnrich && (
+              <span className="rounded-full bg-amber-200 px-1.5 py-0.5 text-[10px] font-medium text-amber-900">
+                Force-enrich queued
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-[11px] text-violet-800">
+            {reason}.{' '}
+            {inheritedDate ? `Last enriched ${inheritedDate}.` : ''} Showing
+            inherited data — no new fetches consumed bandwidth on this scrape.{' '}
+            <Link
+              href={`/leads?lead=${inheritedFromLeadId}`}
+              className="underline underline-offset-2"
+            >
+              View original
+            </Link>
+            .
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onForceEnrich}
+          disabled={pending || forceEnrich}
+          className="inline-flex items-center gap-1.5 rounded-md border border-violet-300 bg-white px-2.5 py-1 text-[11px] font-medium text-violet-900 transition-colors hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+          title="Override the auto-skip and re-enrich this lead with a fresh fetch"
+        >
+          {pending ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <Zap className="h-3 w-3" />
+          )}
+          {forceEnrich ? 'Queued' : 'Force enrich'}
+        </button>
+      </div>
+      {message && (
+        <p
+          className={[
+            'mt-2 rounded-md px-2 py-1 text-[11px]',
+            message.ok ? 'bg-emerald-100 text-emerald-900' : 'bg-red-100 text-red-800',
+          ].join(' ')}
+        >
+          {message.text}
+        </p>
+      )}
+    </section>
   )
 }
 
