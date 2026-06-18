@@ -425,15 +425,13 @@ begin
         -- Clear timestamps so the chain treats them as un-enriched
         -- and queues fresh fetches. We don't clear the booleans
         -- themselves — they stay as the "last known" value until
-        -- the new enrichment overwrites them.
+        -- the new enrichment overwrites them. (No updated_at column
+        -- on this table — only created_at; the parent job's
+        -- updated_at is bumped in the job_reset CTE below.)
         affiliate_checked_at = null,
         rooster_checked_at   = null,
         contact_checked_at   = null,
-        s_tags_checked_at    = null,
-        -- Reset enrichment status on the parent job so the chain
-        -- comes off "complete" and runs again for the affected
-        -- leads. Handled below by a separate update.
-        updated_at           = now()
+        s_tags_checked_at    = null
     where id = any(p_lead_ids)
       and force_enrich = false
     returning id, scrape_job_id
