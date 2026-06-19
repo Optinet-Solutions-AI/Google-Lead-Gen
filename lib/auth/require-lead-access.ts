@@ -1,6 +1,7 @@
 import 'server-only'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
+import { getShadowContext } from '@/lib/shadow-filter'
 
 export type LeadAccessCheck =
   | { ok: true; user_id: string; email: string | null; is_admin: boolean }
@@ -9,15 +10,16 @@ export type LeadAccessCheck =
 /**
  * Verify the caller may mutate a single lead.
  *
- * Allowed when:
- *   - the lead's owning scrape job has `created_by_email` matching the
- *     signed-in user's email (case-insensitive), OR
- *   - the user is an admin (`is_admin` RPC).
+ * Cohort-based ownership:
+ *   - Admin always passes.
+ *   - Non-shadow caller may mutate any lead whose owning job is NOT
+ *     shadow-owned (i.e. anyone else in the regular team's cohort).
+ *   - Shadow caller may only mutate leads from jobs they themselves
+ *     created (each shadow is its own silo, bidirectional isolation).
  *
- * Use from server actions in `app/(dashboard)/leads/actions.ts` that
+ * Used from server actions in `app/(dashboard)/leads/actions.ts` that
  * mutate via the service-role client — those bypass RLS, so without
- * this check any signed-in user could flip labels, push leads to
- * Monday, or delete rows on jobs they don't own. See BUGS.md R3-S2.
+ * this check the cohort separation isn't enforced.
  */
 export async function requireLeadAccess(leadId: number): Promise<LeadAccessCheck> {
   const supabase = await createServerClient()
@@ -50,11 +52,10 @@ export async function requireLeadAccess(leadId: number): Promise<LeadAccessCheck
 
 /**
  * Bulk variant — checks every lead in one go. Returns ok only when ALL
- * leads route to a job the caller owns (or the caller is admin).
+ * leads route to a job in the caller's cohort.
  *
- * The job-ownership check runs once per unique scrape_job_id, so a 200-
- * lead batch that all comes from the same scrape job costs one lookup,
- * not 200.
+ * The job-ownership check runs once per unique scrape_job_id, so a
+ * 200-lead batch from the same scrape job costs one lookup, not 200.
  */
 export async function requireLeadsAccess(leadIds: number[]): Promise<LeadAccessCheck> {
   const supabase = await createServerClient()
@@ -100,18 +101,36 @@ export async function requireLeadsAccess(leadIds: number[]): Promise<LeadAccessC
 
   const { data: jobs, error: jobsErr } = await svc
     .from('scrape_queue')
-    .select('id, created_by_email')
+    .select('id, created_by_email, created_by_is_shadow')
     .in('id', Array.from(jobIds))
   if (jobsErr) {
     console.error('[requireLeadsAccess] jobs lookup', jobsErr)
     return { ok: false, error: 'Failed to look up owning jobs.' }
   }
 
+  const ctx = await getShadowContext()
   const userEmail = user.email.toLowerCase()
-  for (const job of (jobs ?? []) as Array<{ id: string; created_by_email: string | null }>) {
-    const owner = job.created_by_email?.toLowerCase() ?? null
-    if (owner !== userEmail) {
-      return { ok: false, error: 'You do not own one or more of the selected leads.' }
+  for (const job of (jobs ?? []) as Array<{
+    id: string
+    created_by_email: string | null
+    created_by_is_shadow: boolean | null
+  }>) {
+    const ownerEmail = job.created_by_email?.toLowerCase() ?? null
+    const ownerIsShadow = job.created_by_is_shadow === true
+
+    if (ctx.isShadow) {
+      // Shadow caller — strict creator-only. Each shadow is its own
+      // silo and may never reach another shadow's (or anyone else's)
+      // leads.
+      if (ownerEmail !== userEmail) {
+        return { ok: false, error: 'You do not own one or more of the selected leads.' }
+      }
+    } else {
+      // Non-shadow caller — anyone in the regular cohort may mutate
+      // any non-shadow lead. Shadow-owned leads stay off-limits.
+      if (ownerIsShadow) {
+        return { ok: false, error: 'One or more selected leads belong to a private account.' }
+      }
     }
   }
 
@@ -128,7 +147,7 @@ async function checkJobOwnership(
 ): Promise<LeadAccessCheck> {
   const { data: job, error: jobErr } = await svc
     .from('scrape_queue')
-    .select('created_by_email')
+    .select('created_by_email, created_by_is_shadow')
     .eq('id', jobId)
     .maybeSingle()
   if (jobErr) {
@@ -136,15 +155,6 @@ async function checkJobOwnership(
     return { ok: false, error: 'Failed to look up job ownership.' }
   }
   if (!job) return { ok: false, error: 'Owning job not found.' }
-
-  const ownerEmail = (job as { created_by_email: string | null }).created_by_email
-  if (
-    ownerEmail &&
-    userEmail &&
-    ownerEmail.toLowerCase() === userEmail.toLowerCase()
-  ) {
-    return { ok: true, user_id: userId, email: userEmail, is_admin: false }
-  }
 
   const { data: isAdmin, error: adminErr } = await svc.rpc('is_admin', { p_user_id: userId })
   if (adminErr) {
@@ -155,5 +165,22 @@ async function checkJobOwnership(
     return { ok: true, user_id: userId, email: userEmail, is_admin: true }
   }
 
-  return { ok: false, error: 'You do not have access to this lead.' }
+  const ctx = await getShadowContext()
+  const ownerEmail = (job as { created_by_email: string | null }).created_by_email?.toLowerCase() ?? null
+  const ownerIsShadow = (job as { created_by_is_shadow: boolean | null }).created_by_is_shadow === true
+  const callerEmail = userEmail?.toLowerCase() ?? null
+
+  if (ctx.isShadow) {
+    // Shadow caller — strict creator-only.
+    if (ownerEmail && callerEmail && ownerEmail === callerEmail) {
+      return { ok: true, user_id: userId, email: userEmail, is_admin: false }
+    }
+    return { ok: false, error: 'You do not have access to this lead.' }
+  }
+
+  // Non-shadow caller — open access within the non-shadow cohort.
+  if (!ownerIsShadow) {
+    return { ok: true, user_id: userId, email: userEmail, is_admin: false }
+  }
+  return { ok: false, error: 'This lead belongs to a private account.' }
 }
