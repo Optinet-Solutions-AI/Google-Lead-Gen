@@ -1,8 +1,8 @@
 'use client'
 
-import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { useTransition } from 'react'
+import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { PAGE_SIZE_OPTIONS as MONDAY_PAGE_SIZE_OPTIONS } from '../_lib/tables'
 
 /** Sentinel value in the size dropdown that means "show every row".
@@ -23,6 +23,10 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
   const pathname = usePathname()
   const sp = useSearchParams()
   const router = useRouter()
+  // Show a visible "Loading…" indicator while the next server render
+  // is in flight — without this, picking "All" on a big table looks
+  // dead for several seconds and operators retry-click the dropdown.
+  const [isPending, startTransition] = useTransition()
 
   const showingAll = size === ALL_ROWS
   // When "All" is picked, every row is on a single page — collapse the
@@ -44,7 +48,16 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
     const params = new URLSearchParams(sp.toString())
     params.set('size', String(next))
     params.delete('page')
-    router.push(`${pathname}?${params.toString()}`, { scroll: false })
+    startTransition(() => {
+      router.push(`${pathname}?${params.toString()}`, { scroll: false })
+    })
+  }
+
+  function goToPage(target: number) {
+    if (target < 1 || target > totalPages || target === page) return
+    startTransition(() => {
+      router.push(hrefForPage(target), { scroll: false })
+    })
   }
 
   // Jump-to-page box. Lets you type a page number instead of clicking the
@@ -57,7 +70,7 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
     const n = Number.parseInt(raw, 10)
     if (!Number.isFinite(n)) return
     const target = Math.min(Math.max(n, 1), totalPages)
-    if (target !== page) router.push(hrefForPage(target), { scroll: false })
+    goToPage(target)
   }
 
   const canPrev = page > 1
@@ -69,12 +82,22 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
     // 48px square) — without it the > button is unclickable when the
     // pagination row lines up with the widget's viewport band.
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[color:var(--color-border)] px-3 py-2 pr-20 text-[12px] text-[color:var(--color-text-secondary)]">
-      <span>
+      <span className="inline-flex items-center gap-2">
         {total === 0
           ? 'No rows'
           : showingAll
             ? `All ${total.toLocaleString()} row${total === 1 ? '' : 's'}`
             : `${fromRow.toLocaleString()}–${toRow.toLocaleString()} of ${total.toLocaleString()}`}
+        {isPending && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-accent)]/15 px-2 py-0.5 text-[11px] font-medium text-[color:var(--color-text-primary)]"
+            role="status"
+            aria-live="polite"
+          >
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Loading{showingAll ? ' all rows' : ''}…
+          </span>
+        )}
       </span>
 
       <div className="flex items-center gap-3">
@@ -82,8 +105,9 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
           <span>Rows:</span>
           <select
             value={size}
+            disabled={isPending}
             onChange={e => onSizeChange(Number(e.target.value))}
-            className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-1 py-0.5 text-[12px]"
+            className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-1 py-0.5 text-[12px] disabled:opacity-50"
           >
             {sizeOptions.map(opt => (
               <option key={opt} value={opt}>
@@ -94,22 +118,15 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
         </label>
 
         <div className="flex items-center gap-1">
-          {canPrev ? (
-            <Link
-              href={hrefForPage(page - 1)}
-              aria-label="Previous page"
-              className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1 hover:bg-[color:var(--color-bg-secondary)]"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </Link>
-          ) : (
-            <span
-              aria-label="Previous page disabled"
-              className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1 opacity-40"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </span>
-          )}
+          <button
+            type="button"
+            aria-label="Previous page"
+            disabled={!canPrev || isPending}
+            onClick={() => goToPage(page - 1)}
+            className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1 hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[color:var(--color-bg-primary)]"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
 
           {showingAll || totalPages <= 1 ? (
             <span className="px-2 text-[color:var(--color-text-primary)]">
@@ -124,6 +141,7 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
                 inputMode="numeric"
                 aria-label="Go to page"
                 defaultValue={String(page)}
+                disabled={isPending}
                 onKeyDown={e => {
                   if (e.key === 'Enter') {
                     e.preventDefault()
@@ -131,28 +149,21 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
                   }
                 }}
                 onBlur={e => jumpToPage(e.currentTarget.value)}
-                className="w-12 rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-1 py-0.5 text-center text-[12px] tabular-nums"
+                className="w-12 rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-1 py-0.5 text-center text-[12px] tabular-nums disabled:opacity-50"
               />
               / {totalPages.toLocaleString()}
             </span>
           )}
 
-          {canNext ? (
-            <Link
-              href={hrefForPage(page + 1)}
-              aria-label="Next page"
-              className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1 hover:bg-[color:var(--color-bg-secondary)]"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </Link>
-          ) : (
-            <span
-              aria-label="Next page disabled"
-              className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1 opacity-40"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </span>
-          )}
+          <button
+            type="button"
+            aria-label="Next page"
+            disabled={!canNext || isPending}
+            onClick={() => goToPage(page + 1)}
+            className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1 hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[color:var(--color-bg-primary)]"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
         </div>
       </div>
     </div>
