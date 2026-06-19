@@ -1,9 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { parseFilters, parseSorts } from '@/lib/filters/serialize'
+import { clampPageSize } from '@/lib/page-size'
 import {
   DEFAULT_LEAD_PAGE_SIZE,
-  LEAD_PAGE_SIZES,
   queryLeads,
 } from '@/app/(dashboard)/leads/_lib/query'
 
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 
   const sp = req.nextUrl.searchParams
   const page = clampInt(sp.get('page'), 1, 1_000_000, 1)
-  const size = clampEnum(sp.get('size'), LEAD_PAGE_SIZES, DEFAULT_LEAD_PAGE_SIZE)
+  const size = clampPageSize(sp.get('size') ?? undefined, DEFAULT_LEAD_PAGE_SIZE)
   const sort = sp.get('sort') ?? 'overall_position'
   const order: 'asc' | 'desc' = sp.get('order') === 'asc' ? 'asc' : 'desc'
   const q = sp.get('q') ?? ''
@@ -76,12 +76,3 @@ function clampInt(raw: string | null, min: number, max: number, fallback: number
   return Math.min(Math.max(n, min), max)
 }
 
-function clampEnum<T extends number>(
-  raw: string | null,
-  allowed: readonly T[],
-  fallback: T,
-): T {
-  if (raw === null) return fallback
-  const n = Number.parseInt(raw, 10)
-  return (allowed as readonly number[]).includes(n) ? (n as T) : fallback
-}

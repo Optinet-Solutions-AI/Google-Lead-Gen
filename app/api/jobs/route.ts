@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { parseFilters, parseSorts } from '@/lib/filters/serialize'
+import { clampPageSize } from '@/lib/page-size'
 import { queryJobs } from '@/app/(dashboard)/scrape/_lib/queries'
 
 export const dynamic = 'force-dynamic'
 
-const ALLOWED_PAGE_SIZES = [20, 50, 100, 0] as const
 const DEFAULT_PAGE_SIZE = 20
 
 /**
@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
 
   const sp = req.nextUrl.searchParams
   const page = clampInt(sp.get('page'), 1, 1_000_000, 1)
-  const size = clampEnum(sp.get('size'), ALLOWED_PAGE_SIZES, DEFAULT_PAGE_SIZE)
+  const size = clampPageSize(sp.get('size') ?? undefined, DEFAULT_PAGE_SIZE)
   const q = sp.get('q') ?? ''
   const filters = parseFilters(sp.get('f') ?? undefined)
   const sorts = parseSorts(sp.get('s') ?? undefined)
@@ -51,12 +51,3 @@ function clampInt(raw: string | null, min: number, max: number, fallback: number
   return Math.min(Math.max(n, min), max)
 }
 
-function clampEnum<T extends number>(
-  raw: string | null,
-  allowed: readonly T[],
-  fallback: T,
-): T {
-  if (raw === null) return fallback
-  const n = Number.parseInt(raw, 10)
-  return (allowed as readonly number[]).includes(n) ? (n as T) : fallback
-}

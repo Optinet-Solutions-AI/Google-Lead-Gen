@@ -1,6 +1,7 @@
 import { JOBS_COLUMNS } from '@/lib/filters/columns-jobs'
 import { parseFilters, parseSorts } from '@/lib/filters/serialize'
 import type { ColumnDef } from '@/lib/filters/types'
+import { clampPageSize } from '@/lib/page-size'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { AdvancedFilters } from '../_components/advanced-filters'
@@ -28,7 +29,7 @@ export default async function ScrapePage({
   const sp = await searchParams
 
   const page = clampInt(sp.page, 1, 1_000_000, 1)
-  const size = clampEnum(sp.size, PAGE_SIZES, DEFAULT_PAGE_SIZE)
+  const size = clampPageSize(sp.size, DEFAULT_PAGE_SIZE)
   const q = typeof sp.q === 'string' ? sp.q : ''
   const filters = parseFilters(sp.f)
   const sorts = parseSorts(sp.s)
@@ -131,12 +132,3 @@ function clampInt(
   return Math.min(Math.max(n, min), max)
 }
 
-function clampEnum<T extends number>(
-  raw: string | string[] | undefined,
-  allowed: readonly T[],
-  fallback: T,
-): T {
-  if (typeof raw !== 'string') return fallback
-  const n = Number.parseInt(raw, 10)
-  return (allowed as readonly number[]).includes(n) ? (n as T) : fallback
-}

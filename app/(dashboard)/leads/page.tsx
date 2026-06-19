@@ -3,6 +3,7 @@ import { EyeOff, Eye } from 'lucide-react'
 import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
 import { parseFilters, parseSorts } from '@/lib/filters/serialize'
 import type { ColumnDef } from '@/lib/filters/types'
+import { clampPageSize } from '@/lib/page-size'
 import { createServiceClient } from '@/lib/supabase/service'
 import { Pagination } from '../monday/_components/pagination'
 import { AdvancedFilters } from '../_components/advanced-filters'
@@ -35,7 +36,7 @@ export default async function LeadsPage({
   const sp = await searchParams
 
   const page = clampInt(sp.page, 1, 1_000_000, 1)
-  const size = clampEnum(sp.size, LEAD_PAGE_SIZES, DEFAULT_LEAD_PAGE_SIZE)
+  const size = clampPageSize(sp.size, DEFAULT_LEAD_PAGE_SIZE)
   const sort = typeof sp.sort === 'string' ? sp.sort : 'created_at'
   const order: 'asc' | 'desc' = sp.order === 'asc' ? 'asc' : 'desc'
   const q = typeof sp.q === 'string' ? sp.q : ''
@@ -144,14 +145,4 @@ function clampInt(
   const n = Number.parseInt(raw, 10)
   if (!Number.isFinite(n)) return fallback
   return Math.min(Math.max(n, min), max)
-}
-
-function clampEnum<T extends number>(
-  raw: string | string[] | undefined,
-  allowed: readonly T[],
-  fallback: T,
-): T {
-  if (typeof raw !== 'string') return fallback
-  const n = Number.parseInt(raw, 10)
-  return (allowed as readonly number[]).includes(n) ? (n as T) : fallback
 }

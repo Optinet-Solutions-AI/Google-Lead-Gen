@@ -3,6 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useTransition } from 'react'
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
+import { MAX_PAGE_SIZE } from '@/lib/page-size'
 import { PAGE_SIZE_OPTIONS as MONDAY_PAGE_SIZE_OPTIONS } from '../_lib/tables'
 
 /** Sentinel value in the size dropdown that means "show every row".
@@ -73,6 +74,20 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
     goToPage(target)
   }
 
+  function applyCustomSize(raw: string) {
+    const n = Number.parseInt(raw, 10)
+    if (!Number.isFinite(n) || n < 1 || n > MAX_PAGE_SIZE) return
+    if (n === size) return
+    onSizeChange(n)
+  }
+
+  // The size dropdown only renders preset values. If `size` is a custom
+  // integer (e.g. `?size=34` typed into the input below) it won't match
+  // any preset and the <select> would lose its selection. Prepend the
+  // current custom value so the picker still reflects state.
+  const isCustomSize =
+    size !== ALL_ROWS && !sizeOptions.includes(size)
+
   const canPrev = page > 1
   const canNext = page < totalPages
 
@@ -101,21 +116,55 @@ export function Pagination({ page, size, total, pageSizeOptions }: Props) {
       </span>
 
       <div className="flex items-center gap-3">
-        <label className="hidden items-center gap-1 md:flex">
-          <span>Rows:</span>
-          <select
-            value={size}
+        <div className="hidden items-center gap-1 md:flex">
+          <label className="flex items-center gap-1">
+            <span>Rows:</span>
+            <select
+              value={size}
+              disabled={isPending}
+              onChange={e => onSizeChange(Number(e.target.value))}
+              className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-1 py-0.5 text-[12px] disabled:opacity-50"
+            >
+              {isCustomSize && (
+                <option key={`custom-${size}`} value={size}>
+                  {size.toLocaleString()} (custom)
+                </option>
+              )}
+              {sizeOptions.map(opt => (
+                <option key={opt} value={opt}>
+                  {opt === ALL_ROWS ? 'All' : opt}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="text-[color:var(--color-text-secondary)]">or</span>
+          {/* Custom row-count input. Lets the operator type any number
+           *  between 1 and MAX_PAGE_SIZE — e.g. "show 34 results" — when
+           *  the presets aren't a good fit. Uncontrolled + keyed on size
+           *  so it remounts with the live value after each navigation. */}
+          <input
+            key={size}
+            type="text"
+            inputMode="numeric"
+            aria-label="Custom rows per page"
+            placeholder="custom"
+            defaultValue={isCustomSize ? String(size) : ''}
             disabled={isPending}
-            onChange={e => onSizeChange(Number(e.target.value))}
-            className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-1 py-0.5 text-[12px] disabled:opacity-50"
-          >
-            {sizeOptions.map(opt => (
-              <option key={opt} value={opt}>
-                {opt === ALL_ROWS ? 'All' : opt}
-              </option>
-            ))}
-          </select>
-        </label>
+            title={`Type a number between 1 and ${MAX_PAGE_SIZE.toLocaleString()} and press Enter`}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                applyCustomSize(e.currentTarget.value)
+              }
+            }}
+            onBlur={e => {
+              const v = e.currentTarget.value.trim()
+              if (v.length === 0) return
+              applyCustomSize(v)
+            }}
+            className="w-16 rounded border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-1 py-0.5 text-center text-[12px] tabular-nums disabled:opacity-50"
+          />
+        </div>
 
         <div className="flex items-center gap-1">
           <button
