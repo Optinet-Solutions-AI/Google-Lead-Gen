@@ -2264,23 +2264,80 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
     seen_links: set[str] = set()
 
     # --- Organic results ---
-    # Desktop SERPs wrap each result title in <h3>; mobile SERPs wrap it
-    # in <div role="heading"> instead. Both live under #rso and both are
-    # nested inside the result anchor. Iterate the union so the parser
-    # works regardless of which layout Google serves the session. An anchor
-    # that carries BOTH heading types (or two headings) would otherwise be
-    # emitted twice for the same URL — dedupe by href to keep one row.
-    for h3 in soup.select("#rso a h3") + soup.select("#rso a div[role='heading']"):
-        a = h3.find_parent("a")
-        if not a:
-            continue
+    # Three layouts seen in the wild:
+    #   1. Desktop:        <a><h3>Title</h3>…</a>            — heading inside anchor
+    #   2. Mobile (old):   <a><div role="heading">Title</div>…</a>
+    #   3. Mobile (new):   <div><a>…</a><div role="heading">Title</div></div>
+    #                      heading is a SIBLING of the anchor inside a card
+    #
+    # The first two are caught by the heading-then-find_parent('a') pass.
+    # The third is what tanked Norway's June 2026 mobile scrapes — the
+    # heading sits outside the anchor and find_parent returned None, so
+    # the parser emitted zero rows. To cover it, we ALSO walk every HTTP
+    # anchor under #rso directly and pull a title from anywhere we can
+    # find one (heading inside, heading on the nearest card-shaped
+    # ancestor, or — last resort — the anchor's own text).
+    #
+    # Both passes dedupe by href via `seen_links` so a layout that emits
+    # both shapes (e.g. an <h3> inside the anchor AND a sibling heading
+    # in the same card) doesn't double-count.
 
+    def _title_for_anchor(a):
+        # Prefer a heading inside the anchor (matches layouts 1 + 2).
+        inner = a.select_one("h3, [role='heading']")
+        if inner and inner.get_text(strip=True):
+            return inner.get_text(strip=True)
+        # Layout 3: heading is a sibling. Walk up at most three
+        # ancestors looking for a heading. Three is enough for every
+        # mobile card we've seen and keeps us from grabbing a heading
+        # that belongs to a different result block.
+        node = a
+        for _ in range(3):
+            node = node.parent
+            if not node:
+                break
+            sib = node.select_one("h3, [role='heading']")
+            if sib and sib.get_text(strip=True):
+                return sib.get_text(strip=True)
+        # Last resort: the anchor's own visible text, capped so we
+        # don't store a wall of meta text.
+        own = a.get_text(strip=True)
+        return own[:200] if own else ""
+
+    # Pass 1 — heading-inside-anchor (covers layouts 1 + 2 directly).
+    headings = soup.select("#rso a h3") + soup.select("#rso a div[role='heading']")
+    # Pass 2 — every HTTP anchor under #rso (covers layout 3 + anything
+    # else we haven't seen yet). Skip Google internal links (which start
+    # with /, #, or javascript:) and tracking redirectors before we hit
+    # the http check below.
+    anchors = soup.select("#rso a[href^='http']")
+    anchor_iter = []
+    for h in headings:
+        parent_a = h.find_parent("a")
+        if parent_a:
+            anchor_iter.append((parent_a, h.get_text(strip=True) or None))
+    for a in anchors:
+        anchor_iter.append((a, None))
+
+    for a, preset_title in anchor_iter:
         link = a.get("href")
         if not link or not link.startswith("http"):
             continue
         if link in seen_links:
             continue
+        # Skip Google-owned URLs (translate, cached, related, etc.) —
+        # these aren't actual results, just navigation chrome.
+        host = urlparse(link).netloc.lower()
+        if host.endswith("google.com") or host.endswith("googleusercontent.com"):
+            continue
         seen_links.add(link)
+
+        title = preset_title or _title_for_anchor(a)
+        # Anchors with no recoverable title are usually icon-only chrome
+        # ("More results", "About this result"…). Drop them so we don't
+        # ship empty-title rows.
+        if not title:
+            continue
 
         result_type = "PPC" if link in sponsored_urls else "Organic"
 
@@ -2300,7 +2357,7 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
         result_row = {
             "url": url_value,
             "full_url": full_url,
-            "title": h3.get_text(strip=True),
+            "title": title,
             "resultType": result_type,
             "page": page + 1,
             "position": position if result_type == "Organic" else None,
@@ -2363,6 +2420,20 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
         f"{sum(r['resultType']=='PPC' for r in results)} PPC | "
         f"{sum(r['resultType']=='Organic' for r in results)} Organic"
     )
+
+    # Diagnostic dump when #rso loaded but extraction emitted zero rows.
+    # The most common cause is a SERP layout shift that our selectors
+    # don't cover yet — without the HTML on disk we're guessing. Sister
+    # to the #rso-not-found dump above, but this fires on the OPPOSITE
+    # failure mode (#rso present, results empty).
+    if not results:
+        try:
+            dump_path = f"/tmp/scrape_zero_results_{int(time.time() * 1000)}_p{page}.html"
+            with open(dump_path, "w", encoding="utf-8") as f:
+                f.write(driver.page_source or "")
+            print(f"[WARN] #rso loaded but parsed 0 rows — dumped page_source to {dump_path}")
+        except Exception as dump_exc:  # noqa: BLE001
+            print(f"[WARN] #rso loaded but parsed 0 rows (dump failed: {dump_exc})")
 
     return results
 
