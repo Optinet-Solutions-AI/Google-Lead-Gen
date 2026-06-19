@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { Check, CheckSquare, ExternalLink, EyeOff, Link2, Send, Square, Zap } from 'lucide-react'
+import { isInteractiveTarget } from '@/lib/dom/is-interactive-target'
 import { SortHeader } from '../../monday/_components/sort-header'
 import { RowContextMenu, type ContextMenuAction } from '../../_components/row-context-menu'
 import type { LeadRow } from '../_lib/query'
@@ -257,6 +258,12 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
   }, [contextToast])
 
   function onRowClickCapture(e: React.MouseEvent, leadId: number) {
+    // Skip interactive controls inside the row (kebab, label editors,
+    // checkbox, etc.) — capture phase would otherwise eat the click
+    // before the control's own handler runs. Without this, clicking
+    // the kebab while a selection is active just clears the selection
+    // instead of opening the menu.
+    if (isInteractiveTarget(e.target)) return
     const isAlt = e.altKey
     const hasSelection = selectedIds.size > 0
 
@@ -295,6 +302,7 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
 
   function onRowMouseDownCapture(e: React.MouseEvent) {
     if (e.button !== 0) return
+    if (isInteractiveTarget(e.target)) return
     const isAlt = e.altKey
     const hasSelection = selectedIds.size > 0
     // Swallow mousedown side effects (focus, text-select) when our

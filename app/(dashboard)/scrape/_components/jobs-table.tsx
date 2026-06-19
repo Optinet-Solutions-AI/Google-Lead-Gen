@@ -24,6 +24,7 @@ import {
   type ScrapeJob,
 } from '../_lib/pipeline'
 import { bulkDeleteScrapeJobs, bulkRerunScrapeJobs } from '../actions'
+import { isInteractiveTarget } from '@/lib/dom/is-interactive-target'
 import {
   RowContextMenu,
   type ContextMenuAction,
@@ -699,12 +700,20 @@ export function JobsTable({ jobs: initialJobs, isAdmin = false, pageInfo }: Prop
                   key={job.id}
                   onMouseDownCapture={e => {
                     if (e.button !== 0) return
+                    // Skip interactive controls inside the row (kebab
+                    // button, label dropdowns, etc.) — the capture
+                    // phase otherwise eats the mousedown before the
+                    // button's own handler can run.
+                    if (isInteractiveTarget(e.target)) return
                     const isAlt = e.altKey
                     const hasSelection = selectedIds.size > 0
                     if (!isAlt && !hasSelection) return
                     e.preventDefault()
                   }}
                   onClickCapture={e => {
+                    // Same bailout as mousedown — let the kebab + any
+                    // inline button/select handle its own click.
+                    if (isInteractiveTarget(e.target)) return
                     const isAlt = e.altKey
                     const hasSelection = selectedIds.size > 0
                     // Alt+Left-Click → toggle selection.
