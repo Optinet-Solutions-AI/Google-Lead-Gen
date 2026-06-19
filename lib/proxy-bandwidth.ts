@@ -191,15 +191,40 @@ const BROWSER_UA =
 /**
  * Pull the remaining-GB total out of the Enigma dashboard HTML.
  *
- * Each active plan renders its remaining data as `14.31<!-- --> GB`
- * (the `<!-- -->` is React's text-node separator). That number-then-GB
- * shape is unique to the plan cards — prices render as `$<!-- -->28.5`
- * (number AFTER the comment) so they don't match. We sum every plan's
- * remaining so multiple active plans collapse into one pool figure.
- * Returns null if no plan value is found (layout change or bad session).
+ * The dashboard renders an "Active plans" panel containing one card per
+ * active plan (Residential, Mobile, etc.), each showing its remaining
+ * data as e.g. `11.67 GB`. We anchor on the panel heading text and sum
+ * every "N GB" inside that scope so multiple active plans collapse into
+ * one pool figure.
+ *
+ * History: the original parser required a literal `<!-- -->` between
+ * the number and "GB" (React text-node separator). When that markup
+ * shape changed the parser silently started matching unrelated "0 GB"
+ * elements elsewhere on the page (a depleted-plan card or a "0 days"
+ * counter), writing remaining=0 snapshots forever. Scoping to the
+ * "Active plans" panel + dropping the comment requirement avoids both
+ * failure modes.
+ *
+ * Returns null when the heading anchor can't be found (layout change or
+ * a logged-out shell) so the poller skips writing a bogus snapshot.
  */
+const ENIGMA_ACTIVE_PLANS_RE = /Active\s+plans?/i
+// Number, optional whitespace + arbitrary HTML tags/comments, then "GB"
+// as a word. Accepts every Enigma markup variant seen so far:
+//   `11.67<!-- --> GB`   (old React separator)
+//   `11.67 GB`           (current)
+//   `11.67<span>GB</span>` (hypothetical future)
+const GB_VALUE_RE = /(\d+(?:\.\d+)?)\s*(?:<!--[\s\S]*?-->|<[^>]*>|\s)*GB\b/gi
+// Slice cap: an "Active plans" panel with a handful of cards is well
+// under 8 KB of HTML. Larger windows risk leaking into the next panel
+// (Billing / Buy more / etc.) where unrelated GB values appear.
+const ENIGMA_PANEL_WINDOW = 8_000
+
 export function parseEnigmaRemainingGb(html: string): number | null {
-  const matches = [...html.matchAll(/(\d+(?:\.\d+)?)\s*<!--\s*-->\s*GB/gi)]
+  const anchor = html.search(ENIGMA_ACTIVE_PLANS_RE)
+  if (anchor === -1) return null
+  const panel = html.slice(anchor, anchor + ENIGMA_PANEL_WINDOW)
+  const matches = [...panel.matchAll(GB_VALUE_RE)]
     .map(m => parseFloat(m[1] ?? ''))
     .filter(n => Number.isFinite(n))
   if (matches.length === 0) return null
