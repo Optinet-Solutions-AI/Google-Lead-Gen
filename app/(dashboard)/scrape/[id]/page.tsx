@@ -5,6 +5,7 @@ import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
 import { parseFilters, parseSorts } from '@/lib/filters/serialize'
 import { clampPageSize } from '@/lib/page-size'
 import { getShadowContext } from '@/lib/shadow-filter'
+import { getUserPreferences } from '@/lib/user-preferences'
 import { createServiceClient } from '@/lib/supabase/service'
 import { translateKeywordsToEnglish } from '@/lib/translate'
 import { AdvancedFilters } from '../../_components/advanced-filters'
@@ -218,6 +219,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
     snapchatRows,
     telegramSummary,
     telegramRows,
+    prefs,
   ] = await Promise.all([
       queryLeads({
         page,
@@ -254,6 +256,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       isSnapchat ? fetchSnapchatCreatorRows(id) : Promise.resolve(null),
       isTelegram ? fetchTelegramChannelSummary(id) : Promise.resolve(null),
       isTelegram ? fetchTelegramChannelRows(id) : Promise.resolve(null),
+      getUserPreferences(),
     ])
 
   const toggleHref = (() => {
@@ -405,7 +408,12 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
             <AdvancedFilters columns={columns} preserve={['show_hidden']} />
           </div>
 
-          <LeadsTable rows={rows} jobContext pageInfo={{ page, size, total }} />
+          <LeadsTable
+            rows={rows}
+            jobContext
+            pageInfo={{ page, size, total }}
+            infiniteScrollEnabled={prefs.infiniteScrollEnabled}
+          />
 
           <Pagination page={page} size={size} total={total} pageSizeOptions={LEAD_PAGE_SIZES} />
         </>

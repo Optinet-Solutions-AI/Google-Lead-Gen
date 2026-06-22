@@ -107,7 +107,7 @@ const NAV_ITEMS = [
     match: (p: string) => p.startsWith('/admin/google-login'),
   },
   {
-    label: 'Change Password',
+    label: 'My Account',
     href: '/account/password',
     icon: KeyRound,
     match: (p: string) => p.startsWith('/account'),

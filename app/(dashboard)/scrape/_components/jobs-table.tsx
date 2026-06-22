@@ -40,11 +40,15 @@ type Props = {
    *  UI from non-admins keeps the table cleaner for normal users. */
   isAdmin?: boolean
   /** Pagination metadata to enable infinite scroll. When provided AND
-   *  size > 0, an IntersectionObserver near the bottom of the table
-   *  fetches the next page from /api/jobs and appends rows. When omitted
-   *  or size === 0 (the "All" sentinel), the table renders only what
-   *  was server-rendered and the operator pages via the chevrons below. */
+   *  size > 0 AND infiniteScrollEnabled, an IntersectionObserver near
+   *  the bottom of the table fetches the next page from /api/jobs and
+   *  appends rows. Otherwise the table renders only what was
+   *  server-rendered and the operator pages via the chevrons. */
   pageInfo?: { page: number; size: number; total: number }
+  /** Per-user "auto-load on scroll" preference (default false). When
+   *  false, the Rows picker is a hard limit and the sentinel never
+   *  renders. Toggled in /account/password. */
+  infiniteScrollEnabled?: boolean
 }
 
 const STATUS_STYLES: Record<ScrapeJob['status'], string> = {
@@ -362,7 +366,12 @@ function PipelineBadges({
   )
 }
 
-export function JobsTable({ jobs: initialJobs, isAdmin = false, pageInfo }: Props) {
+export function JobsTable({
+  jobs: initialJobs,
+  isAdmin = false,
+  pageInfo,
+  infiniteScrollEnabled = false,
+}: Props) {
   // ----- Infinite scroll -----
   // The page server-renders the first chunk (size rows for `page`).
   // After hydration, an IntersectionObserver near the bottom of the
@@ -370,8 +379,10 @@ export function JobsTable({ jobs: initialJobs, isAdmin = false, pageInfo }: Prop
   // URL stays on the server-rendered page so the pagination chevrons
   // below still work — they just jump straight to that page and
   // reset the appended list. Disabled when size === 0 ("All") because
-  // the server already returns everything (up to the cap).
-  const scrollEnabled = pageInfo !== undefined && pageInfo.size > 0
+  // the server already returns everything (up to the cap), and gated
+  // on the per-user "auto-load on scroll" preference (default off).
+  const scrollEnabled =
+    infiniteScrollEnabled && pageInfo !== undefined && pageInfo.size > 0
   const [extraRows, setExtraRows] = useState<ScrapeJob[]>([])
   const [extraLoading, setExtraLoading] = useState(false)
   const [extraError, setExtraError] = useState<string | null>(null)

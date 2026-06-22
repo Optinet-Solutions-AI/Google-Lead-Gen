@@ -31,9 +31,18 @@ type Props = {
    *  the drawer's prev/next only walks within the visible page; with it,
    *  the arrows bridge to the next/prev page automatically. */
   pageInfo?: { page: number; size: number; total: number }
+  /** Per-user "auto-load on scroll" preference. When false (default),
+   *  the Rows picker is a hard limit and the sentinel never renders.
+   *  Toggled in /account/password. */
+  infiniteScrollEnabled?: boolean
 }
 
-export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: Props) {
+export function LeadsTable({
+  rows: initialRows,
+  jobContext = false,
+  pageInfo,
+  infiniteScrollEnabled = false,
+}: Props) {
   // ----- Infinite scroll (Bundle 3) -----
   // The page server-renders the first chunk (size rows for `page`).
   // After hydration, an IntersectionObserver near the bottom of the
@@ -160,9 +169,11 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
 
   // Whether there are more rows beyond what we've loaded. true means
   // the sentinel will keep firing loadMore on intersect. false means
-  // we've reached the end (or pagination metadata isn't available).
+  // we've reached the end, pagination metadata isn't available, or
+  // the per-user "auto-load on scroll" preference is off (the default).
   const accumulatedCount = initialRows.length + extraRows.length
   const hasMore =
+    infiniteScrollEnabled &&
     pageInfo !== undefined &&
     pageInfo.size > 0 &&
     accumulatedCount < pageInfo.total &&
@@ -836,8 +847,11 @@ export function LeadsTable({ rows: initialRows, jobContext = false, pageInfo }: 
        *  small invisible div the IntersectionObserver watches. The
        *  status row sits below the visible rows and shows the
        *  Loading/Error/Loaded-all states so the operator never
-       *  wonders why the list stopped growing. */}
-      {pageInfo && pageInfo.size > 0 && (
+       *  wonders why the list stopped growing.
+       *
+       *  Only rendered when the per-user preference is ON — by default
+       *  the Rows picker is a hard limit and the sentinel is absent. */}
+      {infiniteScrollEnabled && pageInfo && pageInfo.size > 0 && (
         <>
           <div ref={sentinelRef} aria-hidden="true" className="h-px w-full" />
           <div className="flex items-center justify-center py-3 text-[11px] text-[color:var(--color-text-secondary)]">

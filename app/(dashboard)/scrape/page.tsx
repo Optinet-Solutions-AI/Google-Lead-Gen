@@ -3,6 +3,7 @@ import { parseFilters, parseSorts } from '@/lib/filters/serialize'
 import type { ColumnDef } from '@/lib/filters/types'
 import { clampPageSize } from '@/lib/page-size'
 import { createClient as createServerClient } from '@/lib/supabase/server'
+import { getUserPreferences } from '@/lib/user-preferences'
 import { createServiceClient } from '@/lib/supabase/service'
 import { AdvancedFilters } from '../_components/advanced-filters'
 import { Pagination } from '../monday/_components/pagination'
@@ -35,7 +36,7 @@ export default async function ScrapePage({
   const sorts = parseSorts(sp.s)
   const hasAnyFilter = q.length > 0 || filters.length > 0 || sorts.length > 0
 
-  const [profiles, jobsResult, isAdmin] = await Promise.all([
+  const [profiles, jobsResult, isAdmin, prefs] = await Promise.all([
     listActiveProfiles(),
     queryJobs({ page, size, q, filters, sorts }),
     (async () => {
@@ -48,6 +49,7 @@ export default async function ScrapePage({
       const { data } = await svc.rpc('is_admin', { p_user_id: user.id })
       return data === true
     })(),
+    getUserPreferences(),
   ])
   const { rows, total } = jobsResult
 
@@ -109,6 +111,7 @@ export default async function ScrapePage({
           jobs={rows}
           isAdmin={isAdmin}
           pageInfo={{ page, size, total }}
+          infiniteScrollEnabled={prefs.infiniteScrollEnabled}
         />
         <JobsCardList jobs={rows} />
       </section>

@@ -1,7 +1,9 @@
 'use server'
 
+import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
 
 export type ChangePasswordState =
@@ -59,4 +61,46 @@ export async function changePasswordAction(
   }
 
   return { status: 'ok', message: 'Password updated.' }
+}
+
+export type PreferenceState =
+  | { status: 'ok'; message: string }
+  | { status: 'error'; error: string }
+  | null
+
+/**
+ * Flip the per-user "auto-load on scroll" preference. The flag lives
+ * on user_profiles; service-role client because the table is locked
+ * down with RLS and the dashboard reads it via the same path.
+ */
+export async function setInfiniteScrollPreference(
+  _prev: PreferenceState,
+  formData: FormData,
+): Promise<PreferenceState> {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user?.id) return { status: 'error', error: 'Not signed in.' }
+
+  const raw = String(formData.get('value') ?? '').trim().toLowerCase()
+  const next = raw === 'true'
+
+  const svc = createServiceClient()
+  const { error } = await svc
+    .from('user_profiles')
+    .update({ infinite_scroll_enabled: next })
+    .eq('id', user.id)
+  if (error) return { status: 'error', error: error.message }
+
+  // Reset the dashboard tree so any open /leads or /scrape picks up
+  // the new value on the next render.
+  revalidatePath('/', 'layout')
+
+  return {
+    status: 'ok',
+    message: next
+      ? 'Auto-load on scroll is ON — scrolling past the visible rows fetches more automatically.'
+      : 'Auto-load on scroll is OFF — the Rows picker is a hard limit; use the chevrons to page.',
+  }
 }

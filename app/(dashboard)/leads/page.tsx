@@ -5,6 +5,7 @@ import { parseFilters, parseSorts } from '@/lib/filters/serialize'
 import type { ColumnDef } from '@/lib/filters/types'
 import { clampPageSize } from '@/lib/page-size'
 import { createServiceClient } from '@/lib/supabase/service'
+import { getUserPreferences } from '@/lib/user-preferences'
 import { Pagination } from '../monday/_components/pagination'
 import { AdvancedFilters } from '../_components/advanced-filters'
 import { LeadsTable } from './_components/leads-table'
@@ -61,7 +62,7 @@ export default async function LeadsPage({
     return qs ? `/leads?${qs}` : '/leads'
   })()
 
-  const [{ rows, total }, countries, hiddenCount] = await Promise.all([
+  const [{ rows, total }, countries, hiddenCount, prefs] = await Promise.all([
     queryLeads({
       page,
       size,
@@ -76,6 +77,7 @@ export default async function LeadsPage({
     }),
     listCountryFilters(),
     countNotRelevant(),
+    getUserPreferences(),
   ])
 
   // Inject the live country list into the column registry so the dropdown
@@ -128,7 +130,11 @@ export default async function LeadsPage({
 
       <AdvancedFilters columns={columns} preserve={['country_code', 'result_type', 'show_hidden']} />
 
-      <LeadsTable rows={rows} pageInfo={{ page, size, total }} />
+      <LeadsTable
+        rows={rows}
+        pageInfo={{ page, size, total }}
+        infiniteScrollEnabled={prefs.infiniteScrollEnabled}
+      />
 
       <Pagination page={page} size={size} total={total} pageSizeOptions={LEAD_PAGE_SIZES} />
     </div>
