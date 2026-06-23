@@ -134,6 +134,20 @@ export function LeadsTable({
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
 
+  // Escape clears the active selection — explicit, keyboard-friendly
+  // exit now that plain row clicks no longer clear. Bound to keydown
+  // so it fires regardless of focus.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (selectedIds.size === 0) return
+      setSelectedIds(new Set())
+      setSelectMode(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [selectedIds.size])
+
   // When the user pages or filters, the row set changes — drop any
   // selected ids that aren't on screen anymore so we don't keep stale
   // selections across navigations.
@@ -295,15 +309,13 @@ export function LeadsTable({
       return
     }
 
-    // Plain left-click anywhere on a row WHILE a selection is
-    // active → clear selection + exit select-mode. Back to normal
-    // navigation in one gesture. Exception: the checkbox cell
-    // stops propagation so its own onChange (toggle) wins.
+    // Selection survives a plain row click — operators kept losing
+    // their selection by reaching for the bulk-action bar and brushing
+    // a row on the way. Exit select-mode explicitly via the toggle in
+    // the toolbar, by un-ticking every checkbox, or by pressing Esc
+    // (handled below). The drawer / row link still opens because we
+    // don't preventDefault here.
     if (hasSelection) {
-      e.preventDefault()
-      e.stopPropagation()
-      setSelectedIds(new Set())
-      setSelectMode(false)
       return
     }
 
@@ -314,11 +326,10 @@ export function LeadsTable({
   function onRowMouseDownCapture(e: React.MouseEvent) {
     if (e.button !== 0) return
     if (isInteractiveTarget(e.target)) return
-    const isAlt = e.altKey
-    const hasSelection = selectedIds.size > 0
-    // Swallow mousedown side effects (focus, text-select) when our
-    // capture-phase click handler is going to intercept.
-    if (!isAlt && !hasSelection) return
+    // Only swallow the mousedown when Alt+Click is about to toggle —
+    // selection-state plain clicks now flow through to the row link,
+    // so we must NOT preventDefault on them.
+    if (!e.altKey) return
     e.preventDefault()
   }
 

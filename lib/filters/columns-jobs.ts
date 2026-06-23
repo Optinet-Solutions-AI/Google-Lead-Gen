@@ -50,6 +50,10 @@ export const JOBS_COLUMNS: ReadonlyArray<ColumnDef> = [
   { key: 'search_engine', label: 'Search engine', type: 'select', filterable: true, sortable: true, options: [...SEARCH_ENGINE_OPTIONS] },
   { key: 'view_mode', label: 'View mode', type: 'select', filterable: true, sortable: true, options: [...VIEW_MODE_OPTIONS] },
   { key: 'batch_id', label: 'Batch', type: 'number', filterable: true, sortable: true },
+  // Generated INT column on scrape_queue (see migration 20260620000000)
+  // — pulled out of result_summary->total_results so operators can
+  // find "jobs that returned 0 results" or sort by total hits.
+  { key: 'total_results_count', label: 'Results', type: 'number', filterable: true, sortable: true },
   { key: 'created_at', label: 'Queued at', type: 'date', filterable: true, sortable: true },
   { key: 'started_at', label: 'Started at', type: 'date', filterable: true, sortable: true },
   { key: 'completed_at', label: 'Completed at', type: 'date', filterable: true, sortable: true },

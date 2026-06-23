@@ -89,18 +89,30 @@ export async function pushLeadToMondayNotRelevant(
   const itemName = cleanedDomain || `lead-${row.id}`
   const website = sanitize(row.url ?? '')
 
+  // Today's date in the YYYY-MM-DD shape Monday wants on a date
+  // column. Matches push-lead.ts so the two boards stay in sync on
+  // what "pushed at" means visually.
+  const todayIso = new Date().toISOString().slice(0, 10)
+
   // Column ids mirror the not_relevant_leads column_map in
   // board-registry: text54 keywords, text0 geo, text1 website,
-  // text82 comments, status status, project_owner owner.
+  // text82 comments, status status, date date, project_owner owner.
   const columnValues: Record<string, unknown> = {
     text54: sanitize(row.keyword ?? ''),
-    text0: sanitize(row.country ?? row.country_code ?? ''),
+    // Geo column — use the 2-letter country code so it matches the
+    // shape the regular Leads board push sends (text0 there is also
+    // country_code). Falls back to the full country name if the code
+    // is missing.
+    text0: sanitize(row.country_code ?? row.country ?? ''),
     text1: website,
     // Status label — defaults to "New" on Monday without this. Set
     // explicitly so the board shows the correct intent at a glance.
     // create_labels_if_missing on the mutation below auto-creates the
     // label if it doesn't exist yet, so a fresh board still works.
     status: { label: 'Not relevant' },
+    // Date pushed — Monday Date column. Same value the Leads-board
+    // push writes so date filtering works consistently across boards.
+    date: { date: todayIso },
     // Owner = the operator who pushed. Same pattern as push-lead.ts.
     project_owner: {
       personsAndTeams: [{ id: opts.pushedByMondayId, kind: 'person' }],

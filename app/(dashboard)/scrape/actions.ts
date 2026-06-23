@@ -3696,6 +3696,162 @@ export async function bulkDeleteScrapeJobs(
 }
 
 // ============================================================
+// Bulk push: for every selected job, push each of its leads to
+// Monday's Not Relevant board + mark them locally not-relevant.
+//
+// Operators asked for this on /scrape so they don't have to open
+// each job, multi-select its leads, and push — one right-click on
+// the jobs row does the lot. Re-uses the same per-lead push pipeline
+// as the /leads context menu so the resulting Monday items get the
+// correct status/owner/date/comment columns.
+// ============================================================
+
+const PUSH_NR_LEAD_CAP = 500
+
+export async function bulkPushJobLeadsToNotRelevant(
+  _prev: BulkScrapeActionState,
+  fd: FormData,
+): Promise<BulkScrapeActionState> {
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { status: 'error', error: 'Not signed in.' }
+
+  const jobIds = parseJobIds(fd)
+  if (jobIds.length === 0) return { status: 'error', error: 'No jobs selected.' }
+  if (jobIds.length > 200) return { status: 'error', error: 'Too many jobs selected (max 200).' }
+
+  const svc = createServiceClient()
+
+  // Resolve the operator's Monday user id once — same fail-loud rule
+  // as the per-lead action so we never push un-owned items.
+  const { data: profileRow } = await svc
+    .from('user_profiles')
+    .select('monday_user_id')
+    .eq('id', user.id)
+    .maybeSingle()
+  const pushedByMondayId =
+    (profileRow as { monday_user_id: number | null } | null)?.monday_user_id ?? null
+  if (pushedByMondayId == null) {
+    return {
+      status: 'error',
+      error:
+        'Your account is not linked to a Monday user yet. Ask an admin to set your Monday ID at /admin/users so pushes land under you.',
+    }
+  }
+  const pushedBy = user.email ?? 'unknown@local'
+
+  // Cohort gate — admin bypass, else every job in the list must be in
+  // the caller's cohort. Mirrors requireLeadsAccess but on jobs.
+  const { data: isAdminRaw } = await svc.rpc('is_admin', { p_user_id: user.id })
+  const isAdmin = isAdminRaw === true
+  if (!isAdmin) {
+    const { data: cohortRows } = await svc
+      .from('scrape_queue')
+      .select('id, created_by_email, created_by_is_shadow')
+      .in('id', jobIds)
+    type J = { id: string; created_by_email: string | null; created_by_is_shadow: boolean | null }
+    const callerEmail = (user.email ?? '').toLowerCase()
+    const callerIsShadowRpc = await svc.rpc('is_shadow_user', { p_user_id: user.id })
+    const callerIsShadow = callerIsShadowRpc.data === true
+    for (const j of (cohortRows ?? []) as J[]) {
+      const ownerEmail = (j.created_by_email ?? '').toLowerCase()
+      const ownerIsShadow = j.created_by_is_shadow === true
+      if (callerIsShadow) {
+        if (ownerEmail !== callerEmail) {
+          return { status: 'error', error: 'One or more selected jobs are not yours.' }
+        }
+      } else if (ownerIsShadow) {
+        return { status: 'error', error: 'One or more selected jobs belong to a private account.' }
+      }
+    }
+  }
+
+  // Load every lead from the selected jobs that hasn't already been
+  // pushed to the not-relevant board. Skips the already-pushed ones
+  // (idempotency would noop them anyway, but skipping avoids 1k
+  // unnecessary Monday calls and tightens the count messaging).
+  const { data: leadRows, error: leadErr } = await svc
+    .from('google_lead_gen_table')
+    .select('id, scrape_job_id, monday_pushed_item_id, monday_board')
+    .in('scrape_job_id', jobIds)
+  if (leadErr) {
+    return { status: 'error', error: safeError(leadErr, 'Failed to load leads.') }
+  }
+  type LR = {
+    id: number
+    scrape_job_id: string
+    monday_pushed_item_id: string | null
+    monday_board: string | null
+  }
+  const allLeads = (leadRows ?? []) as LR[]
+  const toPush = allLeads.filter(
+    l => !(l.monday_pushed_item_id && l.monday_board === 'not_relevant_leads'),
+  )
+  const alreadyOnBoard = allLeads.length - toPush.length
+
+  if (toPush.length === 0) {
+    return {
+      status: 'ok',
+      message:
+        alreadyOnBoard > 0
+          ? `Nothing to push — all ${alreadyOnBoard} lead${alreadyOnBoard === 1 ? ' is' : 's are'} already on the Not Relevant board.`
+          : 'No leads to push — the selected jobs have no rows yet.',
+    }
+  }
+  if (toPush.length > PUSH_NR_LEAD_CAP) {
+    return {
+      status: 'error',
+      error: `That selection would push ${toPush.length} leads to Monday — over the ${PUSH_NR_LEAD_CAP} cap. Narrow your selection first.`,
+    }
+  }
+
+  // Push one at a time — Monday's create_item is rate-limited and a
+  // burst would trip the throttle. The /leads bulk path also runs
+  // serial; users see the count tick up via the toast on the right.
+  const { pushLeadToMondayNotRelevant } = await import('@/lib/monday/push-not-relevant')
+  let pushed = 0
+  const errors: string[] = []
+  for (const l of toPush) {
+    const result = await pushLeadToMondayNotRelevant(l.id, {
+      pushedBy,
+      pushedByMondayId,
+    })
+    if (result.ok) pushed += 1
+    else errors.push(`lead ${l.id}: ${result.error}`)
+  }
+
+  await logActivity({
+    action: 'scrape.bulk_push_leads_not_relevant',
+    entity_type: 'scrape_jobs_bulk',
+    details: {
+      jobs: jobIds.length,
+      leads_considered: allLeads.length,
+      leads_pushed: pushed,
+      already_on_board: alreadyOnBoard,
+      errors: errors.length,
+    },
+  })
+
+  revalidatePath('/scrape')
+  revalidatePath('/leads')
+
+  const summary =
+    `Pushed ${pushed}/${toPush.length} lead${toPush.length === 1 ? '' : 's'} ` +
+    `from ${jobIds.length} job${jobIds.length === 1 ? '' : 's'}` +
+    (alreadyOnBoard > 0 ? ` (skipped ${alreadyOnBoard} already on board)` : '') +
+    '.'
+  if (errors.length > 0) {
+    return {
+      status: 'error',
+      error: `${summary} Errors: ${errors.slice(0, 3).join(' · ')}${errors.length > 3 ? ` (+${errors.length - 3} more)` : ''}`,
+    }
+  }
+  return { status: 'ok', message: summary }
+}
+
+// ============================================================
 // Mark / unmark a scrape job as "reviewed" — a shared (team-wide) flag so
 // operators can see at a glance which scrapes have already been eyeballed
 // on the /scrape Recent-jobs table. Open to any signed-in user (like the

@@ -10,6 +10,7 @@ import {
   CheckSquare,
   ExternalLink,
   RotateCcw,
+  Send,
   ShieldAlert,
   Square,
   Trash2,
@@ -23,7 +24,11 @@ import {
   type KickPipelineStatus,
   type ScrapeJob,
 } from '../_lib/pipeline'
-import { bulkDeleteScrapeJobs, bulkRerunScrapeJobs } from '../actions'
+import {
+  bulkDeleteScrapeJobs,
+  bulkPushJobLeadsToNotRelevant,
+  bulkRerunScrapeJobs,
+} from '../actions'
 import { isInteractiveTarget } from '@/lib/dom/is-interactive-target'
 import {
   RowContextMenu,
@@ -472,6 +477,19 @@ export function JobsTable({
   // doesn't keep stale selections.
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  // Escape clears the active selection — explicit keyboard exit now
+  // that plain row clicks no longer clear.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (selectedIds.size === 0) return
+      setSelectedIds(new Set())
+      setSelectMode(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [selectedIds.size])
   const rowIdSig = useMemo(() => jobs.map(j => j.id).join(','), [jobs])
   useEffect(() => {
     setSelectedIds(prev => {
@@ -576,6 +594,26 @@ export function JobsTable({
             )
             if (result?.status === 'ok') setSelectedIds(new Set())
           }),
+      },
+      {
+        label: isBulk
+          ? `Push all leads from ${n} jobs to Not Relevant`
+          : 'Push all leads to Not Relevant',
+        icon: Send,
+        hint: 'Pushes every lead from the selected jobs to Monday’s Not Relevant board (status=Not relevant, owner=you) and marks them not-relevant locally. Skips leads already on that board. Cap: 500 leads per click.',
+        onClick: () =>
+          startAction(async () => {
+            const fd = new FormData()
+            for (const id of targetIds) fd.append('job_ids', id)
+            const result = await bulkPushJobLeadsToNotRelevant(null, fd)
+            setContextToast(
+              result?.status === 'ok'
+                ? { ok: true, text: result.message }
+                : { ok: false, text: result?.error ?? 'Unknown error.' },
+            )
+            if (result?.status === 'ok') setSelectedIds(new Set())
+          }),
+        separatorAfter: true,
       },
       {
         label: isBulk ? `Delete ${n} jobs` : 'Delete job',
@@ -711,24 +749,19 @@ export function JobsTable({
                   key={job.id}
                   onMouseDownCapture={e => {
                     if (e.button !== 0) return
-                    // Skip interactive controls inside the row (kebab
-                    // button, label dropdowns, etc.) — the capture
-                    // phase otherwise eats the mousedown before the
-                    // button's own handler can run.
                     if (isInteractiveTarget(e.target)) return
-                    const isAlt = e.altKey
-                    const hasSelection = selectedIds.size > 0
-                    if (!isAlt && !hasSelection) return
+                    // Only swallow the mousedown when Alt+Click is
+                    // about to toggle selection — selection-state
+                    // plain clicks flow through to the row link.
+                    if (!e.altKey) return
                     e.preventDefault()
                   }}
                   onClickCapture={e => {
-                    // Same bailout as mousedown — let the kebab + any
-                    // inline button/select handle its own click.
+                    // Same bailout — let the kebab + any inline
+                    // button/select handle its own click.
                     if (isInteractiveTarget(e.target)) return
-                    const isAlt = e.altKey
-                    const hasSelection = selectedIds.size > 0
                     // Alt+Left-Click → toggle selection.
-                    if (isAlt) {
+                    if (e.altKey) {
                       e.preventDefault()
                       e.stopPropagation()
                       if (!selectMode) setSelectMode(true)
@@ -740,20 +773,11 @@ export function JobsTable({
                       })
                       return
                     }
-                    // Plain left-click WHILE a selection is active
-                    // → clear selection + exit select-mode. Back to
-                    // normal browsing. Checkbox-cell click is the
-                    // exception (its handler stopPropagation's so
-                    // this code doesn't fire).
-                    if (hasSelection) {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setSelectedIds(new Set())
-                      setSelectMode(false)
-                      return
-                    }
-                    // No selection → fall through to the row's
-                    // <Link> → /scrape/<id>.
+                    // Plain click on the row body — selection
+                    // survives so operators can navigate to the
+                    // bulk-actions bar without losing what they
+                    // picked. Exit selection via the toolbar toggle,
+                    // un-ticking every checkbox, or pressing Esc.
                   }}
                   onContextMenu={e => onJobContextMenu(e, job.id)}
                   className={[
