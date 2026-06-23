@@ -255,6 +255,32 @@ export async function runMondaySync(opts?: {
     const r = await syncBoard(supabase, board, { since, onProgress: opts?.onProgress })
     results.push(r)
   }
+
+  // After the replica catches up, re-run the duplicate-match across
+  // every lead (without a manual override) so leads that just became
+  // matchable — new Not Relevant pushes, new Affiliates entries, etc.
+  // — flip their is_on_monday flag. Without this the match stays
+  // frozen at scrape-complete time and operators see stale "not on
+  // Monday" labels for items pushed after the scrape finished.
+  // Cron-side cap (50k) prevents this from running long on a
+  // multi-tens-of-thousands lead table.
+  try {
+    const t0 = Date.now()
+    const { data, error } = await supabase.rpc('rematch_monday_for_all_leads', { p_limit: 50_000 })
+    if (error) {
+      opts?.onProgress?.(`rematch failed: ${error.message}`)
+    } else {
+      const row = Array.isArray(data) ? (data[0] as { checked?: number; flipped?: number } | undefined) : undefined
+      opts?.onProgress?.(
+        `rematch: checked ${row?.checked ?? 0}, flipped ${row?.flipped ?? 0} in ${Date.now() - t0}ms`,
+      )
+    }
+  } catch (err) {
+    // Non-fatal — the next sync will retry. Logged via onProgress so
+    // the route response surface it.
+    opts?.onProgress?.(`rematch threw: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
   return {
     ok: results.every(r => !r.error),
     ms: Date.now() - startedAt,
