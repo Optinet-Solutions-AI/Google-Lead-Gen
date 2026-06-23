@@ -44,7 +44,15 @@ function sanitize(s: string): string {
 
 export async function pushLeadToMondayNotRelevant(
   leadId: number,
-  opts: { pushedBy: string; note?: string },
+  opts: {
+    pushedBy: string
+    /** Monday user_id of the operator pushing. Used to assign the Owner
+     *  column on the created item so a quick glance on Monday shows
+     *  who flagged it. Required — we'd rather fail than silently push
+     *  un-owned items. */
+    pushedByMondayId: number
+    note?: string
+  },
 ): Promise<PushNotRelevantResult> {
   const svc = createServiceClient()
   const boardId = getNotRelevantBoardId()
@@ -83,11 +91,20 @@ export async function pushLeadToMondayNotRelevant(
 
   // Column ids mirror the not_relevant_leads column_map in
   // board-registry: text54 keywords, text0 geo, text1 website,
-  // text82 comments.
+  // text82 comments, status status, project_owner owner.
   const columnValues: Record<string, unknown> = {
     text54: sanitize(row.keyword ?? ''),
     text0: sanitize(row.country ?? row.country_code ?? ''),
     text1: website,
+    // Status label — defaults to "New" on Monday without this. Set
+    // explicitly so the board shows the correct intent at a glance.
+    // create_labels_if_missing on the mutation below auto-creates the
+    // label if it doesn't exist yet, so a fresh board still works.
+    status: { label: 'Not relevant' },
+    // Owner = the operator who pushed. Same pattern as push-lead.ts.
+    project_owner: {
+      personsAndTeams: [{ id: opts.pushedByMondayId, kind: 'person' }],
+    },
   }
   if (opts.note) {
     columnValues.text82 = sanitize(opts.note.slice(0, 500))

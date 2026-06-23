@@ -89,8 +89,28 @@ export async function pushLeadToMondayNotRelevantAction(
   const note = String(fd.get('note') ?? '').trim().slice(0, MAX_OPERATOR_NOTE_LEN)
   const pushedBy = user.email ?? 'unknown@local'
 
+  // Look up the operator's Monday user id so the new item gets
+  // assigned to them. Same pattern + same fail-loud-if-missing rule
+  // as the regular Push-to-Monday action below.
+  const svc = createServiceClient()
+  const { data: profileRow } = await svc
+    .from('user_profiles')
+    .select('monday_user_id')
+    .eq('id', user.id)
+    .maybeSingle()
+  const pushedByMondayId =
+    (profileRow as { monday_user_id: number | null } | null)?.monday_user_id ?? null
+  if (pushedByMondayId == null) {
+    return {
+      status: 'error',
+      error:
+        'Your account is not linked to a Monday user yet. Ask an admin to set your Monday ID at /admin/users so pushes land under you.',
+    }
+  }
+
   const result = await pushLeadToMondayNotRelevant(leadId, {
     pushedBy,
+    pushedByMondayId,
     ...(note ? { note } : {}),
   })
   if (!result.ok) return { status: 'error', error: result.error }

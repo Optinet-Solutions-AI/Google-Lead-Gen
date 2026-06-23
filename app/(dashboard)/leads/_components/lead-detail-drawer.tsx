@@ -1183,9 +1183,10 @@ function NotRelevantPanel({
 /**
  * Standalone "Push to Monday Not Relevant" button — sits between
  * the Not-Relevant panel and the regular Push-to-Monday panel.
- * One click pushes the lead to Monday's Not Relevant board AND
- * marks it not-relevant locally, so the operator doesn't have to
- * tick the prompt checkbox in the not-relevant flow.
+ * Click expands a comment textarea (mirrors the regular Push-to-
+ * Monday panel) so the operator can leave context before confirming.
+ * The push creates a new item on Monday's Not Relevant board with
+ * status="Not relevant" and Owner set to the operator's Monday user.
  */
 function PushNotRelevantButton({ leadId }: { leadId: number }) {
   const initial: PushNotRelevantState = null
@@ -1193,6 +1194,7 @@ function PushNotRelevantButton({ leadId }: { leadId: number }) {
     pushLeadToMondayNotRelevantAction,
     initial,
   )
+  const [confirming, setConfirming] = useState(false)
 
   useEffect(() => {
     if (state?.status === 'ok') invalidateLeadDetailCache(leadId)
@@ -1200,26 +1202,73 @@ function PushNotRelevantButton({ leadId }: { leadId: number }) {
 
   return (
     <section className="rounded-md border border-amber-200 bg-amber-50/40 px-3 py-2.5">
-      <form action={action} className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[12px] font-semibold text-amber-900">
             Push to Monday — Not Relevant
           </p>
           <p className="mt-0.5 text-[10px] text-amber-800">
-            Adds the domain to Monday&apos;s Not Relevant board and marks it
-            not-relevant locally. Future scrapes of the same domain auto-skip.
+            Adds the domain to Monday&apos;s Not Relevant board (status
+            <em> Not relevant</em>, assigned to you) and marks it
+            not-relevant locally. Future scrapes of the same domain
+            auto-skip.
           </p>
         </div>
-        <input type="hidden" name="lead_id" value={leadId} />
-        <button
-          type="submit"
-          disabled={pending}
-          className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-          Push & mark
-        </button>
-      </form>
+        {!confirming && (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            disabled={pending}
+            className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Send className="h-3 w-3" />
+            Push & mark
+          </button>
+        )}
+      </div>
+
+      {confirming && (
+        <form action={action} className="mt-2 flex flex-col gap-2">
+          <input type="hidden" name="lead_id" value={leadId} />
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium text-amber-900">
+              Comment (optional) — fills the item&apos;s Comments column
+              on Monday
+            </span>
+            <textarea
+              name="note"
+              rows={3}
+              maxLength={MAX_OPERATOR_NOTE_LEN}
+              disabled={pending}
+              placeholder="Why was this flagged as not relevant? Left blank, nothing extra is posted."
+              className="w-full resize-y rounded-md border border-amber-300 bg-white px-2 py-1.5 text-[11px] text-amber-900 placeholder:text-amber-700/60 focus:border-amber-500 focus:outline-none disabled:opacity-50"
+            />
+          </label>
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              disabled={pending}
+              className="inline-flex items-center gap-1.5 rounded-md border border-amber-400 bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {pending ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Send className="h-3 w-3" />
+              )}
+              Confirm push
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              disabled={pending}
+              className="rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] text-amber-900 hover:bg-amber-100"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
       {state?.status === 'error' && (
         <p className="mt-2 rounded-md bg-red-100 px-2 py-1 text-[11px] text-red-800">
           {state.error}
