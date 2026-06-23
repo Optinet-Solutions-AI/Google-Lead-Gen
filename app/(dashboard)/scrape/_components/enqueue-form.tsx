@@ -48,7 +48,23 @@ function countKeywords(text: string): number {
     .filter(k => k.length > 0).length
 }
 
-export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
+/** Per-user daily quota snapshot — null when the caller is exempt
+ *  (admins, or when the cap is disabled). The form renders a small
+ *  "Scrapes today: X/Y" pill in the header and disables the submit
+ *  button when remaining hits zero. */
+type Quota = {
+  cap: number
+  usedToday: number
+  remaining: number
+}
+
+export function EnqueueForm({
+  profiles,
+  quota,
+}: {
+  profiles: Profile[]
+  quota: Quota | null
+}) {
   const [state, formAction, pending] = useActionState(enqueueScrape, initial)
   const formRef = useRef<HTMLFormElement>(null)
   const router = useRouter()
@@ -137,6 +153,21 @@ export function EnqueueForm({ profiles }: { profiles: Profile[] }) {
           {count > 0 && (
             <span className="rounded-full bg-[color:var(--color-accent)]/15 px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-text-primary)]">
               {count} keyword{count === 1 ? '' : 's'} drafted
+            </span>
+          )}
+          {quota && (
+            <span
+              className={[
+                'rounded-full px-2 py-0.5 text-[10px] font-medium',
+                quota.remaining === 0
+                  ? 'bg-red-100 text-red-800'
+                  : quota.remaining <= Math.max(1, Math.floor(quota.cap * 0.25))
+                    ? 'bg-amber-100 text-amber-900'
+                    : 'bg-emerald-100 text-emerald-800',
+              ].join(' ')}
+              title={`You've queued ${quota.usedToday} of ${quota.cap} scrapes today. Resets at UTC midnight.`}
+            >
+              {quota.remaining}/{quota.cap} left today
             </span>
           )}
         </span>

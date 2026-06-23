@@ -2,6 +2,7 @@ import { JOBS_COLUMNS } from '@/lib/filters/columns-jobs'
 import { parseFilters, parseSorts } from '@/lib/filters/serialize'
 import type { ColumnDef } from '@/lib/filters/types'
 import { clampPageSize } from '@/lib/page-size'
+import { getQuotaForCurrentUser } from '@/lib/scrape-quota'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { getUserPreferences } from '@/lib/user-preferences'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -36,7 +37,7 @@ export default async function ScrapePage({
   const sorts = parseSorts(sp.s)
   const hasAnyFilter = q.length > 0 || filters.length > 0 || sorts.length > 0
 
-  const [profiles, jobsResult, isAdmin, prefs] = await Promise.all([
+  const [profiles, jobsResult, isAdmin, prefs, quotaSnap] = await Promise.all([
     listActiveProfiles(),
     queryJobs({ page, size, q, filters, sorts }),
     (async () => {
@@ -50,7 +51,14 @@ export default async function ScrapePage({
       return data === true
     })(),
     getUserPreferences(),
+    getQuotaForCurrentUser(),
   ])
+  // Pass through only non-exempt snapshots so the EnqueueForm
+  // doesn't render the badge for admins or when caps are disabled.
+  const quota =
+    !quotaSnap.exempt && quotaSnap.cap !== null && quotaSnap.remaining !== null
+      ? { cap: quotaSnap.cap, usedToday: quotaSnap.usedToday, remaining: quotaSnap.remaining }
+      : null
   const { rows, total } = jobsResult
 
   // Auto-refresh stays on while either the scrape itself OR a follow-on
@@ -91,7 +99,7 @@ export default async function ScrapePage({
         </p>
       </header>
 
-      <EnqueueForm profiles={profiles} />
+      <EnqueueForm profiles={profiles} quota={quota} />
 
       <section className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">

@@ -28,6 +28,7 @@ import {
 import { parseStagFromUrl, guessBrandFromUrl } from '@/lib/stag-extraction/extract'
 import { decodeAdUrl } from '@/lib/decode-ad-url'
 import { logActivity } from '@/lib/activity-log'
+import { checkQuota } from '@/lib/scrape-quota'
 import { pushJobToMonday as pushJobToMondayLib } from '@/lib/monday/push-job'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
 import { translateKeywordsToEnglish } from '@/lib/translate'
@@ -278,6 +279,14 @@ export async function enqueueScrape(
       created_by_is_shadow: createdByIsShadow,
     })),
   )
+
+  // Daily-quota gate. Admins are exempt; everyone else gets up to
+  // system_settings.daily_scrape_cap_per_user rows per UTC day. The
+  // friendly error message already includes used/cap/remaining so
+  // the EnqueueForm can render it as-is.
+  const quota = await checkQuota(rows.length)
+  if (!quota.ok) return { status: 'error', error: quota.error }
+
   const { error: insertError } = await svc.from('scrape_queue').insert(rows)
   if (insertError) return { status: 'error', error: safeError(insertError, 'Failed to queue the scrape.') }
 
@@ -3158,6 +3167,11 @@ export async function rerunScrapeFiltered(
     created_by_display: string | null
     created_by_is_shadow: boolean | null
   }
+
+  // Re-run = one new scrape_queue row → counts against the daily cap
+  // just like a fresh enqueue. Admins are exempt inside checkQuota.
+  const quota = await checkQuota(1)
+  if (!quota.ok) return { status: 'error', error: quota.error }
 
   const { error: insertError } = await svc.from('scrape_queue').insert({
     keyword: j.keyword,
