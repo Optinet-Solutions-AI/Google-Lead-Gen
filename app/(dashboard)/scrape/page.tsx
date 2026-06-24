@@ -3,6 +3,7 @@ import { parseFilters, parseSorts } from '@/lib/filters/serialize'
 import type { ColumnDef } from '@/lib/filters/types'
 import { clampPageSize } from '@/lib/page-size'
 import { getQuotaForCurrentUser } from '@/lib/scrape-quota'
+import { applyShadowFilter, getShadowContext } from '@/lib/shadow-filter'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { getUserPreferences } from '@/lib/user-preferences'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -11,6 +12,7 @@ import { Pagination } from '../monday/_components/pagination'
 import { AutoRefresh } from './_components/auto-refresh'
 import { EnqueueForm } from './_components/enqueue-form'
 import { JobsCardList, JobsTable } from './_components/jobs-table'
+import { OwnerScopeToggle } from './_components/owner-scope-toggle'
 import { listActiveProfiles, queryJobs } from './_lib/queries'
 
 type SearchParams = Record<string, string | string[] | undefined>
@@ -37,14 +39,32 @@ export default async function ScrapePage({
   const sorts = parseSorts(sp.s)
   const hasAnyFilter = q.length > 0 || filters.length > 0 || sorts.length > 0
 
-  const [profiles, jobsResult, isAdmin, prefs, quotaSnap] = await Promise.all([
+  // Mine / All scope toggle. Default Mine — operators usually want
+  // to see their own work first; ?owner=all opens the full view.
+  const ownerScope: 'mine' | 'all' = sp.owner === 'all' ? 'all' : 'mine'
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  const callerEmail = (user?.email ?? '').toLowerCase() || null
+
+  // Only filter to Mine when we have an email to filter by — anonymous
+  // / missing-email accounts fall through to the All view so the page
+  // isn't blank for them.
+  const restrictToOwnerEmail =
+    ownerScope === 'mine' && callerEmail ? callerEmail : undefined
+
+  const [profiles, jobsResult, isAdmin, prefs, quotaSnap, mineCount, allCount] = await Promise.all([
     listActiveProfiles(),
-    queryJobs({ page, size, q, filters, sorts }),
+    queryJobs({
+      page,
+      size,
+      q,
+      filters,
+      sorts,
+      ...(restrictToOwnerEmail ? { restrictToOwnerEmail } : {}),
+    }),
     (async () => {
-      const supabase = await createServerClient()
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
       if (!user) return false
       const svc = createServiceClient()
       const { data } = await svc.rpc('is_admin', { p_user_id: user.id })
@@ -52,6 +72,32 @@ export default async function ScrapePage({
     })(),
     getUserPreferences(),
     getQuotaForCurrentUser(),
+    // Independent counts for the toggle pills. Head-only queries; the
+    // shadow filter still applies so the Mine / All numbers respect
+    // shadow isolation. parent_scrape_job_id is null mirrors what
+    // queryJobs filters out (kick phase-2 child jobs).
+    (async () => {
+      if (!callerEmail) return 0
+      const svc = createServiceClient()
+      const ctx = await getShadowContext()
+      const base = svc
+        .from('scrape_queue')
+        .select('id', { count: 'exact', head: true })
+        .is('parent_scrape_job_id', null)
+        .eq('created_by_email', callerEmail)
+      const { count } = await (applyShadowFilter(base, ctx) as typeof base)
+      return count ?? 0
+    })(),
+    (async () => {
+      const svc = createServiceClient()
+      const ctx = await getShadowContext()
+      const base = svc
+        .from('scrape_queue')
+        .select('id', { count: 'exact', head: true })
+        .is('parent_scrape_job_id', null)
+      const { count } = await (applyShadowFilter(base, ctx) as typeof base)
+      return count ?? 0
+    })(),
   ])
   // Pass through only non-exempt snapshots so the EnqueueForm
   // doesn't render the badge for admins or when caps are disabled.
@@ -102,10 +148,21 @@ export default async function ScrapePage({
       <EnqueueForm profiles={profiles} quota={quota} />
 
       <section className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-[13px] font-semibold text-[color:var(--color-text-primary)]">
-            {hasAnyFilter ? `${total.toLocaleString()} matching jobs` : 'Recent jobs'}
-          </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-[13px] font-semibold text-[color:var(--color-text-primary)]">
+              {hasAnyFilter
+                ? `${total.toLocaleString()} matching jobs`
+                : ownerScope === 'mine'
+                  ? 'My recent jobs'
+                  : 'Recent jobs'}
+            </h2>
+            <OwnerScopeToggle
+              current={ownerScope}
+              mineCount={mineCount}
+              allCount={allCount}
+            />
+          </div>
           {hasActive && (
             <p className="text-[11px] text-[color:var(--color-text-secondary)]">
               auto-refreshing every 5 s

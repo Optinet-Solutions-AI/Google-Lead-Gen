@@ -1193,6 +1193,10 @@ export type JobsQueryOptions = {
   q?: string
   filters?: Filter[]
   sorts?: Sort[]
+  /** When set (lowercase email), restrict results to scrapes whose
+   *  created_by_email matches. Powers the "Mine / All" toggle on
+   *  /scrape — default "mine" so operators land on their own work. */
+  restrictToOwnerEmail?: string
 }
 
 export type JobsQueryResult = {
@@ -1260,6 +1264,13 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
   // discovered" rows. The parent discovery job stays in the list.
   query = query.is('parent_scrape_job_id', null)
   query = applyShadowFilter(query, shadowCtx) as typeof query
+
+  // "Mine only" gate — when set, restrict to the caller's own scrapes.
+  // Defaults to the Mine view on /scrape so operators land on their
+  // own work; flip to All via the toggle in the page header.
+  if (opts.restrictToOwnerEmail && opts.restrictToOwnerEmail.length > 0) {
+    query = query.eq('created_by_email', opts.restrictToOwnerEmail.toLowerCase())
+  }
 
   // Free-text search across a small set of columns.
   if (opts.q && opts.q.trim().length > 0) {

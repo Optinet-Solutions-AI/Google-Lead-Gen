@@ -30,9 +30,23 @@ export async function GET(req: NextRequest) {
   const q = sp.get('q') ?? ''
   const filters = parseFilters(sp.get('f') ?? undefined)
   const sorts = parseSorts(sp.get('s') ?? undefined)
+  // Mirror the /scrape page: default Mine (own scrapes), All when
+  // ?owner=all. Infinite-scroll on /scrape calls /api/jobs with the
+  // current URL params verbatim, so the same gate applies here.
+  const ownerScope: 'mine' | 'all' = sp.get('owner') === 'all' ? 'all' : 'mine'
+  const callerEmail = (user.email ?? '').toLowerCase() || null
+  const restrictToOwnerEmail =
+    ownerScope === 'mine' && callerEmail ? callerEmail : undefined
 
   try {
-    const result = await queryJobs({ page, size, q, filters, sorts })
+    const result = await queryJobs({
+      page,
+      size,
+      q,
+      filters,
+      sorts,
+      ...(restrictToOwnerEmail ? { restrictToOwnerEmail } : {}),
+    })
     return NextResponse.json(result, {
       headers: {
         'Cache-Control': 'private, no-cache, must-revalidate',
