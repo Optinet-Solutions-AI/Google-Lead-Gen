@@ -583,6 +583,41 @@ def _fetch_captcha_auto_solve_enabled() -> bool:
         return False
 
 
+def _fetch_captcha_review_available_for_job(job_id: str | None) -> bool:
+    """Live read of the per-user 'available for CAPTCHA review' flag.
+
+    Resolves the job's created_by_email to a user_profiles row and
+    returns user_profiles.available_for_captcha_review. When false
+    (default), the worker skips parking to needs_human and falls
+    through to the fail-fast / 2Captcha auto-solver path — no more
+    65-minute stalls when nobody's around to action the wall.
+
+    Fails CLOSED (returns False) on any lookup error so a transient
+    DB blip doesn't accidentally park a scrape on a user who didn't
+    opt in.
+    """
+    if not job_id:
+        return False
+    try:
+        resp = _supabase_request(
+            "POST",
+            "/rest/v1/rpc/captcha_review_available_for_job",
+            json_body={"p_job_id": job_id},
+        )
+        if resp.status_code != 200:
+            return False
+        val = resp.json()
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.strip().lower() == "true"
+        return False
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] captcha_review_available_for_job lookup failed: {exc} — treating as OFF",
+              file=sys.stderr)
+        return False
+
+
 # Set by main() at startup. check_for_captcha falls back to these
 # when callers don't pass kwargs explicitly. Keeps existing
 # `check_for_captcha(driver)` callsites working unchanged.
@@ -696,6 +731,19 @@ def request_interactive_checkpoint(
     """
     if not job_id:
         print("[INFO] checkpoint: no --job-id, skipping (interactive flag ignored)")
+        return False
+
+    # Per-user availability gate. If the job's owner hasn't opted in to
+    # CAPTCHA review, skip the wait entirely — let the caller fall through
+    # to the 2Captcha auto-solver (if enabled) or fail fast. Without this
+    # the scrape would sit in needs_human for up to 65 min waiting for a
+    # human who isn't coming. Live RPC read so toggling the preference
+    # takes effect on the next captcha without a worker restart.
+    if not _fetch_captcha_review_available_for_job(job_id):
+        print(
+            f"[INFO] checkpoint: job owner not available for CAPTCHA review — "
+            f"skipping needs_human park (reason={reason})"
+        )
         return False
 
     if ttl_minutes is None:

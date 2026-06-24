@@ -104,3 +104,41 @@ export async function setInfiniteScrollPreference(
       : 'Auto-load on scroll is OFF — the Rows picker is a hard limit; use the chevrons to page.',
   }
 }
+
+/**
+ * Per-user "available for CAPTCHA review" preference. When ON, the
+ * worker will park CAPTCHA-hit scrapes in needs_human and wait for
+ * the user to click through on /admin/interactive. When OFF
+ * (default), the worker skips the wait — scrapes either auto-solve
+ * via 2Captcha (when enabled) or fail fast — so the user's job
+ * queue doesn't stall for 65 minutes when nobody's around to action it.
+ */
+export async function setAvailableForCaptchaReviewPreference(
+  _prev: PreferenceState,
+  formData: FormData,
+): Promise<PreferenceState> {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user?.id) return { status: 'error', error: 'Not signed in.' }
+
+  const raw = String(formData.get('value') ?? '').trim().toLowerCase()
+  const next = raw === 'true'
+
+  const svc = createServiceClient()
+  const { error } = await svc
+    .from('user_profiles')
+    .update({ available_for_captcha_review: next })
+    .eq('id', user.id)
+  if (error) return { status: 'error', error: error.message }
+
+  revalidatePath('/', 'layout')
+
+  return {
+    status: 'ok',
+    message: next
+      ? 'Available for CAPTCHA review — your CAPTCHA-hit scrapes will wait up to 65 min for you to click through on /admin/interactive.'
+      : 'Not available for CAPTCHA review — CAPTCHA-hit scrapes will auto-solve (if 2Captcha is enabled) or fail fast instead of waiting.',
+  }
+}

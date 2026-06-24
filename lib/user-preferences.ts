@@ -11,13 +11,18 @@ import { createServiceClient } from '@/lib/supabase/service'
  * accounts that predate a preference column):
  *   - infiniteScrollEnabled: false → the Rows picker is a hard
  *     limit; no auto-load on scroll.
+ *   - availableForCaptchaReview: false → scrapes from this user
+ *     skip the needs_human wait and fall back to 2Captcha or fail
+ *     fast on CAPTCHA hits.
  */
 export type UserPreferences = {
   infiniteScrollEnabled: boolean
+  availableForCaptchaReview: boolean
 }
 
 export const DEFAULT_PREFERENCES: UserPreferences = {
   infiniteScrollEnabled: false,
+  availableForCaptchaReview: false,
 }
 
 /**
@@ -34,13 +39,17 @@ export async function getUserPreferences(): Promise<UserPreferences> {
   const svc = createServiceClient()
   const { data } = await svc
     .from('user_profiles')
-    .select('infinite_scroll_enabled')
+    .select('infinite_scroll_enabled, available_for_captcha_review')
     .eq('id', user.id)
     .maybeSingle()
 
   if (!data) return DEFAULT_PREFERENCES
-  const row = data as { infinite_scroll_enabled: boolean | null }
+  const row = data as {
+    infinite_scroll_enabled: boolean | null
+    available_for_captcha_review: boolean | null
+  }
   return {
     infiniteScrollEnabled: row.infinite_scroll_enabled === true,
+    availableForCaptchaReview: row.available_for_captcha_review === true,
   }
 }
