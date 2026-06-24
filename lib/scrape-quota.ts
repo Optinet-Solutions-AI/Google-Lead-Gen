@@ -7,8 +7,10 @@ import { createServiceClient } from '@/lib/supabase/service'
  *
  * Operators each get up to N scrape-queue rows per UTC day (default
  * 20, configurable via system_settings.daily_scrape_cap_per_user).
- * Admins are exempt — they need to be able to backfill without
- * hitting their own wall.
+ * Bypass is gated on user_profiles.bypass_scrape_cap — independent
+ * of is_admin so working admins (Charisse, Hannah, etc.) still get
+ * the cap; only the dedicated "Admin" service account is exempt
+ * out of the box.
  *
  * One "scrape" = one row in scrape_queue (i.e. one keyword × engine
  * combo). A batch of 50 keywords on engine=both is 100 rows. The
@@ -19,13 +21,13 @@ import { createServiceClient } from '@/lib/supabase/service'
 const DEFAULT_CAP = 20
 
 export type QuotaSnapshot = {
-  /** Configured cap, or null when admin or when caps are disabled. */
+  /** Configured cap, or null when bypass_scrape_cap or caps disabled. */
   cap: number | null
   /** Rows the user has queued since UTC midnight. */
   usedToday: number
-  /** cap - usedToday, clamped to 0. null when admin / cap disabled. */
+  /** cap - usedToday, clamped to 0. null when exempt / cap disabled. */
   remaining: number | null
-  /** Whether the caller is exempt (admin or cap=0). */
+  /** Whether the caller is exempt (bypass_scrape_cap=true or cap=0). */
   exempt: boolean
 }
 
@@ -53,8 +55,17 @@ export async function getQuotaForCurrentUser(): Promise<QuotaSnapshot> {
   if (!user) return { cap: null, usedToday: 0, remaining: null, exempt: true }
 
   const svc = createServiceClient()
-  const { data: isAdminRaw } = await svc.rpc('is_admin', { p_user_id: user.id })
-  if (isAdminRaw === true) {
+  // Bypass gate — reads the dedicated bypass_scrape_cap column rather
+  // than is_admin, so working admins still hit the cap while only the
+  // service "Admin" account (seeded true in migration 20260627000000)
+  // is exempt out of the box.
+  const { data: bypassRow } = await svc
+    .from('user_profiles')
+    .select('bypass_scrape_cap')
+    .eq('id', user.id)
+    .maybeSingle()
+  const bypass = (bypassRow as { bypass_scrape_cap: boolean | null } | null)?.bypass_scrape_cap === true
+  if (bypass) {
     return { cap: null, usedToday: 0, remaining: null, exempt: true }
   }
 
