@@ -58,6 +58,22 @@ type Quota = {
   remaining: number
 }
 
+/** Display label for the non-leads-pipeline engines (the ones whose results
+ *  land in their own entity table). Used by the enrichment-toggle note. */
+const ENGINE_LABELS: Record<string, string> = {
+  youtube: 'YouTube',
+  twitch: 'Twitch',
+  kick: 'Kick',
+  x: 'X',
+  facebook: 'Facebook',
+  tiktok: 'TikTok',
+  snapchat: 'Snapchat',
+  telegram: 'Telegram',
+}
+function sourceLabelFor(engine: string): string {
+  return ENGINE_LABELS[engine] ?? 'These'
+}
+
 export function EnqueueForm({
   profiles,
   quota,
@@ -72,6 +88,13 @@ export function EnqueueForm({
   const [keywordsText, setKeywordsText] = useState('')
   const [selectedCountry, setSelectedCountry] = useState('')
   const [selectedLang, setSelectedLang] = useState('en')
+  // Drives the enrichment-toggle copy below. The non-google/bing engines
+  // bypass the leads-pipeline enrichment entirely (they write to their own
+  // entity tables and are scored by a manual "Score & check" step on the job
+  // detail), so "Run full enrichment pipeline" is meaningless for them.
+  const [selectedEngine, setSelectedEngine] = useState('google')
+  const enrichmentBypassed =
+    selectedEngine !== 'google' && selectedEngine !== 'bing' && selectedEngine !== 'both'
   // `datetime-local` returns "YYYY-MM-DDTHH:mm" with no zone. We
   // convert to ISO with UTC offset in the browser (where the local TZ
   // is meaningful) so the server doesn't reinterpret the wall-clock
@@ -208,7 +231,8 @@ export function EnqueueForm({
           Search engine
           <select
             name="search_engine"
-            defaultValue="google"
+            value={selectedEngine}
+            onChange={e => setSelectedEngine(e.target.value)}
             title="Google/Bing scrape SERPs and produce URL leads (same downstream enrichment). 'Both' queues a Google job + a Bing job per keyword. YouTube, Kick, X, Facebook, and TikTok find affiliates — results land in youtube_channels / kick_streamers / x_creators / fb_advertisers / tiktok_creators, not the leads table, and the enrichment pipeline is bypassed. X needs the country's GoLogin profile signed into a burner X account (login wall); Facebook's Ad Library and TikTok are public (no login)."
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
           >
@@ -298,19 +322,36 @@ export function EnqueueForm({
       </div>
 
       <div className="mt-3 flex flex-wrap items-end gap-4 border-t border-[color:var(--color-border)] pt-3">
-        <label className="flex cursor-pointer items-center gap-2 text-[12px] text-[color:var(--color-text-primary)]">
-          <input
-            type="checkbox"
-            name="with_enrichment"
-            className="h-4 w-4 rounded border-[color:var(--color-border)] text-[color:var(--color-accent)] focus:ring-[color:var(--color-accent)]"
-          />
-          <span>
-            Run full enrichment pipeline after scrape
-            <span className="block text-[10px] text-[color:var(--color-text-secondary)]">
-              Auto-runs Monday dup check, affiliate detection, Rooster check, contact extraction, S-tag extraction + verify.
+        {enrichmentBypassed ? (
+          // The social engines (and Kick) don't flow through the leads
+          // pipeline, so this toggle does nothing for them. Show why, and
+          // point at the manual scoring step, instead of a dead checkbox
+          // that makes operators expect enrichment that never runs.
+          <div className="flex max-w-md flex-col gap-1 text-[12px] text-[color:var(--color-text-primary)]">
+            <span className="font-medium">No leads-pipeline enrichment for this engine</span>
+            <span className="text-[10px] text-[color:var(--color-text-secondary)]">
+              {sourceLabelFor(selectedEngine)} results land in their own table, not the leads
+              table. After the scrape completes, open the job and run{' '}
+              <strong className="font-medium">Score &amp; check</strong> (▶/⭐) to flag affiliates,
+              resolve links, mine contacts, and check Monday. Until then the results view shows no
+              relevant leads.
             </span>
-          </span>
-        </label>
+          </div>
+        ) : (
+          <label className="flex cursor-pointer items-center gap-2 text-[12px] text-[color:var(--color-text-primary)]">
+            <input
+              type="checkbox"
+              name="with_enrichment"
+              className="h-4 w-4 rounded border-[color:var(--color-border)] text-[color:var(--color-accent)] focus:ring-[color:var(--color-accent)]"
+            />
+            <span>
+              Run full enrichment pipeline after scrape
+              <span className="block text-[10px] text-[color:var(--color-text-secondary)]">
+                Auto-runs Monday dup check, affiliate detection, Rooster check, contact extraction, S-tag extraction + verify.
+              </span>
+            </span>
+          </label>
+        )}
 
         <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
           <span>

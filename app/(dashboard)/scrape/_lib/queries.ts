@@ -6,12 +6,16 @@ import { applyShadowFilter, getShadowContext } from '@/lib/shadow-filter'
 import { createServiceClient } from '@/lib/supabase/service'
 import {
   PIPELINE_STAGES,
+  SOCIAL_BADGE_ENGINES,
   type EnrichmentStatus,
   type KickPipelineStatus,
   type ScrapeJob,
+  type SocialBadgeEngine,
+  type SocialPipelineStatus,
   type StageKey,
   type StageTimings,
 } from './pipeline'
+import { ENGINE_CONFIGS } from '@/lib/monday/engine-config'
 
 // Re-export client-safe types for callers that already import from
 // queries.ts. The actual definitions live in ./pipeline because that
@@ -21,6 +25,7 @@ export {
   type EnrichmentStatus,
   type KickPipelineStatus,
   type ScrapeJob,
+  type SocialPipelineStatus,
   type StageKey,
   type StageTimings,
 }
@@ -1418,16 +1423,29 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
 
   const { data, count, error } = await query
   if (error) throw error
-  const jobs = (data ?? []) as unknown as Omit<ScrapeJob, 'enrichment' | 'stage_timings' | 'kick'>[]
+  const jobs = (data ?? []) as unknown as Omit<ScrapeJob, 'enrichment' | 'stage_timings' | 'kick' | 'social'>[]
   const completedIds = jobs.filter(j => j.status === 'completed').map(j => j.id)
   const completedKickIds = jobs
     .filter(j => j.status === 'completed' && j.search_engine === 'kick')
     .map(j => j.id)
-  const [enrichmentByJob, timingsByJob, captchaByJob, kickByJob] = await Promise.all([
+  // Social-engine jobs (everyone but google/bing/kick) grouped by engine —
+  // each engine reads from its own entity table.
+  const completedSocialByEngine = new Map<SocialBadgeEngine, string[]>()
+  for (const j of jobs) {
+    if (j.status !== 'completed') continue
+    const eng = j.search_engine
+    if (!eng || !(SOCIAL_BADGE_ENGINES as readonly string[]).includes(eng)) continue
+    const key = eng as SocialBadgeEngine
+    const arr = completedSocialByEngine.get(key) ?? []
+    arr.push(j.id)
+    completedSocialByEngine.set(key, arr)
+  }
+  const [enrichmentByJob, timingsByJob, captchaByJob, kickByJob, socialByJob] = await Promise.all([
     fetchEnrichmentStatus(completedIds),
     fetchStageTimings(jobs.filter(j => j.status === 'completed' && j.with_enrichment)),
     fetchCaptchaSolvedBy(jobs.map(j => j.id)),
     fetchKickProgress(completedKickIds),
+    fetchSocialProgress(completedSocialByEngine),
   ])
   return {
     rows: jobs.map(j => ({
@@ -1436,6 +1454,7 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
       stage_timings: timingsByJob.get(j.id) ?? null,
       captcha_solved_by: captchaByJob.get(j.id) ?? null,
       kick: kickByJob.get(j.id) ?? null,
+      social: socialByJob.get(j.id) ?? null,
     })),
     total: count ?? jobs.length,
   }
@@ -1567,6 +1586,52 @@ async function fetchKickProgress(
     if (r.niche_score !== null) acc.scored += 1
     out.set(jobId, acc)
   }
+  return out
+}
+
+/** Per-social-job progression counts for the jobs-table 2-dot badge. The
+ *  social engines (youtube/twitch/x/facebook/tiktok/snapchat/telegram) write
+ *  to their own entity tables — never google_lead_gen_table — so the leads
+ *  pipeline never lights up for them and they'd otherwise read as "not
+ *  enriched". This drives Discovered → Scored & checked instead.
+ *
+ *  `discovered` = rows the scrape wrote; `scored` = rows with a niche_score
+ *  (the operator-triggered Phase-3 "Score & check" has run). One chunked
+ *  query per engine over that engine's entity table. Table/queue-FK names
+ *  come from ENGINE_CONFIGS; every entity table uses scrape_queue_id +
+ *  niche_score. A failed engine query degrades to no badge for those jobs
+ *  rather than blowing up the whole page. */
+async function fetchSocialProgress(
+  jobsByEngine: Map<SocialBadgeEngine, string[]>,
+): Promise<Map<string, SocialPipelineStatus>> {
+  const out = new Map<string, SocialPipelineStatus>()
+  if (jobsByEngine.size === 0) return out
+
+  const svc = createServiceClient()
+  type Row = { scrape_queue_id: string | null; niche_score: number | null }
+
+  await Promise.all(
+    [...jobsByEngine.entries()].map(async ([engine, jobIds]) => {
+      if (jobIds.length === 0) return
+      const table = ENGINE_CONFIGS[engine].table
+      try {
+        const rows = (await selectInChunks(jobIds, chunk =>
+          svc.from(table).select('scrape_queue_id, niche_score').in('scrape_queue_id', chunk),
+        )) as unknown as Row[]
+        for (const r of rows) {
+          const jobId = r.scrape_queue_id
+          if (!jobId) continue
+          const acc = out.get(jobId) ?? { discovered: 0, scored: 0 }
+          acc.discovered += 1
+          if (r.niche_score !== null) acc.scored += 1
+          out.set(jobId, acc)
+        }
+      } catch {
+        // Leave these jobs without a badge — the column shows "—" rather
+        // than crashing the page if an engine table is unexpectedly absent.
+      }
+    }),
+  )
   return out
 }
 

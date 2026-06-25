@@ -57,6 +57,51 @@ export type KickPipelineStatus = {
   scored: number
 }
 
+/** The social engines (everyone except google/bing — and except Kick, which
+ *  has its own richer 3-dot variant above). These all write to their own
+ *  per-engine entity tables (snapchat_creators, youtube_channels, …) and
+ *  NEVER to google_lead_gen_table, so the 5-dot leads pipeline above stays
+ *  empty for them — which misreads as "not enriched". They get the 2-dot
+ *  progression below instead. */
+export const SOCIAL_BADGE_ENGINES = [
+  'youtube',
+  'twitch',
+  'x',
+  'facebook',
+  'tiktok',
+  'snapchat',
+  'telegram',
+] as const
+
+export type SocialBadgeEngine = (typeof SOCIAL_BADGE_ENGINES)[number]
+
+export function isSocialBadgeEngine(
+  engine: ScrapeJob['search_engine'],
+): engine is SocialBadgeEngine {
+  return (SOCIAL_BADGE_ENGINES as readonly string[]).includes(engine ?? '')
+}
+
+/** Two-dot progression for the social engines. Discovery is one pass (the
+ *  scrape); "Scored & checked" is the operator-triggered Phase-3 step
+ *  (⭐ Score & check on the job detail) that flags affiliates, resolves
+ *  links, and checks Monday. The Scored dot stays empty until that step
+ *  runs — which is exactly what tells an operator the scrape isn't done
+ *  yielding leads yet. */
+export const SOCIAL_PIPELINE_STAGES = [
+  { key: 'discovered', label: 'Discovered' },
+  { key: 'scored', label: 'Scored & checked' },
+] as const
+
+export type SocialStageKey = (typeof SOCIAL_PIPELINE_STAGES)[number]['key']
+
+/** Per-social-job counts the 2-dot badge derives from. `discovered` = rows
+ *  the scrape wrote; `scored` = rows with a niche_score (Phase 3 ran). Only
+ *  present for completed social-engine jobs. */
+export type SocialPipelineStatus = {
+  discovered: number
+  scored: number
+}
+
 /** Approximate per-stage timing for a single scrape job. All times in ms. */
 export type StageTimings = {
   scrape_ms: number | null
@@ -110,6 +155,12 @@ export type ScrapeJob = {
    *  jobs-table renders the 3-dot Kick variant from this instead of the
    *  leads-pipeline badges (which never apply to Kick). Null otherwise. */
   kick: KickPipelineStatus | null
+  /** Social-engine progression counts (youtube/twitch/x/facebook/tiktok/
+   *  snapchat/telegram). Present for completed jobs on those engines; the
+   *  jobs-table renders the 2-dot social variant from this. These engines
+   *  write to their own entity tables, not google_lead_gen_table, so the
+   *  leads-pipeline badges never apply. Null otherwise. */
+  social: SocialPipelineStatus | null
   /** Per-stage timing approximation. Null for non-completed jobs or
    *  jobs without enrichment. */
   stage_timings: StageTimings | null

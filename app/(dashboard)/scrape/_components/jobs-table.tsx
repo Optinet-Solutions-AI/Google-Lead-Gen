@@ -19,10 +19,13 @@ import {
 } from 'lucide-react'
 import {
   KICK_PIPELINE_STAGES,
+  SOCIAL_PIPELINE_STAGES,
   VISIBLE_PIPELINE_STAGES,
+  isSocialBadgeEngine,
   type EnrichmentStatus,
   type KickPipelineStatus,
   type ScrapeJob,
+  type SocialPipelineStatus,
 } from '../_lib/pipeline'
 import {
   bulkDeleteScrapeJobs,
@@ -335,16 +338,48 @@ function KickPipelineBadges({ kick }: { kick: KickPipelineStatus }) {
   )
 }
 
+/** Social engines (youtube/twitch/x/facebook/tiktok/snapchat/telegram) write
+ *  to their own entity tables, not the leads table, so the 5-dot leads
+ *  pipeline never fills and the row misreads as "not enriched". This 2-dot
+ *  variant shows their real progression: Discovered → Scored & checked. The
+ *  Scored dot only fills once the operator runs Phase-3 "Score & check" on
+ *  the job detail — an empty Scored dot is the cue that step is still pending
+ *  (and why the relevant-leads view is empty). */
+function SocialPipelineBadges({ social }: { social: SocialPipelineStatus }) {
+  const { discovered, scored } = social
+  const done: Record<(typeof SOCIAL_PIPELINE_STAGES)[number]['key'], boolean> = {
+    discovered: discovered > 0,
+    scored: discovered > 0 && scored >= discovered,
+  }
+  const counts: Record<(typeof SOCIAL_PIPELINE_STAGES)[number]['key'], string> = {
+    discovered: `${discovered} discovered`,
+    scored: `${scored}/${discovered} scored`,
+  }
+  return (
+    <div className="flex items-center gap-1">
+      {SOCIAL_PIPELINE_STAGES.map(stage => (
+        <PipelineDot
+          key={stage.key}
+          done={done[stage.key]}
+          title={`${stage.label}: ${done[stage.key] ? 'done' : 'not yet'} (${counts[stage.key]})`}
+        />
+      ))}
+    </div>
+  )
+}
+
 function PipelineBadges({
   status,
   enrichment,
   engine,
   kick,
+  social,
 }: {
   status: ScrapeJob['status']
   enrichment: EnrichmentStatus
   engine: ScrapeJob['search_engine']
   kick: ScrapeJob['kick']
+  social: ScrapeJob['social']
 }) {
   if (status !== 'completed') {
     return <span className="text-[color:var(--color-text-secondary)]">—</span>
@@ -354,6 +389,15 @@ function PipelineBadges({
   if (engine === 'kick') {
     return kick && kick.discovered > 0 ? (
       <KickPipelineBadges kick={kick} />
+    ) : (
+      <span className="text-[color:var(--color-text-secondary)]">—</span>
+    )
+  }
+  // The other social engines show their own 2-dot progression for the same
+  // reason — they don't touch the leads pipeline. Empty discovery → dash.
+  if (isSocialBadgeEngine(engine)) {
+    return social && social.discovered > 0 ? (
+      <SocialPipelineBadges social={social} />
     ) : (
       <span className="text-[color:var(--color-text-secondary)]">—</span>
     )
@@ -853,6 +897,7 @@ export function JobsTable({
                     enrichment={job.enrichment}
                     engine={job.search_engine}
                     kick={job.kick}
+                    social={job.social}
                   />
                 </LinkTd>
                 <LinkTd href={href}>{job.batch_id ?? '—'}</LinkTd>
@@ -979,6 +1024,7 @@ export function JobsCardList({ jobs }: Props) {
                 enrichment={job.enrichment}
                 engine={job.search_engine}
                 kick={job.kick}
+                social={job.social}
               />
             </div>
           )}
