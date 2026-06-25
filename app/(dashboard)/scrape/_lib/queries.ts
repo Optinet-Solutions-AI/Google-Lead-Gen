@@ -1250,6 +1250,7 @@ export type TwitchStreamerRow = {
   is_likely_affiliate: boolean | null
   niche_score: number | null
   is_new_lead_candidate: boolean | null
+  is_known_on_monday: boolean | null
   links: TwitchLinkRow[]
 }
 
@@ -1264,7 +1265,7 @@ export async function fetchTwitchStreamerRows(jobId: string): Promise<TwitchStre
     .select(
       'id, broadcaster_login, display_name, broadcaster_url, profile_image_url, ' +
         'broadcaster_language, is_live, game_name, ' +
-        'is_likely_affiliate, niche_score, is_new_lead_candidate',
+        'is_likely_affiliate, niche_score, is_new_lead_candidate, is_known_on_monday',
     )
     .eq('scrape_queue_id', jobId)
   if (error) throw error

@@ -90,13 +90,22 @@ function TwitchStreamerRowView({ r }: { r: TwitchStreamerRow }) {
                 no · {niche}
               </span>
             )}
-            {r.is_new_lead_candidate && (
+            {r.is_new_lead_candidate ? (
               <span
                 className="inline-flex cursor-help items-center gap-1 rounded-full bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold text-purple-800"
                 title="New lead candidate — a likely affiliate whose affiliate ID / @login isn’t on Monday yet. Worth reviewing for outreach."
               >
                 <Sparkles className="h-3 w-3" /> NEW
               </span>
+            ) : (
+              r.is_known_on_monday === true && (
+                <span
+                  className="inline-flex cursor-help items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800"
+                  title="Already on Monday — this affiliate’s ID / @login was matched against the board during “Score & check”."
+                >
+                  <CheckCircle2 className="h-3 w-3" /> on Monday
+                </span>
+              )
             )}
           </div>
         )}
@@ -124,6 +133,7 @@ function TwitchStreamerRowView({ r }: { r: TwitchStreamerRow }) {
                 label={p.label}
                 source={p.source}
                 isNew={p.isNew}
+                onMonday={p.onMonday}
                 count={p.count}
               />
             ))
@@ -139,28 +149,44 @@ function LinkChip({
   label,
   source,
   isNew,
+  onMonday,
   count,
 }: {
   href: string
   label: string
   source: string
   isNew?: boolean
+  onMonday?: boolean
   count?: number
 }) {
+  // Three states: NEW (not on Monday — actionable) takes priority, then
+  // already-on-Monday (known), else a neutral captured link.
+  const status = isNew ? 'new' : onMonday ? 'monday' : 'neutral'
+  const cls =
+    status === 'new'
+      ? 'bg-purple-100 text-purple-800 hover:bg-purple-200'
+      : status === 'monday'
+        ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+        : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+  const note = status === 'new' ? ' — not on Monday yet' : status === 'monday' ? ' — already on Monday' : ''
   return (
     <a
       href={href}
       target="_blank"
       rel="noreferrer"
-      title={`${source}${count && count > 1 ? ` (${count} links to this host)` : ''}${isNew ? ' — not on Monday yet' : ''}: ${href}`}
+      title={`${source}${count && count > 1 ? ` (${count} links to this host)` : ''}${note}: ${href}`}
       className={[
         'inline-flex max-w-[180px] items-center gap-1 truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium',
-        isNew
-          ? 'bg-purple-100 text-purple-800 hover:bg-purple-200'
-          : 'bg-blue-100 text-blue-800 hover:bg-blue-200',
+        cls,
       ].join(' ')}
     >
-      {isNew ? <Sparkles className="h-2.5 w-2.5 shrink-0" /> : <ExternalLink className="h-2.5 w-2.5 shrink-0" />}
+      {status === 'new' ? (
+        <Sparkles className="h-2.5 w-2.5 shrink-0" />
+      ) : status === 'monday' ? (
+        <CheckCircle2 className="h-2.5 w-2.5 shrink-0" />
+      ) : (
+        <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+      )}
       <span className="truncate">{label}</span>
       {count && count > 1 ? <span className="shrink-0 opacity-60">×{count}</span> : null}
     </a>
@@ -194,7 +220,7 @@ function isNonPartnerHost(host: string): boolean {
   return false
 }
 
-type PartnerChip = { href: string; label: string; source: string; isNew: boolean; count: number }
+type PartnerChip = { href: string; label: string; source: string; isNew: boolean; onMonday: boolean; count: number }
 
 /** Filter a streamer's links to actual casino-partner links and collapse
  *  duplicates by host (so `youtube.com ×30` / `twitch.tv ×9` noise is gone and
@@ -207,15 +233,18 @@ function partnerLinks(links: TwitchStreamerRow['links']): PartnerChip[] {
     const host = hostLabel(dest)
     if (isNonPartnerHost(host)) continue
     const isNew = l.is_known_on_monday === false
+    const onMonday = l.is_known_on_monday === true
     const existing = byHost.get(host)
     if (!existing) {
-      byHost.set(host, { href: dest, label: l.brand || host, source: l.source, isNew, count: 1 })
+      byHost.set(host, { href: dest, label: l.brand || host, source: l.source, isNew, onMonday, count: 1 })
       continue
     }
     existing.count++
-    // Upgrade the kept chip if this one carries a brand or a NEW flag.
+    // Upgrade the kept chip if this one carries a brand, a NEW flag, or an
+    // on-Monday match.
     if (l.brand && existing.label === host) existing.label = l.brand
     if (isNew) existing.isNew = true
+    if (onMonday) existing.onMonday = true
   }
   // Brand'd / NEW partners first, then alphabetical for a stable order.
   return [...byHost.values()].sort((a, b) => {
