@@ -1177,7 +1177,12 @@ export async function runYoutubeContactEnrichment(
 // an S-tag, checks each S-tag against Monday (search_s_tag_on_monday — the
 // same RPC the lead s-tag dup-check uses), scores affiliate likelihood, and
 // extracts outreach contacts. A channel is flagged is_new_lead_candidate
-// when it's a likely affiliate carrying ≥1 S-tag NOT already on Monday.
+// when it's a likely affiliate whose CHANNEL isn't already on Monday — the
+// dedup unit is the channel (its @handle), NOT the affiliate link it carries
+// (Ryan, batch 1678). A channel we've already recorded is not "new" even when
+// it promotes a not-yet-seen operator; a genuinely new channel IS new even
+// when it shares an affiliate link with one we already have. The per-link
+// known/new badge stays as informational intel in the "Affiliate links" column.
 // No leads are created — the operator reviews the flagged candidates.
 // ============================================================
 export async function runYoutubeChannelAnalysis(
@@ -1323,7 +1328,6 @@ export async function runYoutubeChannelAnalysis(
     seen: Set<string>
     nicheScore: number
     likely: boolean
-    alreadyNew: boolean
     twoHopUrl: string | null
   }
   const pendings: Pending[] = []
@@ -1347,19 +1351,19 @@ export async function runYoutubeChannelAnalysis(
     for (const cand of candidates) resolved.push(await resolveCandidate(cand, denylist))
     const casino = resolved.filter(r => r.is_casino)
 
-    let hasNewTag = false
+    // Mine + store each casino link. storeLink computes the per-link
+    // is_known_on_monday badge shown in the "Affiliate links" column; its
+    // return value (link not on Monday) no longer drives the channel-level NEW
+    // flag — that's decided by channel identity below.
     for (const r of casino) {
-      const flaggedNew = await storeLink(c.id, channelLinks, seen, {
+      await storeLink(c.id, channelLinks, seen, {
         url: r.source_url,
         final_url: r.final_url,
         s_tag: r.s_tag,
         s_tag_param: r.s_tag_param,
         brand: r.brand,
       })
-      if (flaggedNew) hasNewTag = true
     }
-    // Carry the existing stored links' verdicts too (a prior run's tags).
-    if (channelLinks.some(l => l.is_known_on_monday === false)) hasNewTag = true
 
     // Score on the resolved casino destinations + name/keyword signals.
     const scoreLinks: YoutubeScoreLink[] = casino.map(r => ({ url: r.source_url, resolved_url: r.final_url }))
@@ -1377,17 +1381,21 @@ export async function runYoutubeChannelAnalysis(
       linkUrls,
     )
 
-    // New-lead check, per the SOP: compare the affiliate ID OR the channel
-    // USERNAME against Monday. A channel can be a new lead even when it
-    // promotes a known operator — what matters is whether THIS channel has
-    // been captured before. Key on the handle (unique; channel names are too
-    // generic to ilike-match safely). Only worth checking for likely
-    // affiliates (non-affiliate channels aren't leads).
+    // New-lead check: the dedup unit is the CHANNEL, not the affiliate link it
+    // carries (Ryan, batch 1678). A channel is a new lead only when the channel
+    // itself isn't already on Monday — what matters is whether THIS channel has
+    // been captured before, regardless of whether its operator/S-tag is known.
+    // Key on the @handle: Monday stores the full youtube.com/@handle URL, so the
+    // @-prefixed form is precise enough to avoid matching a bare token inside an
+    // unrelated item. Only worth checking for likely affiliates (non-affiliate
+    // channels aren't leads). When the handle is missing/too short to verify, we
+    // leave the channel un-flagged rather than guess — it still shows as a likely
+    // affiliate, just without the NEW badge.
     let channelIsNew = false
     if (result.isLikelyAffiliate) {
       const handle = (c.channel_handle ?? '').replace(/^@/, '').trim()
       if (handle.length >= 3) {
-        const known = await checkMonday(handle)
+        const known = await checkMonday(`@${handle}`)
         channelIsNew = !known
       }
     }
@@ -1396,7 +1404,7 @@ export async function runYoutubeChannelAnalysis(
       is_likely_affiliate: result.isLikelyAffiliate,
       is_not_relevant: result.isNotRelevant,
       niche_score: result.nicheScore,
-      is_new_lead_candidate: result.isLikelyAffiliate && (hasNewTag || channelIsNew),
+      is_new_lead_candidate: result.isLikelyAffiliate && channelIsNew,
     }
     if (!c.email && contacts.email) update.email = contacts.email
     if (!c.telegram_url && contacts.telegram_url) update.telegram_url = contacts.telegram_url
@@ -1409,7 +1417,7 @@ export async function runYoutubeChannelAnalysis(
     if (upErr) continue
     scored++
     if (result.isLikelyAffiliate) likelyAffiliates++
-    if (result.isLikelyAffiliate && (hasNewTag || channelIsNew)) newCandidates++
+    if (result.isLikelyAffiliate && channelIsNew) newCandidates++
     if (update.email || c.email || contacts.telegram_url || contacts.discord_url) withContacts++
 
     // A likely affiliate whose casino link is a landing/review PAGE with no
@@ -1418,7 +1426,6 @@ export async function runYoutubeChannelAnalysis(
     pendings.push({
       c, links: channelLinks, seen,
       nicheScore: result.nicheScore, likely: result.isLikelyAffiliate,
-      alreadyNew: result.isLikelyAffiliate && (hasNewTag || channelIsNew),
       twoHopUrl: twoHop?.final_url ?? null,
     })
   }
@@ -1435,23 +1442,18 @@ export async function runYoutubeChannelAnalysis(
 
   for (const p of twoHopTargets) {
     const stags = await twoHopStags(p.twoHopUrl as string, { maxLinks: 10 })
-    let foundNew = false
     for (const t of stags) {
-      const flaggedNew = await storeLink(p.c.id, p.links, p.seen, {
+      // Mine + store the landing page's real S-tags (the per-link known/new
+      // badge is still useful intel). This no longer flips the channel-level
+      // NEW flag — that's decided solely by channel identity in pass 1, so a
+      // known channel surfacing a new operator stays "not new".
+      await storeLink(p.c.id, p.links, p.seen, {
         url: t.tracking_url,
         final_url: t.final_url,
         s_tag: t.s_tag,
         s_tag_param: t.source_param,
         brand: t.brand,
       })
-      if (flaggedNew) foundNew = true
-    }
-    // A two-hop run can turn a likely affiliate into a confirmed new-lead
-    // candidate (found a not-known operator it didn't have before).
-    if (foundNew && !p.alreadyNew) {
-      await svc.from('youtube_channels').update({ is_new_lead_candidate: true }).eq('id', p.c.id)
-      p.alreadyNew = true
-      newCandidates++
     }
   }
 

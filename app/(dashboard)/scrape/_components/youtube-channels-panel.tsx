@@ -162,8 +162,9 @@ export function YoutubeChannelsPanel({
       <p className="mt-1.5 text-[11px] leading-snug text-[color:var(--color-text-secondary)]">
         <strong className="font-medium">Enrich</strong> opens the top channels in a real browser to backfill website,
         socials, and the About-tab email (reCAPTCHA-gated). <strong className="font-medium">Score &amp; check</strong>{' '}
-        then flags likely affiliates, mines affiliate S-tags from the video descriptions, and checks each against the
-        company database — flagging channels that are <strong className="font-medium">new leads</strong>. Both are re-runnable.
+        then flags likely affiliates, mines affiliate S-tags from the video descriptions, and checks each channel
+        against the company database (by its @handle) — flagging channels that aren’t on Monday yet as{' '}
+        <strong className="font-medium">new leads</strong>. Both are re-runnable.
       </p>
 
       {(messages.length > 0 || errors.length > 0) && (

@@ -88,7 +88,7 @@ function YoutubeTable({ rows }: { rows: YoutubeChannelRow[] }) {
             <th className="px-3 py-2 font-medium">Channel</th>
             <th
               className="cursor-help px-3 py-2 font-medium"
-              title="Affiliate likelihood + niche score (0–100). “affiliate” = scored ≥30 or carrying a casino affiliate link. A NEW badge means a likely affiliate with an S-tag not yet on Monday."
+              title="Affiliate likelihood + niche score (0–100). “affiliate” = scored ≥30 or carrying a casino affiliate link. A NEW badge means a likely affiliate whose channel isn’t on Monday yet."
             >
               Affiliate
             </th>
@@ -165,7 +165,7 @@ function YoutubeChannelRowView({ r }: { r: YoutubeChannelRow }) {
           {r.is_new_lead_candidate && (
             <span
               className="inline-flex cursor-help items-center gap-1 rounded-full bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-800"
-              title="New lead candidate — a likely affiliate carrying at least one S-tag not yet recorded on Monday. Review and add to outreach."
+              title="New lead candidate — a likely affiliate whose YouTube channel isn’t on Monday yet (matched by @handle). Review and add to outreach."
             >
               <Sparkles className="h-3 w-3" /> NEW
             </span>
