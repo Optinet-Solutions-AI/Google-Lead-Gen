@@ -320,7 +320,9 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
             </p>
           </div>
           <div className="flex shrink-0 items-start gap-2">
-            {job.status === 'completed' && <PushToMondayButton jobId={job.id} />}
+            {job.status === 'completed' && (
+              <PushToMondayButton jobId={job.id} engine={job.search_engine} />
+            )}
             {(showHidden || hiddenCount > 0) && (
               <Link
                 href={toggleHref}

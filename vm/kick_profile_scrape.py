@@ -70,9 +70,11 @@ KICK_BLOCK_COOLDOWN_S = int(os.environ.get("KICK_PHASE2_BLOCK_COOLDOWN_SECONDS",
 # Wall-clock budget: stop starting NEW streamers past this, finish what's
 # done, and exit SUCCESS — so the job never gets killed mid-run by the
 # worker's subprocess timeout (which would requeue + re-burn bandwidth).
-# Kept under the non-interactive worker timeout (1200s) for safety in both
-# modes; un-enriched streamers stay pending for a re-run.
-KICK_BUDGET_S = int(os.environ.get("KICK_PHASE2_BUDGET_SECONDS", "1000"))
+# Phase-2 always runs on the 20-min (1200s) worker timeout now (it's an
+# unattended batch — no interactive checkpoints; see worker.py), so a 900s
+# budget leaves a ~5-min cushion for the in-flight streamer to wrap up.
+# Un-enriched streamers stay pending for a re-run.
+KICK_BUDGET_S = int(os.environ.get("KICK_PHASE2_BUDGET_SECONDS", "900"))
 
 # ---------------------------------------------------------------------------
 # Extraction model (confirmed by the VM --probe spike, 2026-06-01):

@@ -911,10 +911,19 @@ def run_kick_profile_scrape(
 
     Unlike run_kick_search (pure HTTP), this is the *browser* path — it
     needs the GoLogin profile + port exactly like run_scrape, because
-    kick.com/{slug} sits behind Cloudflare. Captcha-solver gating mirrors
-    run_scrape: when active, hand the child --interactive/--job-id and use
-    the longer interactive timeout so a paused job isn't TERM'd while a
-    human clicks through noVNC.
+    kick.com/{slug} sits behind Cloudflare.
+
+    Phase-2 runs UNATTENDED, unlike a normal SERP scrape: one job opens up
+    to KICK_PHASE2_TOP_N (25) streamer pages. So we deliberately do NOT pass
+    --interactive even when the Captcha solver is globally on — parking each
+    Cloudflare-blocked streamer at a noVNC checkpoint that nobody is watching
+    just burned the full 65-min interactive timeout and got the job TERM'd +
+    requeued (QA: Supriya 2026-06-24; jobs sat 2 days then died at 65 min).
+    The automated 2captcha/Turnstile solver still runs inside the child
+    (attempt_auto_captcha_solve, independent of --interactive); a streamer it
+    can't clear is marked about_fetch_failed and skipped, and the child's own
+    KICK_PHASE2_BUDGET_SECONDS keeps the run under the 20-min worker timeout
+    so it exits SUCCESS with partial results instead of being killed.
 
     Returns: (exit_code, combined_log_text, json_output_path, log_path)
     """
@@ -935,14 +944,14 @@ def run_kick_profile_scrape(
         "--worker-id", WORKER_ID,
         "--output", str(output_path),
     ]
-    if captcha_solver_should_run():
-        cmd += ["--interactive"]
 
     env = os.environ.copy()
     log.info("launching kick_profile_scrape (port=%d profile=%s parent=%s top_n=%d log=%s)",
              GOLOGIN_PORT, profile_id[:8], parent_job_id[:8], top_n, log_path)
 
-    timeout_s = INTERACTIVE_TIMEOUT_S if captcha_solver_should_run() else SCRAPE_TIMEOUT_S
+    # Unattended batch → always the 20-min timeout (never the 65-min
+    # interactive one). The child's wall-clock budget bows out before this.
+    timeout_s = SCRAPE_TIMEOUT_S
     with open(log_path, "w", encoding="utf-8") as log_f:
         result = subprocess.run(
             cmd,
@@ -989,8 +998,9 @@ def process_kick_phase2_job(job: dict[str, Any]) -> None:
         )
     except subprocess.TimeoutExpired:
         _kill_port()
-        timeout_used = INTERACTIVE_TIMEOUT_S if CAPTCHA_SOLVER_MODE else SCRAPE_TIMEOUT_S
-        fail_job(job_id, f"Kick profile enrichment took too long ({timeout_used // 60} min) and was stopped.")
+        # Phase-2 always runs unattended on the 20-min timeout (see
+        # run_kick_profile_scrape) — its own budget should bow out first.
+        fail_job(job_id, f"Kick profile enrichment took too long ({SCRAPE_TIMEOUT_S // 60} min) and was stopped.")
         return
     except Exception as exc:  # noqa: BLE001
         _kill_port()
