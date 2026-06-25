@@ -215,10 +215,7 @@ export function EnqueueForm({
             <option value="google">Google</option>
             <option value="bing">Bing</option>
             <option value="both">Both (G + B)</option>
-            {/* Twitch hidden until vm/twitch_search.py ships. DB enum +
-                server-side dispatch already accept 'twitch'; this only
-                gates new job creation from the UI. */}
-            {/* <option value="twitch">Twitch</option> */}
+            <option value="twitch">Twitch</option>
             <option value="kick">Kick</option>
             <option value="youtube">YouTube</option>
             {/* X (Twitter) temporarily hidden — login rate-limited, pending

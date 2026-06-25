@@ -15,6 +15,7 @@ import { scoreFbAdvertiser, AGGREGATOR_HOSTS, type FbScoreLink } from '@/lib/aff
 import { scoreTiktokCreator, type TiktokScoreLink } from '@/lib/affiliate-detection/tiktok-scorer'
 import { scoreSnapchatCreator, type SnapchatScoreLink } from '@/lib/affiliate-detection/snapchat-scorer'
 import { scoreTelegramChannel, type TelegramScoreLink } from '@/lib/affiliate-detection/telegram-scorer'
+import { scoreTwitchStreamer, type TwitchScoreLink } from '@/lib/affiliate-detection/twitch-scorer'
 import { extractContacts } from '@/lib/affiliate-detection/kick-contacts'
 import { extractContacts as extractContactsFromHtml } from '@/lib/contact-extraction/extract'
 import { fetchPagesHtml } from '@/lib/contact-extraction/fetch-html'
@@ -2343,6 +2344,207 @@ export async function runSnapchatCreatorAnalysis(
   return {
     status: 'ok',
     message: `Scored ${scored} creator${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}, ${withContacts} with contact${withContacts === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
+  }
+}
+
+// ============================================================
+// Twitch Phase 3 — affiliate scoring + S-tag / new-vs-known check
+//
+// Twitch is single-pass (twitch_search.py discovers via Helix AND enriches
+// VODs/clips/About-panels in one run), so — like Snapchat/Telegram — the only
+// operator action is this inline scorer. For each streamer it resolves the
+// captured links, parses any affiliate S-tag (or falls back to the operator
+// brand), checks each against Monday, scores affiliate likelihood from the
+// panel/bio casino links + title/bio keywords + gambling game/tags, and flags
+// is_new_lead_candidate when a likely affiliate carries an affiliate ID NOT on
+// Monday OR whose @login isn't on Monday. Twitch captures NO contacts (the API
+// exposes none parseably), so — unlike Kick/Snapchat — there's no contact pass.
+// ============================================================
+export async function runTwitchStreamerAnalysis(
+  _prev: StageRunState,
+  fd: FormData,
+): Promise<StageRunState> {
+  const jobId = jobIdFrom(fd)
+  if (!jobId) return { status: 'error', error: 'Missing job id.' }
+  const access = await requireJobAccess(jobId)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const svc = createServiceClient()
+
+  const { data: job, error: jobErr } = await svc
+    .from('scrape_queue')
+    .select('search_engine')
+    .eq('id', jobId)
+    .maybeSingle()
+  if (jobErr) return { status: 'error', error: safeError(jobErr, 'Failed to load the job.') }
+  if (!job) return { status: 'error', error: 'Job not found.' }
+  if (((job as { search_engine: string | null }).search_engine ?? '') !== 'twitch') {
+    return { status: 'error', error: 'Scoring only applies to Twitch scrape jobs.' }
+  }
+
+  type StreamerRow = {
+    id: string
+    broadcaster_login: string | null
+    display_name: string | null
+    bio: string | null
+    stream_title: string | null
+    tags: string[] | null
+    game_name: string | null
+  }
+  const { data: streamers, error: sErr } = await svc
+    .from('twitch_streamers')
+    .select('id, broadcaster_login, display_name, bio, stream_title, tags, game_name')
+    .eq('scrape_queue_id', jobId)
+  if (sErr) return { status: 'error', error: safeError(sErr, 'Failed to load streamers.') }
+  const rows = (streamers ?? []) as unknown as StreamerRow[]
+  if (rows.length === 0) {
+    return { status: 'ok', message: 'No streamers to score yet — run the Twitch scrape first.' }
+  }
+  const streamerIds = rows.map(r => r.id)
+
+  type LinkRow = {
+    id: string
+    twitch_streamer_id: string
+    url: string
+    resolved_url: string | null
+    source: string
+    s_tag: string | null
+    brand: string | null
+    is_known_on_monday: boolean | null
+  }
+  const { data: links, error: lErr } = await svc
+    .from('twitch_links')
+    .select('id, twitch_streamer_id, url, resolved_url, source, s_tag, brand, is_known_on_monday')
+    .in('twitch_streamer_id', streamerIds)
+  if (lErr) return { status: 'error', error: safeError(lErr, 'Failed to load streamer links.') }
+  const allLinks = (links ?? []) as unknown as LinkRow[]
+
+  const { data: denyRows } = await svc.from('operator_domains_denylist').select('host_suffix')
+  const denylist = new Set(
+    (denyRows ?? []).map(r => (r as { host_suffix: string }).host_suffix.toLowerCase()),
+  )
+
+  // 1. Resolve shortener-like links.
+  const toResolve = allLinks
+    .filter(l => !l.resolved_url && needsResolution(l.url))
+    .map(l => l.url)
+  let linksResolved = 0
+  if (toResolve.length > 0) {
+    const resolvedMap = await resolveShorteners(toResolve)
+    const nowIso = new Date().toISOString()
+    for (const l of allLinks) {
+      const resolved = resolvedMap.get(l.url)
+      if (!resolved) continue
+      l.resolved_url = resolved
+      const { error: upErr } = await svc
+        .from('twitch_links')
+        .update({ resolved_url: resolved, resolved_at: nowIso })
+        .eq('id', l.id)
+      if (!upErr) linksResolved++
+    }
+  }
+
+  const mondayCache = new Map<string, { kind: string; item_id: string } | null>()
+  async function checkMonday(key0: string): Promise<{ kind: string; item_id: string } | null> {
+    const key = key0.toLowerCase()
+    if (mondayCache.has(key)) return mondayCache.get(key) ?? null
+    const { data } = await svc.rpc('search_s_tag_on_monday', { p_tag: key0 })
+    const hit = (Array.isArray(data) ? data[0] : data) as { kind: string; item_id: string } | null | undefined
+    const val = hit?.item_id ? hit : null
+    mondayCache.set(key, val)
+    return val
+  }
+
+  // 2. Parse S-tag / brand for each casino link + check it against Monday.
+  const linksByStreamer = new Map<string, LinkRow[]>()
+  for (const l of allLinks) {
+    const arr = linksByStreamer.get(l.twitch_streamer_id) ?? []
+    arr.push(l)
+    linksByStreamer.set(l.twitch_streamer_id, arr)
+  }
+  let affiliateLinks = 0
+  for (const l of allLinks) {
+    const dest = l.resolved_url ?? l.url
+    const parsed = parseStagFromUrl(dest)
+    const isCasino = !!parsed || isAffiliateCasinoLink(dest, denylist)
+    if (!isCasino) continue
+    affiliateLinks++
+    const brand = guessBrandFromUrl(dest)
+    const checkKey = parsed?.tag || brand || ''
+    let hit: { kind: string; item_id: string } | null = null
+    if (checkKey) hit = await checkMonday(checkKey)
+    const update = {
+      s_tag: parsed?.tag ?? null,
+      s_tag_param: parsed?.param ?? null,
+      brand,
+      is_known_on_monday: checkKey ? !!hit : null,
+      monday_match_kind: hit?.kind ?? null,
+      monday_match_item_id: hit?.item_id ?? null,
+    }
+    const { error: upErr } = await svc.from('twitch_links').update(update).eq('id', l.id)
+    if (!upErr) {
+      l.s_tag = update.s_tag
+      l.brand = update.brand
+      l.is_known_on_monday = update.is_known_on_monday
+    }
+  }
+
+  // 3. Score each streamer + derive the new-vs-known verdict.
+  let scored = 0
+  let likelyAffiliates = 0
+  let newCandidates = 0
+  for (const s of rows) {
+    const streamerLinks = linksByStreamer.get(s.id) ?? []
+    const scoreLinks: TwitchScoreLink[] = streamerLinks.map(l => ({
+      url: l.url,
+      resolved_url: l.resolved_url,
+      source: l.source,
+      brand: l.brand,
+    }))
+    const result = scoreTwitchStreamer(
+      { bio: s.bio, stream_title: s.stream_title, tags: s.tags, game_name: s.game_name },
+      scoreLinks,
+      denylist,
+    )
+
+    const hasNewTag = streamerLinks.some(l => l.is_known_on_monday === false)
+    let handleIsNew = false
+    let handleChecked = false
+    if (result.isLikelyAffiliate) {
+      const handle = (s.broadcaster_login ?? '').replace(/^@/, '').trim()
+      if (handle.length >= 2) {
+        const known = await checkMonday(handle)
+        handleIsNew = !known
+        handleChecked = true
+      }
+    }
+    const isNewCandidate = result.isLikelyAffiliate && (hasNewTag || handleIsNew)
+
+    const update: Record<string, unknown> = {
+      is_likely_affiliate: result.isLikelyAffiliate,
+      niche_score: result.nicheScore,
+      is_new_lead_candidate: isNewCandidate,
+      is_known_on_monday: result.isLikelyAffiliate && handleChecked ? !handleIsNew : null,
+    }
+
+    const { error: upErr } = await svc.from('twitch_streamers').update(update).eq('id', s.id)
+    if (upErr) continue
+    scored++
+    if (result.isLikelyAffiliate) likelyAffiliates++
+    if (isNewCandidate) newCandidates++
+  }
+
+  await logActivity({
+    action: 'enrichment.twitch_score',
+    entity_type: 'scrape_job',
+    entity_id: jobId,
+    details: { scored, likelyAffiliates, newCandidates, affiliateLinks, linksResolved },
+  })
+
+  revalidatePath(`/scrape/${jobId}`)
+  return {
+    status: 'ok',
+    message: `Scored ${scored} streamer${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
   }
 }
 

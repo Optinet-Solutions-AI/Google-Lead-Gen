@@ -1180,6 +1180,117 @@ export async function fetchTelegramChannelRows(jobId: string): Promise<TelegramC
     .map(r => ({ ...r, links: linksByChannel.get(r.id) ?? [] }))
 }
 
+// ============================================================
+// Twitch streamer queries (single-pass like Snapchat/Telegram — Helix
+// discover + VOD/clip/panel enrich in one scrape, then score;
+// twitch_streamers + twitch_links).
+// ============================================================
+export type TwitchStreamerSummary = {
+  discovered: number
+  scored: number
+  unscored: number
+  likelyAffiliates: number
+  newCandidates: number
+}
+
+export async function fetchTwitchStreamerSummary(jobId: string): Promise<TwitchStreamerSummary> {
+  const svc = createServiceClient()
+  const [discoveredRes, scoredRes, affiliateRes, newRes] = await Promise.all([
+    svc.from('twitch_streamers').select('id', { count: 'exact', head: true }).eq('scrape_queue_id', jobId),
+    svc
+      .from('twitch_streamers')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .not('niche_score', 'is', null),
+    svc
+      .from('twitch_streamers')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .eq('is_likely_affiliate', true),
+    svc
+      .from('twitch_streamers')
+      .select('id', { count: 'exact', head: true })
+      .eq('scrape_queue_id', jobId)
+      .eq('is_new_lead_candidate', true),
+  ])
+
+  const discovered = discoveredRes.count ?? 0
+  const scored = scoredRes.count ?? 0
+  return {
+    discovered,
+    scored,
+    unscored: Math.max(0, discovered - scored),
+    likelyAffiliates: affiliateRes.count ?? 0,
+    newCandidates: newRes.count ?? 0,
+  }
+}
+
+export type TwitchLinkRow = {
+  url: string
+  resolved_url: string | null
+  source: 'panel' | 'bio' | 'vod_description' | 'clip_description' | 'stream_title'
+  brand: string | null
+  is_known_on_monday: boolean | null
+}
+
+export type TwitchStreamerRow = {
+  id: string
+  broadcaster_login: string
+  display_name: string | null
+  broadcaster_url: string
+  profile_image_url: string | null
+  broadcaster_language: string | null
+  is_live: boolean | null
+  game_name: string | null
+  is_likely_affiliate: boolean | null
+  niche_score: number | null
+  is_new_lead_candidate: boolean | null
+  links: TwitchLinkRow[]
+}
+
+/** Per-streamer rows for the Twitch results table: new candidates first, then
+ *  affiliates, then niche_score desc, then login — with each streamer's
+ *  panel/bio/VOD links attached. (No follower count — unavailable with an app
+ *  token, so it's never a sort key.) */
+export async function fetchTwitchStreamerRows(jobId: string): Promise<TwitchStreamerRow[]> {
+  const svc = createServiceClient()
+  const { data: streamers, error } = await svc
+    .from('twitch_streamers')
+    .select(
+      'id, broadcaster_login, display_name, broadcaster_url, profile_image_url, ' +
+        'broadcaster_language, is_live, game_name, ' +
+        'is_likely_affiliate, niche_score, is_new_lead_candidate',
+    )
+    .eq('scrape_queue_id', jobId)
+  if (error) throw error
+  const rows = (streamers ?? []) as unknown as Omit<TwitchStreamerRow, 'links'>[]
+  if (rows.length === 0) return []
+
+  const { data: links } = await svc
+    .from('twitch_links')
+    .select('twitch_streamer_id, url, resolved_url, source, brand, is_known_on_monday')
+    .in('twitch_streamer_id', rows.map(r => r.id))
+  const linksByStreamer = new Map<string, TwitchLinkRow[]>()
+  for (const l of (links ?? []) as unknown as Array<TwitchLinkRow & { twitch_streamer_id: string }>) {
+    const arr = linksByStreamer.get(l.twitch_streamer_id) ?? []
+    arr.push({ url: l.url, resolved_url: l.resolved_url, source: l.source, brand: l.brand, is_known_on_monday: l.is_known_on_monday })
+    linksByStreamer.set(l.twitch_streamer_id, arr)
+  }
+
+  return rows
+    .slice()
+    .sort((a, b) => {
+      const nw = Number(b.is_new_lead_candidate ?? false) - Number(a.is_new_lead_candidate ?? false)
+      if (nw !== 0) return nw
+      const aff = Number(b.is_likely_affiliate ?? false) - Number(a.is_likely_affiliate ?? false)
+      if (aff !== 0) return aff
+      const ns = Number(b.niche_score ?? -1) - Number(a.niche_score ?? -1)
+      if (ns !== 0) return ns
+      return (a.broadcaster_login ?? '').localeCompare(b.broadcaster_login ?? '')
+    })
+    .map(r => ({ ...r, links: linksByStreamer.get(r.id) ?? [] }))
+}
+
 export async function listRecentJobs(limit = 30): Promise<ScrapeJob[]> {
   return queryJobs({ limit, page: 1, size: limit }).then(r => r.rows)
 }

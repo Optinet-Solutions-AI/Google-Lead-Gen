@@ -35,6 +35,8 @@ import { SnapchatCreatorsPanel } from '../_components/snapchat-creators-panel'
 import { SnapchatCreatorsTable } from '../_components/snapchat-creators-table'
 import { TelegramChannelsPanel } from '../_components/telegram-channels-panel'
 import { TelegramChannelsTable } from '../_components/telegram-channels-table'
+import { TwitchStreamersPanel } from '../_components/twitch-streamers-panel'
+import { TwitchStreamersTable } from '../_components/twitch-streamers-table'
 import {
   fetchFbAdvertiserRows,
   fetchFbAdvertiserSummary,
@@ -49,6 +51,8 @@ import {
   fetchSnapchatCreatorSummary,
   fetchTelegramChannelRows,
   fetchTelegramChannelSummary,
+  fetchTwitchStreamerRows,
+  fetchTwitchStreamerSummary,
   fetchYoutubeChannelRows,
   fetchYoutubeChannelSummary,
 } from '../_lib/queries'
@@ -195,10 +199,12 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const isTiktok = job.search_engine === 'tiktok'
   const isSnapchat = job.search_engine === 'snapchat'
   const isTelegram = job.search_engine === 'telegram'
-  // Kick / YouTube / X / Facebook / TikTok / Snapchat / Telegram all live in
-  // their own tables/panels — none produces leads, so the lead filters + table
-  // + enrichment stages don't apply.
-  const noLeadsEngine = isKick || isYoutube || isX || isFacebook || isTiktok || isSnapchat || isTelegram
+  const isTwitch = job.search_engine === 'twitch'
+  // Kick / YouTube / X / Facebook / TikTok / Snapchat / Telegram / Twitch all
+  // live in their own tables/panels — none produces leads, so the lead filters
+  // + table + enrichment stages don't apply.
+  const noLeadsEngine =
+    isKick || isYoutube || isX || isFacebook || isTiktok || isSnapchat || isTelegram || isTwitch
 
   const [
     { rows, total },
@@ -219,6 +225,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
     snapchatRows,
     telegramSummary,
     telegramRows,
+    twitchSummary,
+    twitchRows,
     prefs,
   ] = await Promise.all([
       queryLeads({
@@ -256,6 +264,8 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       isSnapchat ? fetchSnapchatCreatorRows(id) : Promise.resolve(null),
       isTelegram ? fetchTelegramChannelSummary(id) : Promise.resolve(null),
       isTelegram ? fetchTelegramChannelRows(id) : Promise.resolve(null),
+      isTwitch ? fetchTwitchStreamerSummary(id) : Promise.resolve(null),
+      isTwitch ? fetchTwitchStreamerRows(id) : Promise.resolve(null),
       getUserPreferences(),
     ])
 
@@ -396,6 +406,11 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         <>
           {telegramSummary && <TelegramChannelsPanel jobId={job.id} summary={telegramSummary} />}
           {telegramRows && telegramRows.length > 0 && <TelegramChannelsTable rows={telegramRows} />}
+        </>
+      ) : isTwitch ? (
+        <>
+          {twitchSummary && <TwitchStreamersPanel jobId={job.id} summary={twitchSummary} />}
+          {twitchRows && twitchRows.length > 0 && <TwitchStreamersTable rows={twitchRows} />}
         </>
       ) : (
         stageSummary && <EnrichmentStages jobId={job.id} summary={stageSummary} />

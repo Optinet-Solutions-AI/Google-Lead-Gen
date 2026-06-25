@@ -193,6 +193,16 @@ TELEGRAM_SEARCH_PATH = os.environ.get(
 )
 TELEGRAM_SEARCH_TIMEOUT_S = int(os.environ.get("TELEGRAM_SEARCH_TIMEOUT_SECONDS", "300"))
 TELEGRAM_PHASE1_MAX_RESULTS = int(os.environ.get("TELEGRAM_PHASE1_MAX_RESULTS", "100"))
+# Twitch is the PURE-HTTP single-pass path (like Snapchat/Kick — no GoLogin):
+# Helix REST (App Access Token via client_credentials) for discovery + enrich,
+# plus best-effort gql.twitch.tv About-panel link mining. One pass discovers
+# AND enriches, writing twitch_streamers + twitch_links directly — no Phase-2 job.
+TWITCH_SEARCH_PATH = os.environ.get(
+    "TWITCH_SEARCH_PATH",
+    str(Path.home() / "twitch_search.py"),
+)
+TWITCH_SEARCH_TIMEOUT_S = int(os.environ.get("TWITCH_SEARCH_TIMEOUT_SECONDS", "300"))
+TWITCH_PHASE1_MAX_RESULTS = int(os.environ.get("TWITCH_PHASE1_MAX_RESULTS", "100"))
 KILL_SCRIPT_PATH     = os.environ.get(
     "KILL_SCRIPT_PATH",
     str(Path.home() / "kill_gologin.py"),
@@ -1833,6 +1843,130 @@ def process_snapchat_job(job: dict[str, Any]) -> None:
     log.info("snapchat job %s completed | %d creators", job_id, summary.get("total_results") or 0)
 
 
+def run_twitch_search(
+    keyword: str,
+    country_code: str,
+    language: str,
+    job_id: str,
+    keep_languages: str = "",
+    max_results: int = 100,
+) -> tuple[int, str, Path, Path]:
+    """Invoke twitch_search.py as a subprocess. PURE HTTP like
+    run_kick_search / run_snapchat_search — no GoLogin, no port, no view_mode.
+    Single pass: Helix discovery + enrich + gql panel mining in one run, writing
+    twitch_streamers + twitch_links directly.
+
+    Returns: (exit_code, combined_log_text, json_output_path, log_path)
+    """
+    output_path = Path(RESULTS_DIR) / f"twitch_{WORKER_ID}_{GOLOGIN_PORT}.json"
+    log_path    = Path(RESULTS_DIR) / f"twitch_{WORKER_ID}_{GOLOGIN_PORT}.log"
+    output_path.unlink(missing_ok=True)
+    log_path.unlink(missing_ok=True)
+
+    cmd = [
+        "python3",
+        "-u",
+        TWITCH_SEARCH_PATH,
+        "-k", keyword,
+        "--country-code", country_code,
+        "--language", language,
+        "--keep-languages", keep_languages,
+        "--max-results", str(max_results),
+        "--job-id", job_id,
+        "--worker-id", WORKER_ID,
+        "--output", str(output_path),
+    ]
+
+    env = os.environ.copy()
+    log.info("launching twitch_search (keyword=%r lang=%s log=%s timeout=%ds)",
+             keyword, language, log_path, TWITCH_SEARCH_TIMEOUT_S)
+
+    with open(log_path, "w", encoding="utf-8") as log_f:
+        result = subprocess.run(
+            cmd, env=env, stdout=log_f, stderr=subprocess.STDOUT, timeout=TWITCH_SEARCH_TIMEOUT_S,
+        )
+
+    try:
+        combined = log_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        combined = ""
+    return result.returncode, combined, output_path, log_path
+
+
+def process_twitch_job(job: dict[str, Any]) -> None:
+    """Handle a scrape_queue row where search_engine='twitch'.
+
+    Pure-HTTP path like Snapchat/Kick — no Chromium, no GoLogin profile, no
+    port-kill cycle. Single pass (no Phase-2 job): the child discovers AND
+    enriches broadcasters, writing twitch_streamers + twitch_links directly.
+    The country's allowed languages (gologin_profiles.languages) drive the
+    --keep-languages filter exactly like Kick.
+    """
+    job_id = job["id"]
+    country_code = job["country_code"]
+    keyword = job["keyword"]
+    language = (job.get("language") or "en").strip().lower() or "en"
+
+    log.info("claimed twitch job %s | country=%s keyword=%r lang=%s",
+             job_id, country_code, keyword, language)
+
+    profile = fetch_profile(country_code) or {}
+    allowed_langs = profile.get("languages") or ["en"]
+    keep_languages = ",".join(
+        a.strip().lower() for a in allowed_langs if a and a.strip()
+    ) or "en"
+    log.info("twitch job %s | language filter keep=%s", job_id, keep_languages)
+
+    try:
+        exit_code, combined_log, output_path, log_path = run_twitch_search(
+            keyword=keyword,
+            country_code=country_code,
+            language=language,
+            job_id=job_id,
+            keep_languages=keep_languages,
+            max_results=TWITCH_PHASE1_MAX_RESULTS,
+        )
+    except subprocess.TimeoutExpired:
+        fail_job(job_id, f"Twitch search took too long ({TWITCH_SEARCH_TIMEOUT_S}s) and was stopped.")
+        return
+    except Exception as exc:  # noqa: BLE001
+        fail_job(job_id, classify_failure(exit_code=None, error_text=str(exc), source="twitch_search"))
+        return
+
+    if "[RESULT] SUCCESS" not in combined_log:
+        fail_job(job_id, classify_failure(exit_code=exit_code, error_text=combined_log, source="twitch_search"))
+        return
+
+    if not output_path.exists():
+        fail_job(job_id, "Twitch search finished but the results file is missing on disk.")
+        return
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        fail_job(job_id, "Twitch search finished but the results file is corrupted — re-run usually fixes this.")
+        return
+
+    # Streamers are already in public.twitch_streamers (the child wrote them
+    # directly). Passing [] makes the leads-insert a no-op while the summary +
+    # status update fire and the active_profile_lock is released.
+    summary = {
+        "total_results": payload.get("total_results"),
+        "organic_results": payload.get("organic_results"),
+        "ppc_results": payload.get("ppc_results"),
+        "pages_scraped": payload.get("pages_scraped"),
+        "scraped_at": payload.get("timestamp"),
+        "is_logged_in": None,
+        "view_mode": "desktop",   # Twitch has no mobile/desktop split
+    }
+    try:
+        complete_job(job_id, [], summary)
+    except Exception as exc:  # noqa: BLE001
+        log.error("complete_scrape_job RPC failed for twitch job %s: %s", job_id, exc)
+        return
+
+    log.info("twitch job %s completed | %d streamers", job_id, summary.get("total_results") or 0)
+
+
 def run_telegram_search(
     keyword: str,
     country_code: str,
@@ -2086,7 +2220,7 @@ def process_job(job: dict[str, Any]) -> None:
     # that pre-date the migration that added the column.
     language = (job.get("language") or "en").strip().lower() or "en"
     engine = (job.get("search_engine") or "google").strip().lower() or "google"
-    if engine not in ("google", "bing", "youtube", "kick", "x", "facebook", "tiktok", "snapchat", "telegram"):
+    if engine not in ("google", "bing", "youtube", "kick", "x", "facebook", "tiktok", "snapchat", "telegram", "twitch"):
         engine = "google"
 
     # YouTube and Kick jobs take a completely different path — pure
@@ -2127,6 +2261,11 @@ def process_job(job: dict[str, Any]) -> None:
     # snowball discovery + t.me/s enrichment) — no GoLogin/Chromium, no Phase-2 job.
     if engine == "telegram":
         process_telegram_job(job)
+        return
+    # Twitch is the PURE-HTTP single-pass path (like Snapchat/Kick) — Helix
+    # REST + gql panel mining, no GoLogin/Chromium, no Phase-2 job.
+    if engine == "twitch":
+        process_twitch_job(job)
         return
 
     # view_mode controls whether scraper.py runs the desktop pass, the
