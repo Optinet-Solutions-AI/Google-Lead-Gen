@@ -378,7 +378,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       ) : isFacebook ? (
         <>
           {fbSummary && <FbAdvertisersPanel jobId={job.id} summary={fbSummary} />}
-          {fbRows && fbRows.length > 0 && <FbAdvertisersTable rows={fbRows} />}
+          {fbRows && fbRows.length > 0 && <FbAdvertisersTable rows={fbRows} country={job.country_code} />}
         </>
       ) : isTiktok ? (
         <>

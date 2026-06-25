@@ -16,8 +16,15 @@ import type { FbAdvertiserRow } from '../_lib/queries'
  * ads, not on the profile (the cause of the "does not exist / no gambling
  * content" QA feedback). The Ad Library view shows those ads even when the
  * profile is restricted. Vanity-only Pages (no page_id) fall back to page_url.
+ *
+ * The Ad Library link is SCOPED TO THE JOB'S COUNTRY (e.g. country=AU), not
+ * country=ALL. FB's page-specific view (view_all_page_id) requires a concrete
+ * country: with country=ALL it normalises to search_type=page and returns the
+ * "No ads match your search criteria — isn't running ads in the selected
+ * country" empty state, even when the Page has live AU ads (the cause of the
+ * "Ad Library appears blank for each result" QA feedback, batch 1636).
  */
-export function FbAdvertisersTable({ rows }: { rows: FbAdvertiserRow[] }) {
+export function FbAdvertisersTable({ rows, country }: { rows: FbAdvertiserRow[]; country: string }) {
   if (rows.length === 0) return null
 
   return (
@@ -46,7 +53,7 @@ export function FbAdvertisersTable({ rows }: { rows: FbAdvertiserRow[] }) {
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <FbAdvertiserRowView key={r.id} r={r} n={i + 1} />
+            <FbAdvertiserRowView key={r.id} r={r} n={i + 1} country={country} />
           ))}
         </tbody>
       </table>
@@ -54,7 +61,7 @@ export function FbAdvertisersTable({ rows }: { rows: FbAdvertiserRow[] }) {
   )
 }
 
-function FbAdvertiserRowView({ r, n }: { r: FbAdvertiserRow; n: number }) {
+function FbAdvertiserRowView({ r, n, country }: { r: FbAdvertiserRow; n: number; country: string }) {
   const niche = r.niche_score == null ? null : Number(r.niche_score)
   const adCount = r.total_active_ads ?? r.ad_count
 
@@ -63,7 +70,7 @@ function FbAdvertiserRowView({ r, n }: { r: FbAdvertiserRow; n: number }) {
       <td className="px-3 py-2 text-right tabular-nums text-[color:var(--color-text-secondary)]">{n}</td>
       <td className="px-3 py-2">
         <a
-          href={advertiserAdLibraryHref(r)}
+          href={advertiserAdLibraryHref(r, country)}
           target="_blank"
           rel="noreferrer"
           title={
@@ -272,12 +279,20 @@ function LinkChip({ href, label, isNew }: { href: string; label: string; isNew?:
  *  this advertiser" view (view_all_page_id) when we have the numeric page id —
  *  that's where a thin ad-only Page's gambling ads are visible, even when the
  *  public facebook.com/{id} profile is login-walled or empty. Fall back to the
- *  stored page_url for vanity-only Pages we couldn't pin a numeric id to. */
-function advertiserAdLibraryHref(r: FbAdvertiserRow): string {
+ *  stored page_url for vanity-only Pages we couldn't pin a numeric id to.
+ *
+ *  Scope to the job's country (country=AU, …) — NOT country=ALL. FB's
+ *  page-specific view requires a concrete country; country=ALL returns the
+ *  empty "isn't running ads in the selected country" state for regionally
+ *  targeted (gambling) ads. We pass search_type=page&media_type=all to match
+ *  the canonical form FB redirects to, so the deep link lands directly. */
+function advertiserAdLibraryHref(r: FbAdvertiserRow, country: string): string {
   if (r.page_id && /^\d+$/.test(r.page_id)) {
+    const cc = country.trim().toUpperCase() || 'ALL'
     return (
       'https://www.facebook.com/ads/library/?active_status=all&ad_type=all' +
-      `&country=ALL&view_all_page_id=${r.page_id}`
+      `&country=${encodeURIComponent(cc)}&view_all_page_id=${r.page_id}` +
+      '&search_type=page&media_type=all'
     )
   }
   return r.page_url
