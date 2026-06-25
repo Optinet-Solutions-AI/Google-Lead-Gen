@@ -113,18 +113,21 @@ function TwitchStreamerRowView({ r }: { r: TwitchStreamerRow }) {
 
       <td className="px-3 py-2">
         <div className="flex flex-wrap gap-1">
-          {r.links.map((l, i) => (
-            <LinkChip
-              key={`l${i}`}
-              href={l.resolved_url ?? l.url}
-              label={l.brand || hostLabel(l.resolved_url ?? l.url)}
-              source={l.source}
-              isNew={l.is_known_on_monday === false}
-            />
-          ))}
-          {r.links.length === 0 && (
-            <span className="text-[11px] text-[color:var(--color-text-secondary)]">—</span>
-          )}
+          {(() => {
+            const partners = partnerLinks(r.links)
+            if (partners.length === 0)
+              return <span className="text-[11px] text-[color:var(--color-text-secondary)]">—</span>
+            return partners.map((p, i) => (
+              <LinkChip
+                key={`l${i}`}
+                href={p.href}
+                label={p.label}
+                source={p.source}
+                isNew={p.isNew}
+                count={p.count}
+              />
+            ))
+          })()}
         </div>
       </td>
     </tr>
@@ -136,18 +139,20 @@ function LinkChip({
   label,
   source,
   isNew,
+  count,
 }: {
   href: string
   label: string
   source: string
   isNew?: boolean
+  count?: number
 }) {
   return (
     <a
       href={href}
       target="_blank"
       rel="noreferrer"
-      title={`${source}${isNew ? ' — not on Monday yet' : ''}: ${href}`}
+      title={`${source}${count && count > 1 ? ` (${count} links to this host)` : ''}${isNew ? ' — not on Monday yet' : ''}: ${href}`}
       className={[
         'inline-flex max-w-[180px] items-center gap-1 truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium',
         isNew
@@ -157,6 +162,7 @@ function LinkChip({
     >
       {isNew ? <Sparkles className="h-2.5 w-2.5 shrink-0" /> : <ExternalLink className="h-2.5 w-2.5 shrink-0" />}
       <span className="truncate">{label}</span>
+      {count && count > 1 ? <span className="shrink-0 opacity-60">×{count}</span> : null}
     </a>
   )
 }
@@ -167,4 +173,55 @@ function hostLabel(url: string): string {
   } catch {
     return url
   }
+}
+
+// Hosts that are never affiliate "partners" — socials, donation/streaming
+// platforms, music, and responsible-gambling regulators. Dropped from the
+// partners column so the casino funnel links aren't buried in noise. (They're
+// still in twitch_links for the record; scoring already ignores them.)
+const NON_PARTNER_HOSTS = new Set([
+  'youtube.com', 'youtu.be', 'facebook.com', 'twitter.com', 'x.com', 'instagram.com',
+  'tiktok.com', 'soundcloud.com', 'spotify.com', 'twitch.tv', 'reddit.com',
+  'streamlabs.com', 'streamelements.com', 'tipeeestream.com', 'ko-fi.com', 'patreon.com',
+  'begambleaware.org', 'gambleaware.org', 'gambleaware.co.uk', 'gamcare.org.uk', 'gamstop.co.uk',
+])
+
+function isNonPartnerHost(host: string): boolean {
+  if (!host) return true
+  for (const h of NON_PARTNER_HOSTS) {
+    if (host === h || host.endsWith('.' + h)) return true
+  }
+  return false
+}
+
+type PartnerChip = { href: string; label: string; source: string; isNew: boolean; count: number }
+
+/** Filter a streamer's links to actual casino-partner links and collapse
+ *  duplicates by host (so `youtube.com ×30` / `twitch.tv ×9` noise is gone and
+ *  one chip per host remains). For each host, keep the most informative link —
+ *  prefer a brand'd or NEW (not-on-Monday) one. */
+function partnerLinks(links: TwitchStreamerRow['links']): PartnerChip[] {
+  const byHost = new Map<string, PartnerChip>()
+  for (const l of links) {
+    const dest = l.resolved_url ?? l.url
+    const host = hostLabel(dest)
+    if (isNonPartnerHost(host)) continue
+    const isNew = l.is_known_on_monday === false
+    const existing = byHost.get(host)
+    if (!existing) {
+      byHost.set(host, { href: dest, label: l.brand || host, source: l.source, isNew, count: 1 })
+      continue
+    }
+    existing.count++
+    // Upgrade the kept chip if this one carries a brand or a NEW flag.
+    if (l.brand && existing.label === host) existing.label = l.brand
+    if (isNew) existing.isNew = true
+  }
+  // Brand'd / NEW partners first, then alphabetical for a stable order.
+  return [...byHost.values()].sort((a, b) => {
+    const aw = (a.isNew ? 2 : 0) + (a.label !== hostLabel(a.href) ? 1 : 0)
+    const bw = (b.isNew ? 2 : 0) + (b.label !== hostLabel(b.href) ? 1 : 0)
+    if (aw !== bw) return bw - aw
+    return a.label.localeCompare(b.label)
+  })
 }
