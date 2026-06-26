@@ -34,7 +34,15 @@ export async function getShadowContext(): Promise<ShadowContext> {
   if (!user) return { email: null, isShadow: false }
 
   const svc = createServiceClient()
-  const { data } = await svc.rpc('is_shadow_user', { p_user_id: user.id })
+  const { data, error } = await svc.rpc('is_shadow_user', { p_user_id: user.id })
+  if (error) {
+    // FAIL CLOSED. Defaulting a failed shadow check to isShadow=false would
+    // treat a shadow user as a normal viewer and leak every non-shadow row
+    // to them (isolation breach). Throw so the request surfaces an error
+    // instead of silently returning the wrong visibility context.
+    console.error('[getShadowContext] is_shadow_user RPC failed:', error.message)
+    throw new Error('Could not resolve viewer visibility context')
+  }
   return {
     email: (user.email ?? '').toLowerCase() || null,
     isShadow: data === true,
