@@ -2100,6 +2100,21 @@ def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, 
     if attempt_auto_captcha_solve(driver):
         return
 
+    # Per-user availability gate, checked up front. If the job owner isn't
+    # on call for manual CAPTCHA review, do NOT enter the park/refresh loop:
+    # request_interactive_checkpoint would bail at the same gate on every
+    # cycle, so the wrapper would just spin CHECKPOINT_MAX_REFRESH_ATTEMPTS
+    # driver.refresh() calls — burning proxy bandwidth on an already-flagged
+    # session — and then emit CAPTCHA_SOLVER_TIMEOUT, producing a terminal
+    # error that tells the owner to "solve it on the Interactive page" even
+    # though nothing was ever parked there. Fail fast to a clean terminal
+    # captcha instead (status='captcha', no auto-retry, no wasted refreshes).
+    if interactive and job_id and not _fetch_captcha_review_available_for_job(job_id):
+        print("[INFO] CAPTCHA: job owner not available for manual review and "
+              "the auto-solver could not clear it — failing fast (no human park)")
+        print(RESULT_MARKER_CAPTCHA_SOLVER_TIMEOUT)
+        raise CaptchaDetectedException("CAPTCHA detected (no reviewer on call)")
+
     if interactive and job_id:
         try:
             cleared = _request_interactive_checkpoint_with_refresh(

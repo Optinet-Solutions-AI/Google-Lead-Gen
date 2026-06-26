@@ -283,7 +283,7 @@ def captcha_terminal(job_id: str, error: str | None = None) -> None:
     would just burn proxy quota cycling the same captcha 10x in 20 minutes."""
     supabase.rpc(
         "mark_scrape_job_captcha_terminal",
-        {"p_job_id": job_id, "p_error": (error or "Couldn't continue — a captcha appeared and nobody was around to solve it. Click 'Re-queue with Captcha solver' on the Interactive page to try again.")[:2000]},
+        {"p_job_id": job_id, "p_error": (error or "Couldn't continue — a captcha appeared and the auto-solver couldn't clear it. To solve these live, turn on \"I'm available for CAPTCHA review\" in My Account, then re-queue; otherwise try again later when the proxy pool is cleaner.")[:2000]},
     ).execute()
 
 
