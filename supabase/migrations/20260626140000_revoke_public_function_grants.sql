@@ -19,8 +19,12 @@
 -- Idempotent — safe to run more than once.
 -- ============================================================
 
--- Medium: admin-gated schedule toggle
-revoke execute on function public.toggle_scheduled_item(uuid) from public;
+-- Medium: admin-gated schedule toggle.
+-- NOTE: this DB has a default privilege that auto-grants EXECUTE to
+-- anon/authenticated on every new function, so toggle_scheduled_item had
+-- EXPLICIT anon/authenticated grants (not just the PUBLIC default) even
+-- though its create migration only granted service_role. Revoke all three.
+revoke execute on function public.toggle_scheduled_item(uuid) from public, anon, authenticated;
 grant  execute on function public.toggle_scheduled_item(uuid) to service_role;
 
 -- Found alongside: SECURITY DEFINER Monday matcher (intended locked)
