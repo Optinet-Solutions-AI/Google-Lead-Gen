@@ -11,7 +11,12 @@
 -- No app/lib/script code calls this RPC from the browser; it's only
 -- needed server-side (service_role). Revoke the public-facing grants.
 -- Idempotent — safe to run more than once.
+--
+-- NOTE: Postgres auto-grants EXECUTE to PUBLIC on every function, so
+-- revoking anon/authenticated alone is NOT enough — PUBLIC still covers
+-- them. Must revoke from PUBLIC as well to actually lock it down.
 -- ============================================================
 
+revoke execute on function public.lookup_user_email_by_username(text) from public;
 revoke execute on function public.lookup_user_email_by_username(text) from anon, authenticated;
 grant  execute on function public.lookup_user_email_by_username(text) to service_role;
