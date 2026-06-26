@@ -148,7 +148,7 @@
           "parameters": [
             {
               "name": "api_key",
-              "value": "28EOCIV4WPSKYXDS8GKC7Q5Y66RCFTDRWDN5PS7F6AUZQAWSHAJPTD9EH881YYFH0S8D1I1TP8523U4S"
+              "value": "={{ $env.SCRAPINGBEE_API_KEY }}"
             },
             {
               "name": "url",
