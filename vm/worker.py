@@ -546,14 +546,31 @@ def fetch_profile(country_code: str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 def _kill_port() -> None:
-    """Best-effort kill of anything lingering on this worker's port."""
+    """Best-effort kill of anything lingering on this worker's port.
+
+    Still best-effort (we never block the job on cleanup), but surface the
+    failure modes instead of swallowing them: a hang (TimeoutExpired) or a
+    non-zero exit means a Chromium/GoLogin process may still hold the port,
+    which makes the NEXT job collide on it. Logging at ERROR makes that
+    visible in journald rather than silently degrading."""
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["python3", KILL_SCRIPT_PATH, str(GOLOGIN_PORT)],
             capture_output=True,
             text=True,
             timeout=30,
             env=os.environ.copy(),
+        )
+        if result.returncode != 0:
+            log.error(
+                "kill_gologin exited %d for port %d — process may still hold the port "
+                "(next job may collide). stderr: %s",
+                result.returncode, GOLOGIN_PORT, (result.stderr or "").strip()[:300],
+            )
+    except subprocess.TimeoutExpired:
+        log.error(
+            "kill_gologin HUNG (>30s) for port %d — lingering process likely; "
+            "next job on this port may fail to start", GOLOGIN_PORT,
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("kill_gologin failed (non-fatal): %s", exc)

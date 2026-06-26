@@ -814,6 +814,7 @@ def request_interactive_checkpoint(
     # Poll scrape_queue.status until it flips back to 'running' (resumed)
     # or 'failed'/'cancelled' (cancelled) or our TTL expires.
     deadline = time.time() + ttl_minutes * 60
+    warned_status = None  # so an unexpected status is logged once, not every poll
     while time.time() < deadline:
         time.sleep(CHECKPOINT_POLL_SECONDS)
         try:
@@ -833,7 +834,14 @@ def request_interactive_checkpoint(
             if status in ("failed", "cancelled"):
                 print(f"[INFO] checkpoint cancelled (status={status}) — exiting")
                 raise InteractiveCancelException(f"operator cancelled at checkpoint: {status}")
-            # status == 'needs_human' — keep waiting
+            if status != "needs_human" and status != warned_status:
+                # Unrecognised status (e.g. 'paused', a new state, or a typo):
+                # don't silently treat it as needs_human and burn the full TTL.
+                # Surface it once so it's visible in the worker log.
+                print(f"[WARN] checkpoint: unexpected scrape_queue status {status!r} "
+                      f"— still waiting (TTL backstop applies)", file=sys.stderr)
+                warned_status = status
+            # status == 'needs_human' (or unrecognised) — keep waiting until TTL
         except InteractiveCancelException:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -1051,7 +1059,10 @@ def attempt_google_login(driver, email, password):
       'challenge' — Google asked for 2FA / verify-it's-you / captcha
       'failed'    — wrong password / blocked / unknown error
     """
-    print(f"[INFO] google login: attempting auto sign-in as {email}")
+    # Mask the email in logs (journald can leak) — enough to identify the
+    # account in support without writing the full address in plaintext.
+    _masked_email = (email[:2] + "***@" + email.split("@", 1)[1]) if "@" in (email or "") else "***"
+    print(f"[INFO] google login: attempting auto sign-in as {_masked_email}")
     try:
         driver.get(
             "https://accounts.google.com/ServiceLogin"
@@ -2856,7 +2867,7 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
                 )
                 print(f"[INFO] Bing post-submit URL: {driver.current_url}")
             except Exception:
-                print("[WARN] Bing did not navigate to /search after submit; URL still " + driver.current_url)
+                print(f"[WARN] Bing did not navigate to /search after submit; URL still {driver.current_url or 'unknown'}")
         except Exception as exc:
             # Fallback: if the search box vanished or moved, fall
             # back to direct URL nav so we still get something.
@@ -3295,6 +3306,20 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Validate --job-id is a real UUID before it ever gets interpolated into
+    # a Storage path ("interactive/{job_id}/…") or a PostgREST query string
+    # ("scrape_queue?id=eq.{job_id}"). In normal operation worker.py always
+    # passes a genuine scrape_queue UUID; this rejects a crafted value with
+    # path-traversal ("../") or query-injection payloads. Fail fast.
+    if args.job_id is not None:
+        if not re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            args.job_id,
+        ):
+            print(f"[ERROR] --job-id is not a valid UUID: {args.job_id!r}", file=sys.stderr)
+            sys.exit(1)
+        args.job_id = args.job_id.lower()
 
     # Stash the human-in-the-loop context where check_for_captcha and
     # ensure_google_login_if_required can find it without us threading
