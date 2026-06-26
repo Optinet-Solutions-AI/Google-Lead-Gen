@@ -176,24 +176,61 @@ def claim_job() -> dict[str, Any] | None:
     return None
 
 
+def _rpc_retry(label: str, job_id: str, fn, *, swallow: bool) -> None:
+    """Run a job-terminating RPC with a short retry.
+
+    complete/fail_enrichment_fetch_job release the country lock (DELETE
+    active_profile_locks) inside the SQL. If a transient DB/network blip lets
+    the exception escape, the job is left stuck 'running' with its lock held
+    until release_stale_locks (~30 min), stalling that country's enrichment
+    queue. Retry the common transient case, then:
+      - swallow=False (complete_job): re-raise so main()'s fallback marks the
+        job failed (better than silently leaving it running).
+      - swallow=True (fail_job): this IS the fallback — log and swallow so the
+        loop keeps serving other jobs; stale-lock sweep is the final backstop."""
+    last_exc: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            fn()
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            log.error("%s RPC failed for job %s (attempt %d/3): %s", label, job_id, attempt, exc)
+            if attempt < 3:
+                time.sleep(2 * attempt)
+    if swallow:
+        log.error(
+            "%s RPC permanently failed for job %s — lock (if any) will clear via release_stale_locks",
+            label, job_id,
+        )
+        return
+    raise last_exc if last_exc else RuntimeError(f"{label} permanently failed")
+
+
 def complete_job(job_id: str, html: str | None, screenshot_path: str | None,
                  fetch_error: str | None) -> None:
-    supabase.rpc(
-        "complete_enrichment_fetch_job",
-        {
-            "p_job_id": job_id,
-            "p_html": html,
-            "p_screenshot_path": screenshot_path,
-            "p_fetch_error": fetch_error,
-        },
-    ).execute()
+    _rpc_retry(
+        "complete_enrichment_fetch_job", job_id,
+        lambda: supabase.rpc(
+            "complete_enrichment_fetch_job",
+            {
+                "p_job_id": job_id,
+                "p_html": html,
+                "p_screenshot_path": screenshot_path,
+                "p_fetch_error": fetch_error,
+            },
+        ).execute(),
+        swallow=False,
+    )
 
 
 def fail_job(job_id: str, error: str) -> None:
-    supabase.rpc(
-        "fail_enrichment_fetch_job",
-        {"p_job_id": job_id, "p_error": error[:2000]},
-    ).execute()
+    msg = error[:2000]
+    _rpc_retry(
+        "fail_enrichment_fetch_job", job_id,
+        lambda: supabase.rpc("fail_enrichment_fetch_job", {"p_job_id": job_id, "p_error": msg}).execute(),
+        swallow=True,
+    )
 
 
 def fetch_profile(country_code: str) -> dict[str, Any] | None:
@@ -1131,11 +1168,10 @@ def main() -> None:
             try:
                 process_job(job)
             except Exception as exc:  # noqa: BLE001
-                log.error("process_job error: %s", exc)
-                try:
-                    fail_job(job["id"], f"worker exception: {exc}")
-                except Exception:  # noqa: BLE001
-                    pass
+                log.error("process_job error for job %s: %s", job.get("id"), exc)
+                # fail_job is self-protecting (retries + logs its own failures),
+                # so we no longer swallow its errors silently here.
+                fail_job(job["id"], f"worker exception: {exc}")
         except Exception as exc:  # noqa: BLE001
             log.error("loop error: %s", exc)
             time.sleep(POLL_INTERVAL)

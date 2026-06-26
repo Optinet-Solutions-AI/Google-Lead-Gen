@@ -271,8 +271,36 @@ def complete_job(job_id: str, results: list[dict[str, Any]], summary: dict[str, 
     ).execute()
 
 
+def _terminal_rpc(label: str, job_id: str, fn) -> None:
+    """Run a job-TERMINATING RPC (fail / captcha / captcha-terminal) with a
+    short retry, then log-and-swallow.
+
+    These RPCs release the country lock (DELETE active_profile_locks) inside
+    the SQL. If a transient DB/network blip lets the exception escape, the
+    job is left stuck in 'running' with its lock held until release_stale_locks
+    runs (~30 min), stalling that country's queue. Retrying a couple of times
+    clears the common transient case; on permanent failure we log loudly and
+    swallow (the call site only returns afterwards anyway) so the worker loop
+    keeps serving other jobs and the stale-lock sweep is the final backstop."""
+    for attempt in range(1, 4):
+        try:
+            fn()
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.error("%s RPC failed for job %s (attempt %d/3): %s", label, job_id, attempt, exc)
+            if attempt < 3:
+                time.sleep(2 * attempt)
+    log.error(
+        "%s RPC permanently failed for job %s — lock (if any) will clear via release_stale_locks",
+        label, job_id,
+    )
+
+
 def captcha_job(job_id: str) -> None:
-    supabase.rpc("captcha_scrape_job", {"p_job_id": job_id}).execute()
+    _terminal_rpc(
+        "captcha_scrape_job", job_id,
+        lambda: supabase.rpc("captcha_scrape_job", {"p_job_id": job_id}).execute(),
+    )
 
 
 def captcha_terminal(job_id: str, error: str | None = None) -> None:
@@ -281,14 +309,19 @@ def captcha_terminal(job_id: str, error: str | None = None) -> None:
     /admin/interactive. Distinct from captcha_job (which auto-retries
     up to 10 times) — running auto-retry on Captcha-solver-parked jobs
     would just burn proxy quota cycling the same captcha 10x in 20 minutes."""
-    supabase.rpc(
-        "mark_scrape_job_captcha_terminal",
-        {"p_job_id": job_id, "p_error": (error or "Couldn't continue — a captcha appeared and the auto-solver couldn't clear it. To solve these live, turn on \"I'm available for CAPTCHA review\" in My Account, then re-queue; otherwise try again later when the proxy pool is cleaner.")[:2000]},
-    ).execute()
+    msg = (error or "Couldn't continue — a captcha appeared and the auto-solver couldn't clear it. To solve these live, turn on \"I'm available for CAPTCHA review\" in My Account, then re-queue; otherwise try again later when the proxy pool is cleaner.")[:2000]
+    _terminal_rpc(
+        "mark_scrape_job_captcha_terminal", job_id,
+        lambda: supabase.rpc("mark_scrape_job_captcha_terminal", {"p_job_id": job_id, "p_error": msg}).execute(),
+    )
 
 
 def fail_job(job_id: str, error: str) -> None:
-    supabase.rpc("fail_scrape_job", {"p_job_id": job_id, "p_error": error[:2000]}).execute()
+    msg = error[:2000]
+    _terminal_rpc(
+        "fail_scrape_job", job_id,
+        lambda: supabase.rpc("fail_scrape_job", {"p_job_id": job_id, "p_error": msg}).execute(),
+    )
 
 
 # ---------------------------------------------------------------------------
