@@ -2356,6 +2356,16 @@ def process_job(job: dict[str, Any]) -> None:
     # checkpoint.
     if "[RESULT] SUCCESS" in combined_log:
         pass  # fall through to the results-loading path below
+    elif "[RESULT] CAPTCHA_NO_REVIEWER" in combined_log:
+        # Captcha hit but the job owner isn't on call for manual review and
+        # the auto-solver couldn't clear it. Terminal (no auto-retry — the
+        # proxy is flagged; retrying just burns bandwidth). Checked BEFORE the
+        # generic "[RESULT] CAPTCHA" branch, which would otherwise match the
+        # substring. Distinct from CAPTCHA_SOLVER_TIMEOUT: nothing timed out.
+        log.warning("job %s hit captcha with no reviewer on call (log=%s) — terminal, no retry", job_id, log_path)
+        _kill_port()
+        captcha_terminal(job_id)
+        return
     elif "[RESULT] CAPTCHA_SOLVER_TIMEOUT" in combined_log:
         # Operator didn't click Resume within captcha_solver_ttl_minutes
         # and the scrape couldn't recover. Route to the terminal path

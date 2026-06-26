@@ -519,6 +519,11 @@ CHECKPOINT_DEFAULT_TTL_MINUTES = 5
 # path — operators manually re-queue from /admin/interactive when ready,
 # instead of the worker cycling the same captcha 10 times in 20 minutes.
 RESULT_MARKER_CAPTCHA_SOLVER_TIMEOUT = "[RESULT] CAPTCHA_SOLVER_TIMEOUT"
+# Emitted when a captcha is hit but the job owner isn't on call for manual
+# review (per-user gate). Distinct from CAPTCHA_SOLVER_TIMEOUT (no checkpoint
+# was ever parked, so nothing timed out) — but routed to the same terminal,
+# no-auto-retry path in worker.py, with an accurate log/message.
+RESULT_MARKER_CAPTCHA_NO_REVIEWER = "[RESULT] CAPTCHA_NO_REVIEWER"
 
 
 def _fetch_captcha_solver_ttl_minutes() -> int:
@@ -2112,7 +2117,7 @@ def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, 
     if interactive and job_id and not _fetch_captcha_review_available_for_job(job_id):
         print("[INFO] CAPTCHA: job owner not available for manual review and "
               "the auto-solver could not clear it — failing fast (no human park)")
-        print(RESULT_MARKER_CAPTCHA_SOLVER_TIMEOUT)
+        print(RESULT_MARKER_CAPTCHA_NO_REVIEWER)
         raise CaptchaDetectedException("CAPTCHA detected (no reviewer on call)")
 
     if interactive and job_id:
@@ -2948,11 +2953,15 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
     #      CaptchaDetectedException → main() emits [RESULT] CAPTCHA →
     #      worker auto-retries.
     if captcha_detected:
+        # Raise (not return []) so the blocked page is signalled as a captcha
+        # rather than silently recorded as "completed, 0 results". The caller
+        # decides whether to propagate (page 0 → worker auto-retries on a
+        # fresh proxy) or keep partial results from earlier pages.
         print(
             "[WARN] Bing Turnstile still up after Captcha solver attempt — "
-            "bailing this page."
+            "signalling captcha for this page."
         )
-        return []
+        raise CaptchaDetectedException("Bing Turnstile challenge — proxy/fingerprint flagged")
     if _bing_serp_state(driver) == 'captcha':
         print(
             "[WARN] Bing returned a Cloudflare Turnstile challenge "
@@ -2961,7 +2970,7 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
         )
         check_for_captcha(driver)
         if _bing_serp_state(driver) == 'captcha':
-            return []
+            raise CaptchaDetectedException("Bing Turnstile challenge — proxy/fingerprint flagged")
         # Operator solved it during the late check — re-grab the source
         # so the parser below sees the post-challenge SERP, not the
         # challenge HTML we captured at line 1670.
@@ -3150,7 +3159,18 @@ def scrape_bing_search(driver, keyword, country, max_pages=5,
     all_results = []
 
     for page in range(max_pages):
-        page_results = get_bing_results(driver, keyword, country, page, language=language)
+        try:
+            page_results = get_bing_results(driver, keyword, country, page, language=language)
+        except CaptchaDetectedException:
+            if not all_results:
+                # Page 0 blocked with nothing collected — propagate so main()
+                # emits [RESULT] CAPTCHA and the worker auto-retries on a fresh
+                # proxy, instead of completing with a misleading 0 results.
+                raise
+            # A later page got blocked but we already have results — keep the
+            # partial set rather than discarding a good scrape.
+            print(f"[WARN] Bing captcha on page {page + 1}; keeping {len(all_results)} results from earlier pages")
+            break
         all_results.extend(page_results)
         if page < max_pages - 1:
             time.sleep(random.uniform(delay_min, delay_max))
