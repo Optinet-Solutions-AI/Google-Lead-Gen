@@ -1247,11 +1247,39 @@ export type TwitchStreamerRow = {
   broadcaster_language: string | null
   is_live: boolean | null
   game_name: string | null
+  last_activity_at: string | null
+  /** Relative "active 3mo ago" label derived from last_activity_at, computed
+   *  server-side (not during render — Date.now is impure in a component). */
+  last_active_label: string | null
+  /** last_activity_at older than 90 days — surfaced as a soft warning colour. */
+  last_active_stale: boolean
+  contact_email: string | null
+  telegram_url: string | null
+  discord_url: string | null
   is_likely_affiliate: boolean | null
   niche_score: number | null
   is_new_lead_candidate: boolean | null
   is_known_on_monday: boolean | null
   links: TwitchLinkRow[]
+}
+
+/** Format last_activity_at as a coarse relative label. Lives here (a plain
+ *  server function) rather than in the table component so Date.now() isn't
+ *  called during React render. */
+function twitchLastActive(iso: string | null): { label: string | null; stale: boolean } {
+  if (!iso) return { label: null, stale: false }
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return { label: null, stale: false }
+  const days = Math.floor((Date.now() - then) / 86_400_000)
+  const label =
+    days <= 0
+      ? 'active today'
+      : days < 30
+        ? `active ${days}d ago`
+        : days < 365
+          ? `active ${Math.floor(days / 30)}mo ago`
+          : `active ${(days / 365).toFixed(1)}y ago`
+  return { label, stale: days >= 90 }
 }
 
 /** Per-streamer rows for the Twitch results table: new candidates first, then
@@ -1264,12 +1292,16 @@ export async function fetchTwitchStreamerRows(jobId: string): Promise<TwitchStre
     .from('twitch_streamers')
     .select(
       'id, broadcaster_login, display_name, broadcaster_url, profile_image_url, ' +
-        'broadcaster_language, is_live, game_name, ' +
+        'broadcaster_language, is_live, game_name, last_activity_at, ' +
+        'contact_email, telegram_url, discord_url, ' +
         'is_likely_affiliate, niche_score, is_new_lead_candidate, is_known_on_monday',
     )
     .eq('scrape_queue_id', jobId)
   if (error) throw error
-  const rows = (streamers ?? []) as unknown as Omit<TwitchStreamerRow, 'links'>[]
+  const rows = (streamers ?? []) as unknown as Omit<
+    TwitchStreamerRow,
+    'links' | 'last_active_label' | 'last_active_stale'
+  >[]
   if (rows.length === 0) return []
 
   const { data: links } = await svc
@@ -1294,7 +1326,10 @@ export async function fetchTwitchStreamerRows(jobId: string): Promise<TwitchStre
       if (ns !== 0) return ns
       return (a.broadcaster_login ?? '').localeCompare(b.broadcaster_login ?? '')
     })
-    .map(r => ({ ...r, links: linksByStreamer.get(r.id) ?? [] }))
+    .map(r => {
+      const { label, stale } = twitchLastActive(r.last_activity_at)
+      return { ...r, last_active_label: label, last_active_stale: stale, links: linksByStreamer.get(r.id) ?? [] }
+    })
 }
 
 export async function listRecentJobs(limit = 30): Promise<ScrapeJob[]> {

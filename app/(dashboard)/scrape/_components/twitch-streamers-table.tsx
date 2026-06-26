@@ -1,14 +1,16 @@
-import { CheckCircle2, Circle, ExternalLink, MonitorPlay, Sparkles } from 'lucide-react'
+import { CheckCircle2, Circle, ExternalLink, Mail, MessageCircle, MonitorPlay, Send, Sparkles } from 'lucide-react'
 import type { TwitchStreamerRow } from '../_lib/queries'
 
 /**
  * Per-streamer results table for Twitch jobs (Phase 3). New lead candidates
  * first, then affiliates, showing the niche score + NEW badge, the streamer's
- * game/language, and the casino links captured from their About-panels / bio /
- * VOD descriptions (the affiliate funnel). Server component.
+ * game/language, the contacts mined from their bio/panels (email / Telegram /
+ * Discord), and the casino links captured from their About-panels / bio / VOD
+ * descriptions (the affiliate funnel). Server component.
  *
- * Sibling of telegram-channels-table.tsx. No contact or follower columns —
- * Twitch's app API exposes neither parseably (see twitch_search.py).
+ * Sibling of telegram-channels-table.tsx. Follower count is unavailable with
+ * an app token; contacts + last-active come from the text mining in
+ * twitch_search.py (no public Twitch field exposes them directly).
  */
 export function TwitchStreamersTable({ rows }: { rows: TwitchStreamerRow[] }) {
   if (rows.length === 0) return null
@@ -26,6 +28,7 @@ export function TwitchStreamersTable({ rows }: { rows: TwitchStreamerRow[] }) {
               Affiliate
             </th>
             <th className="px-3 py-2 font-medium">Game / language</th>
+            <th className="px-3 py-2 font-medium">Contact</th>
             <th className="px-3 py-2 font-medium">Casino partners / links</th>
           </tr>
         </thead>
@@ -63,6 +66,12 @@ function TwitchStreamerRowView({ r }: { r: TwitchStreamerRow }) {
           )}
         </a>
         <div className="text-[10px] text-[color:var(--color-text-secondary)]">@{r.broadcaster_login}</div>
+        <LastActive
+          iso={r.last_activity_at}
+          label={r.last_active_label}
+          stale={r.last_active_stale}
+          isLive={r.is_live}
+        />
       </td>
 
       <td className="px-3 py-2">
@@ -121,6 +130,10 @@ function TwitchStreamerRowView({ r }: { r: TwitchStreamerRow }) {
       </td>
 
       <td className="px-3 py-2">
+        <ContactCell email={r.contact_email} telegram={r.telegram_url} discord={r.discord_url} />
+      </td>
+
+      <td className="px-3 py-2">
         <div className="flex flex-wrap gap-1">
           {(() => {
             const partners = partnerLinks(r.links)
@@ -141,6 +154,97 @@ function TwitchStreamerRowView({ r }: { r: TwitchStreamerRow }) {
         </div>
       </td>
     </tr>
+  )
+}
+
+/** Relative "last active" line under the streamer name. Channels dormant for
+ *  years are dropped before insert (see twitch_search.py recency gate), so a
+ *  visible date here is recent-ish; NULL means activity couldn't be measured
+ *  (e.g. VODs/clips disabled), shown as a soft "activity unknown". The label /
+ *  stale flag are computed server-side in queries.ts (Date.now is impure in a
+ *  component render). */
+function LastActive({
+  iso,
+  label,
+  stale,
+  isLive,
+}: {
+  iso: string | null
+  label: string | null
+  stale: boolean
+  isLive: boolean | null
+}) {
+  if (isLive) return null // the "live" badge by the name already says it
+  if (!label) {
+    return (
+      <div
+        className="cursor-help text-[10px] text-[color:var(--color-text-secondary)] italic"
+        title="No VOD, clip, or live signal to date the channel's last activity (VOD storage may be off). Kept rather than dropped by the recency gate."
+      >
+        activity unknown
+      </div>
+    )
+  }
+  return (
+    <div
+      className={['text-[10px]', stale ? 'text-amber-600' : 'text-[color:var(--color-text-secondary)]'].join(' ')}
+      title={iso ? `Last activity (newest VOD/clip or live session): ${new Date(iso).toLocaleDateString()}` : undefined}
+    >
+      {label}
+    </div>
+  )
+}
+
+/** Email / Telegram / Discord mined from the bio + About-panels (the contact
+ *  info Andrei flagged as being missed). Renders click-through chips. */
+function ContactCell({
+  email,
+  telegram,
+  discord,
+}: {
+  email: string | null
+  telegram: string | null
+  discord: string | null
+}) {
+  if (!email && !telegram && !discord)
+    return <span className="text-[11px] text-[color:var(--color-text-secondary)]">—</span>
+  return (
+    <div className="flex flex-col gap-0.5">
+      {email && (
+        <a
+          href={`mailto:${email}`}
+          title={email}
+          className="inline-flex max-w-[180px] items-center gap-1 truncate text-[11px] text-blue-700 hover:underline"
+        >
+          <Mail className="h-3 w-3 shrink-0" />
+          <span className="truncate">{email}</span>
+        </a>
+      )}
+      {telegram && (
+        <a
+          href={telegram}
+          target="_blank"
+          rel="noreferrer"
+          title={telegram}
+          className="inline-flex max-w-[180px] items-center gap-1 truncate text-[11px] text-sky-700 hover:underline"
+        >
+          <Send className="h-3 w-3 shrink-0" />
+          <span className="truncate">{telegram.replace(/^https?:\/\//, '')}</span>
+        </a>
+      )}
+      {discord && (
+        <a
+          href={discord}
+          target="_blank"
+          rel="noreferrer"
+          title={discord}
+          className="inline-flex max-w-[180px] items-center gap-1 truncate text-[11px] text-indigo-700 hover:underline"
+        >
+          <MessageCircle className="h-3 w-3 shrink-0" />
+          <span className="truncate">{discord.replace(/^https?:\/\//, '')}</span>
+        </a>
+      )}
+    </div>
   )
 }
 

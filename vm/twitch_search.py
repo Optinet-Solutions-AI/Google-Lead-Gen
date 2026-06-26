@@ -11,8 +11,9 @@ PURE HTTP — no GoLogin, no Selenium, no login wall. Two surfaces:
   1. Helix REST (official API, App Access Token via client_credentials):
        DISCOVERY: /helix/search/channels?query={kw}  → broadcasters
        ENRICH:    /helix/users?id=...                → bio, avatar, created_at
-                  /helix/videos?user_id=...&type=archive → VOD title+description
-                  /helix/clips?broadcaster_id=...    → clip titles
+                  /helix/videos?user_id=...&type=all → VOD/highlight title+desc
+                                                        + newest publish date
+                  /helix/clips?broadcaster_id=...    → clip titles + newest date
   2. gql.twitch.tv GraphQL (undocumented public web Client-Id, no auth):
        ENRICH:    user.panels → About-panel links (linkURL + markdown).
                   This is where casino affiliates actually put their funnels,
@@ -23,6 +24,16 @@ Because every fetch is cheap HTTP, discovery + enrichment happen in ONE pass
 (like the single-pass Snapchat/Facebook engines — no separate Phase-2 job).
 Phase 3 (runTwitchStreamerAnalysis, inline in the app) scores + resolves links
 + checks Monday.
+
+Two quality gates run before the DB write (added 2026-06-26 from Andrei's
+feedback):
+  - RECENCY: a last_activity_at is derived (newest VOD/highlight, newest clip,
+    or live-now) and channels whose known last activity predates
+    TWITCH_MAX_INACTIVE_DAYS (default 365) are dropped — killing the dead
+    2–8yr-old channels that dominated 'casino'/'slots' results.
+  - CONTACTS: email / Telegram / Discord are mined out of the bio, panels and
+    descriptions (the old code only captured http(s) URLs, so bare emails and
+    "Telegram: @handle" copy were silently lost).
 
 Writes, per discovered broadcaster, into public.twitch_streamers and one row
 per extracted URL into public.twitch_links (source panel / vod_description /
@@ -69,10 +80,97 @@ ENRICH_DELAY_S      = float(os.environ.get("TWITCH_ENRICH_DELAY_SECONDS", "0.1")
 # without blowing the Helix rate budget on a 100-streamer run.
 VIDEOS_PER_CHANNEL  = int(os.environ.get("TWITCH_VIDEOS_PER_CHANNEL", "10"))
 CLIPS_PER_CHANNEL   = int(os.environ.get("TWITCH_CLIPS_PER_CHANNEL", "10"))
+# Recency gate. /search/channels returns long-dead channels (Andrei's
+# 2026-06-26 report: ~80% of 'casino'/'slots' hits last streamed 2–8 years
+# ago). We compute a last_activity_at from the freshest signal available with
+# an app token (newest VOD/highlight, newest clip, or live-now) and DROP any
+# channel whose KNOWN last activity is older than this cutoff. Channels with no
+# activity signal at all are kept (last_activity_at stays NULL) so we don't
+# silently lose a streamer who simply has VOD storage off. 0 disables the gate.
+INACTIVE_CUTOFF_DAYS = int(os.environ.get("TWITCH_MAX_INACTIVE_DAYS", "365"))
+# Video type for the /videos enrich call. "all" (archives + highlights +
+# uploads) gives both a better last-content date (highlights/uploads persist
+# after the ~14–60d archive auto-expiry) and more link-mining text than the
+# old archive-only call.
+VIDEO_TYPE = os.environ.get("TWITCH_VIDEO_TYPE", "all")
 
 # Bare URL matcher for description/title/panel text. Trailing punctuation that
 # is almost always sentence/markdown noise is trimmed by _clean_url.
 _URL_RE = re.compile(r"https?://[^\s<>\"')\]}]+", re.I)
+
+# --- Contact extraction (Andrei 2026-06-26: "contact info is available
+# (email, telegram) but the tool doesn't pick it up"). The old code only
+# matched http(s) URLs, so bare emails and bare/contextual Telegram + Discord
+# handles in a bio/panel were dropped. These mine them out of the same free
+# text we already collect.
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+# Strings that look like an email but are really a filename / image ref
+# (`logo@2x.png`) or a social/at-handle — reject by their "TLD".
+_EMAIL_BAD_TLD = {
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "mp4", "webm", "css", "js",
+    "json", "html", "php", "2x", "3x",
+}
+# t.me / telegram.me / telegram.dog links, with or without scheme; captures
+# the handle (skipping joinchat/+ invite prefixes, which aren't usernames).
+_TME_RE = re.compile(
+    r"(?:https?://)?(?:t\.me|telegram\.me|telegram\.dog)/(?:joinchat/|\+)?([A-Za-z0-9_]{3,32})\b",
+    re.I,
+)
+# Bare "@handle" only when a Telegram cue sits close before it (so we don't
+# grab Twitter/Discord @mentions). [^@\n]{0,25} spans the usual separators —
+# ": ", " 👉 ", "channel ", "-" — without crossing a line or a stray @. Covers
+# EN + common RU/PT affiliate copy.
+_TG_AT_RE = re.compile(
+    r"(?:telegram|telega|tg|телеграм|телега)[^@\n]{0,25}@([A-Za-z0-9_]{4,32})\b",
+    re.I,
+)
+_DISCORD_RE = re.compile(
+    r"(?:https?://)?discord(?:\.gg|(?:app)?\.com/invite)/([A-Za-z0-9-]{2,32})\b",
+    re.I,
+)
+
+
+def extract_contacts(texts: list[str | None]) -> dict[str, str | None]:
+    """Mine the first email / Telegram / Discord contact out of a streamer's
+    free text (bio, stream title, VOD & clip descriptions, About-panel text).
+    Returns {contact_email, telegram_url, discord_url} with NULL where absent.
+    First-seen wins; Telegram/Discord handles are normalised to canonical URLs
+    so they're click-through in the UI and de-dupe against captured link URLs."""
+    email: str | None = None
+    telegram: str | None = None
+    discord: str | None = None
+    for raw in texts:
+        if not raw:
+            continue
+        if email is None:
+            for m in _EMAIL_RE.finditer(raw):
+                cand = m.group(0)
+                tld = cand.rsplit(".", 1)[-1].lower()
+                if tld in _EMAIL_BAD_TLD:
+                    continue
+                email = cand
+                break
+        if telegram is None:
+            m = _TME_RE.search(raw) or _TG_AT_RE.search(raw)
+            if m:
+                telegram = f"https://t.me/{m.group(1)}"
+        if discord is None:
+            m = _DISCORD_RE.search(raw)
+            if m:
+                discord = f"https://discord.gg/{m.group(1)}"
+        if email and telegram and discord:
+            break
+    return {"contact_email": email, "telegram_url": telegram, "discord_url": discord}
+
+
+def iso_max(a: str | None, b: str | None) -> str | None:
+    """Return the later of two ISO-8601 timestamps (lexical compare is correct
+    for same-format `...Z` strings). NULLs are ignored."""
+    if not a:
+        return b
+    if not b:
+        return a
+    return a if a >= b else b
 
 
 def _clean_url(u: str) -> str:
@@ -216,35 +314,48 @@ def get_users(ids: list[str], headers: dict[str, str]) -> dict[str, dict[str, An
     return out
 
 
-def get_video_descriptions(user_id: str, headers: dict[str, str]) -> list[str]:
-    """Recent archived VOD titles + descriptions for link mining."""
+def get_videos(user_id: str, headers: dict[str, str]) -> tuple[list[str], str | None]:
+    """Recent VOD/highlight titles + descriptions for link mining, plus the
+    newest video's publish time (the strongest last-activity signal we can get
+    with an app token). Returns (texts, latest_published_at)."""
     try:
         body = _helix_get(
             "videos",
-            {"user_id": user_id, "first": VIDEOS_PER_CHANNEL, "type": "archive"},
+            {"user_id": user_id, "first": VIDEOS_PER_CHANNEL, "type": VIDEO_TYPE},
             headers,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"[WARN] /videos user_id={user_id}: {exc}", file=sys.stderr)
-        return []
+        return [], None
     texts: list[str] = []
+    latest: str | None = None
     for v in body.get("data") or []:
         parts = [p for p in (v.get("title"), v.get("description")) if p]
         if parts:
             texts.append(" — ".join(parts))
-    return texts
+        latest = iso_max(latest, v.get("published_at") or v.get("created_at"))
+    return texts, latest
 
 
-def get_clip_titles(broadcaster_id: str, headers: dict[str, str]) -> list[str]:
-    """Recent clip titles (Helix clips carry no description, only a title)."""
+def get_clips(broadcaster_id: str, headers: dict[str, str]) -> tuple[list[str], str | None]:
+    """Recent clip titles (Helix clips carry no description, only a title),
+    plus the newest clip's creation time. Helix sorts clips by views (no time
+    sort), so this is the freshest of the channel's top clips — a useful
+    secondary recency floor that exposes years-dormant channels."""
     try:
         body = _helix_get(
             "clips", {"broadcaster_id": broadcaster_id, "first": CLIPS_PER_CHANNEL}, headers
         )
     except Exception as exc:  # noqa: BLE001
         print(f"[WARN] /clips broadcaster_id={broadcaster_id}: {exc}", file=sys.stderr)
-        return []
-    return [c["title"] for c in (body.get("data") or []) if c.get("title")]
+        return [], None
+    titles: list[str] = []
+    latest: str | None = None
+    for c in body.get("data") or []:
+        if c.get("title"):
+            titles.append(c["title"])
+        latest = iso_max(latest, c.get("created_at"))
+    return titles, latest
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +434,12 @@ def _build_payloads(
         clips: list[str] = s.get("_clip_titles") or []
         panels: list[dict[str, Any]] = s.get("_panels") or []
 
+        # Mine email / Telegram / Discord out of every text surface we have.
+        contact_texts: list[str | None] = [bio, stream_title, *vods, *clips]
+        for p in panels:
+            contact_texts.extend([p.get("title"), p.get("description")])
+        contacts = extract_contacts(contact_texts)
+
         row = {
             "scrape_queue_id": job_id,
             "broadcaster_id": s.get("id"),
@@ -332,6 +449,10 @@ def _build_payloads(
             "profile_image_url": s.get("profile_image_url"),
             "broadcaster_language": s.get("broadcaster_language"),
             "account_created_at": s.get("created_at"),
+            "last_activity_at": s.get("_last_activity_at"),
+            "contact_email": contacts["contact_email"],
+            "telegram_url": contacts["telegram_url"],
+            "discord_url": contacts["discord_url"],
             "discovered_from_keyword": keyword,
             "is_live": s.get("is_live"),
             "game_name": s.get("game_name"),
@@ -522,6 +643,7 @@ def main() -> None:
         print(f"[WARN] /users batch failed ({exc}) — continuing without bio/avatar", file=sys.stderr)
         users = {}
 
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ")
     panels_ok = 0
     for c in channels:
         bid = c.get("id")
@@ -530,17 +652,58 @@ def main() -> None:
         c["profile_image_url"] = u.get("profile_image_url")
         c["created_at"] = u.get("created_at")
         c["description"] = u.get("description")
-        c["_vod_texts"] = get_video_descriptions(bid, headers) if bid else []
-        c["_clip_titles"] = get_clip_titles(bid, headers) if bid else []
+        vod_texts, last_vod_at = get_videos(bid, headers) if bid else ([], None)
+        clip_titles, last_clip_at = get_clips(bid, headers) if bid else ([], None)
+        c["_vod_texts"] = vod_texts
+        c["_clip_titles"] = clip_titles
+        # last_activity_at: freshest of live-now, newest VOD, newest clip.
+        # started_at is the current stream's start (only set while live).
+        live_at = (c.get("started_at") or now_iso) if c.get("is_live") else None
+        c["_last_activity_at"] = iso_max(iso_max(live_at, last_vod_at), last_clip_at)
         if login:
             panels, failed = fetch_panels(login)
             c["_panels"] = panels
             c["_panels_failed"] = failed
-            c["_panels_scraped_at"] = None if failed else time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            c["_panels_scraped_at"] = None if failed else now_iso
             if not failed:
                 panels_ok += 1
         time.sleep(ENRICH_DELAY_S)
     print(f"[INFO] Panels fetched for {panels_ok}/{len(channels)} channels")
+
+    # Recency gate — drop channels whose KNOWN last activity predates the
+    # cutoff (Andrei's dead 2–8yr-old channels). Unknown-activity channels are
+    # kept (NULL last_activity_at) so we never silently lose a live streamer
+    # who just has VODs/clips disabled.
+    if INACTIVE_CUTOFF_DAYS > 0:
+        cutoff_epoch = time.time() - INACTIVE_CUTOFF_DAYS * 86400.0
+        kept: list[dict[str, Any]] = []
+        dropped_stale = unknown = 0
+        for c in channels:
+            la = c.get("_last_activity_at")
+            if not la:
+                unknown += 1
+                kept.append(c)
+                continue
+            try:
+                la_epoch = time.mktime(time.strptime(la[:19], "%Y-%m-%dT%H:%M:%S"))
+            except Exception:  # noqa: BLE001 — unparseable → treat as unknown, keep
+                kept.append(c)
+                continue
+            if la_epoch < cutoff_epoch:
+                dropped_stale += 1
+            else:
+                kept.append(c)
+        print(
+            f"[INFO] Recency gate (cutoff={INACTIVE_CUTOFF_DAYS}d): kept {len(kept)}/{len(channels)} "
+            f"— dropped {dropped_stale} stale, {unknown} kept with unknown activity"
+        )
+        channels = kept
+        if not channels:
+            print("[WARN] All channels filtered out by the recency gate", file=sys.stderr)
+            _write_summary(args.output, args.keyword, language, 0, 0)
+            print(f"[DONE] TWITCH | Total: 0 (all {dropped_stale} matched channels were inactive)")
+            print("[RESULT] SUCCESS")
+            return
 
     link_total = sum(len(links) for _, links in _build_payloads(args.job_id, args.keyword, channels))
 

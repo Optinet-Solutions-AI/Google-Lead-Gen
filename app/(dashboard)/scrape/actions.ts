@@ -2357,8 +2357,9 @@ export async function runSnapchatCreatorAnalysis(
 // brand), checks each against Monday, scores affiliate likelihood from the
 // panel/bio casino links + title/bio keywords + gambling game/tags, and flags
 // is_new_lead_candidate when a likely affiliate carries an affiliate ID NOT on
-// Monday OR whose @login isn't on Monday. Twitch captures NO contacts (the API
-// exposes none parseably), so — unlike Kick/Snapchat — there's no contact pass.
+// Monday OR whose @login isn't on Monday. Contacts (email / Telegram / Discord)
+// are mined from the bio + panels at scrape time in twitch_search.py, so —
+// like Kick/Snapchat — there's no separate contact pass here.
 // ============================================================
 export async function runTwitchStreamerAnalysis(
   _prev: StageRunState,
