@@ -371,8 +371,29 @@ def search_advertisers(driver, keyword: str, country_code: str, max_cycles: int)
 # Supabase
 # ---------------------------------------------------------------------------
 
+def _advertiser_page_url(page_id: Any, cc: str, fallback: str) -> str:
+    """Stored page_url for an advertiser. For a numeric page_id, return the
+    canonical, COUNTRY-SCOPED Ad Library "see all ads from this advertiser" deep
+    link — the form FB redirects to that actually renders the Page's ads. A bare
+    facebook.com/{id} profile is login-walled (empty shell), and an Ad Library
+    link scoped to country=ALL normalises to the "isn't running ads in the
+    selected country" empty state for region-targeted (gambling) ads — both show
+    BLANK, the "FB Ad Library appears blank for each result" QA report. We scope
+    here at write time because the stored value is what Monday + external
+    reviewers open, not just the in-app table (which re-scopes on render).
+    Vanity-only Pages (no numeric id) keep their captured profile URL."""
+    if page_id and str(page_id).isdigit():
+        cc = (cc or "ALL").upper()
+        return (
+            f"{FB_ADLIB_BASE}/?active_status=all&ad_type=all"
+            f"&country={quote(cc)}&view_all_page_id={page_id}"
+            "&search_type=page&media_type=all"
+        )
+    return fallback
+
+
 def _build_advertiser_payloads(
-    job_id: str, keyword: str, advertisers: list[dict[str, Any]]
+    job_id: str, keyword: str, country_code: str, advertisers: list[dict[str, Any]]
 ) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
     """Shape aggregated advertisers into (fb_advertisers row, [fb_links partials])
     tuples, aligned so the writer can attach links to each inserted Page id."""
@@ -382,11 +403,12 @@ def _build_advertiser_payloads(
         page_name = (a.get("page_name") or "").strip()
         if not page_url and not page_name:
             continue
+        fallback = page_url or f"{FB_ADLIB_BASE}/?view_all_page_id={a.get('page_id')}"
         row = {
             "scrape_queue_id": job_id,
             "page_id": a.get("page_id"),
             "page_name": page_name or (a.get("page_id") or "Unknown advertiser"),
-            "page_url": page_url or f"{FB_ADLIB_BASE}/?view_all_page_id={a.get('page_id')}",
+            "page_url": _advertiser_page_url(a.get("page_id"), country_code, fallback),
             "discovered_from_keyword": keyword,
             "ad_count": a.get("ad_count"),
             "ad_text_sample": a.get("ad_text_sample"),
@@ -395,15 +417,15 @@ def _build_advertiser_payloads(
     return out
 
 
-def _build_rows(job_id: str, keyword: str, advertisers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _build_rows(job_id: str, keyword: str, country_code: str, advertisers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """fb_advertisers rows only — used by --dry-run, which can't write the DB."""
-    return [row for row, _ in _build_advertiser_payloads(job_id, keyword, advertisers)]
+    return [row for row, _ in _build_advertiser_payloads(job_id, keyword, country_code, advertisers)]
 
 
-def write_advertisers_to_db(sb, job_id: str, keyword: str, advertisers: list[dict[str, Any]]) -> int:
+def write_advertisers_to_db(sb, job_id: str, keyword: str, country_code: str, advertisers: list[dict[str, Any]]) -> int:
     """Insert fb_advertisers, then the ad landing links into fb_links (keyed on
     each inserted advertiser's id — Supabase returns inserted rows in order)."""
-    payloads = _build_advertiser_payloads(job_id, keyword, advertisers)
+    payloads = _build_advertiser_payloads(job_id, keyword, country_code, advertisers)
     if not payloads:
         return 0
     adv_rows = [row for row, _ in payloads]
@@ -526,7 +548,7 @@ def run(args, scraper_mod) -> int:
             return 0
 
         if args.dry_run:
-            rows = _build_rows(args.job_id, keyword, advertisers)
+            rows = _build_rows(args.job_id, keyword, args.country_code, advertisers)
             print(f"[DRY-RUN] would insert {len(rows)} rows into fb_advertisers.")
             if rows:
                 print(json.dumps(rows[0], indent=2, default=str))
@@ -536,7 +558,7 @@ def run(args, scraper_mod) -> int:
             return 0
 
         try:
-            inserted = write_advertisers_to_db(sb, args.job_id, keyword, advertisers)
+            inserted = write_advertisers_to_db(sb, args.job_id, keyword, args.country_code, advertisers)
         except Exception as exc:  # noqa: BLE001
             print(f"[ERROR] Supabase insert into fb_advertisers failed: {exc}", file=sys.stderr)
             print("[RESULT] FAILED")
