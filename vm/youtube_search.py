@@ -9,20 +9,28 @@ stays uniform.
 Flow:
   1. search.list   — keyword → up to maxResults videos (regionCode + relevanceLanguage applied)
   2. channels.list — batch up to 50 distinct channelIds → snippet + statistics
-  3. videos.list   — batch up to 50 discovered videoIds → FULL descriptions
+                     + contentDetails (the uploads-playlist id)
+  3. playlistItems — per channel, newest upload's publish date → last_video_at.
+                     Channels whose last upload predates YOUTUBE_MAX_INACTIVE_DAYS
+                     (Gemma 2026-06-27: dead, years-dormant channels showing up)
+                     are DROPPED before enrich/insert. Mirrors the Twitch
+                     recency gate.
+  4. videos.list   — batch up to 50 discovered videoIds → FULL descriptions
                      (search.list's snippet.description is truncated, which
                      drops most affiliate links; the full description is
                      what Phase 3 mines for tracking links / S-tags)
-  4. Supabase      — insert one row per unique channel into public.youtube_channels,
+  5. Supabase      — insert one row per surviving channel into public.youtube_channels,
                      stashing the discovered video's full description in
                      recent_video_descriptions for Phase 3
-  5. Output JSON   — summary for worker.py (total_results, no per-lead rows)
+  6. Output JSON   — summary for worker.py (total_results, no per-lead rows)
 
 Cost per job (free quota = 10,000 units/day):
-  - 1× search.list   = 100 units
-  - 1× channels.list = 1 unit (batches up to 50 ids per call)
-  - 1× videos.list   = 1 unit (batches up to 50 ids per call)
-  → ~98 jobs/day before quota cap.
+  - 1× search.list    = 100 units
+  - 1× channels.list  = 1 unit (batches up to 50 ids per call)
+  - N× playlistItems  = 1 unit each, one per discovered channel (≤ maxResults)
+  - 1× videos.list    = 1 unit (batches up to 50 ids per call)
+  → ~152 units for a 50-channel job (~65 jobs/day). The recency gate runs
+    BEFORE videos.list, so description fetches only cover surviving channels.
 
 Errors:
   - 400 invalid key, 403 quotaExceeded, 5xx transient — all exit non-zero
@@ -45,6 +53,24 @@ from supabase import create_client
 
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+
+# Recency gate (Gemma 2026-06-27: channels not updated in years were showing).
+# A channel's newest upload (from its uploads playlist) older than this is
+# dropped before enrich/insert. Channels with no measurable last-upload (no
+# public uploads, or the lookup failed) are KEPT — uncertainty shouldn't lose a
+# lead. 0 disables the gate. Mirrors twitch_search.TWITCH_MAX_INACTIVE_DAYS.
+INACTIVE_CUTOFF_DAYS = int(os.environ.get("YOUTUBE_MAX_INACTIVE_DAYS", "365"))
+
+
+def _iso_epoch(ts: str | None) -> float | None:
+    """Parse an ISO-8601 'YYYY-MM-DDTHH:MM:SS...Z' timestamp to epoch seconds,
+    or None if absent/unparseable (caller treats None as unknown → keep)."""
+    if not ts:
+        return None
+    try:
+        return time.mktime(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def search_videos(
@@ -103,7 +129,7 @@ def fetch_channel_details(
     for i in range(0, len(channel_ids), 50):
         batch = channel_ids[i : i + 50]
         params = {
-            "part": "snippet,statistics",
+            "part": "snippet,statistics,contentDetails",
             "id": ",".join(batch),
             "key": api_key,
         }
@@ -122,6 +148,8 @@ def fetch_channel_details(
                 continue
             snip = item.get("snippet") or {}
             stats = item.get("statistics") or {}
+            content = item.get("contentDetails") or {}
+            uploads = (content.get("relatedPlaylists") or {}).get("uploads")
             thumb = ((snip.get("thumbnails") or {}).get("high") or {}).get("url")
             out[cid] = {
                 "channel_name": snip.get("title"),
@@ -129,11 +157,54 @@ def fetch_channel_details(
                 "channel_description": snip.get("description"),
                 "country": snip.get("country"),
                 "published_at": snip.get("publishedAt"),
+                "uploads_playlist_id": uploads,
                 "thumbnail_url": thumb,
                 "subscriber_count": _to_int(stats.get("subscriberCount")),
                 "video_count": _to_int(stats.get("videoCount")),
                 "view_count": _to_int(stats.get("viewCount")),
             }
+    return out
+
+
+def fetch_last_upload_dates(
+    uploads_by_channel: dict[str, str], api_key: str
+) -> dict[str, str]:
+    """playlistItems.list on each channel's uploads playlist → the newest
+    upload's publish time (ISO-8601). 1 unit per channel (playlists can't be
+    batched). Best-effort: a channel whose lookup fails or has no public
+    uploads is omitted, so the recency gate treats it as unknown (kept).
+
+    Uploads playlists are ordered newest-first, so maxResults=1 is the latest
+    video. Prefer contentDetails.videoPublishedAt (true publish time) over the
+    snippet.publishedAt (playlist-add time)."""
+    out: dict[str, str] = {}
+    for cid, playlist_id in uploads_by_channel.items():
+        if not playlist_id:
+            continue
+        params = {
+            "part": "contentDetails,snippet",
+            "playlistId": playlist_id,
+            "maxResults": 1,
+            "key": api_key,
+        }
+        try:
+            r = requests.get(
+                f"{YOUTUBE_API_BASE}/playlistItems", params=params, timeout=30
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] playlistItems {cid}: {exc}", file=sys.stderr)
+            continue
+        if r.status_code != 200:
+            # 404 = no uploads playlist / uploads hidden. Non-fatal → unknown.
+            continue
+        items = (r.json() or {}).get("items") or []
+        if not items:
+            continue
+        cd = items[0].get("contentDetails") or {}
+        sn = items[0].get("snippet") or {}
+        ts = cd.get("videoPublishedAt") or sn.get("publishedAt")
+        if ts:
+            out[cid] = ts
     return out
 
 
@@ -191,12 +262,14 @@ def write_channels_to_db(
     channels: "OrderedDict[str, dict[str, Any]]",
     details: dict[str, dict[str, Any]],
     descriptions: dict[str, str],
+    last_uploads: dict[str, str],
 ) -> int:
     """Insert one row per unique channel. Returns rows-inserted count.
 
     `descriptions` maps discovered videoId → full description; the
     discovered video's description is stashed in recent_video_descriptions
     so Phase 3 can mine its affiliate links without another API call.
+    `last_uploads` maps channelId → newest-upload ISO timestamp (last_video_at).
     """
     if not channels:
         return 0
@@ -221,6 +294,7 @@ def write_channels_to_db(
             "view_count": d.get("view_count"),
             "country": d.get("country"),
             "published_at": d.get("published_at"),
+            "last_video_at": last_uploads.get(channel_id),
             "thumbnail_url": d.get("thumbnail_url"),
             # Single-element array: the discovered video's full description.
             # Nullable column — leave unset when videos.list missed it.
@@ -240,6 +314,8 @@ def main() -> None:
     parser.add_argument("--job-id", required=True, help="scrape_queue.id this run belongs to")
     parser.add_argument("--worker-id", default="", help="Worker identifier (logged only)")
     parser.add_argument("--output", required=True, help="Path to write the summary JSON")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Run all API calls (incl. the recency gate) but skip the Supabase insert")
     args = parser.parse_args()
 
     api_key = os.environ.get("YOUTUBE_API_KEY")
@@ -292,9 +368,61 @@ def main() -> None:
         print(f"[WARN] channels.list crashed: {exc} — proceeding without enriched details", file=sys.stderr)
         details = {}
 
-    # Full descriptions for the discovered videos (Phase 3 mines these for
-    # affiliate links / S-tags). Best-effort — a failure just leaves
-    # recent_video_descriptions empty.
+    # Newest-upload date per channel (the "last updated" signal) for the
+    # recency gate. Best-effort — a failure leaves a channel as unknown (kept).
+    uploads_by_channel = {
+        cid: d.get("uploads_playlist_id")
+        for cid, d in details.items()
+        if d.get("uploads_playlist_id")
+    }
+    try:
+        last_uploads = fetch_last_upload_dates(uploads_by_channel, api_key)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] playlistItems crashed: {exc} — proceeding without recency filtering", file=sys.stderr)
+        last_uploads = {}
+
+    # Recency gate — drop channels whose newest upload predates the cutoff
+    # (Gemma's years-dormant channels). Unknown last-upload is kept so we never
+    # silently lose an active channel whose uploads playlist couldn't be read.
+    if INACTIVE_CUTOFF_DAYS > 0 and channels:
+        cutoff_epoch = time.time() - INACTIVE_CUTOFF_DAYS * 86400.0
+        kept: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
+        dropped_stale = unknown = 0
+        for cid, meta in channels.items():
+            la_epoch = _iso_epoch(last_uploads.get(cid))
+            if la_epoch is None:
+                unknown += 1
+                kept[cid] = meta
+            elif la_epoch < cutoff_epoch:
+                dropped_stale += 1
+            else:
+                kept[cid] = meta
+        print(
+            f"[INFO] Recency gate (cutoff={INACTIVE_CUTOFF_DAYS}d): kept {len(kept)}/{len(channels)} "
+            f"— dropped {dropped_stale} stale, {unknown} kept with unknown last-upload"
+        )
+        channels = kept
+        if not channels:
+            print("[WARN] All channels filtered out by the recency gate", file=sys.stderr)
+            _write_summary(args.output, args.keyword, region_code, language, 0)
+            print(f"[DONE] YOUTUBE | Total: 0 channels (all {dropped_stale} were inactive)")
+            print("[RESULT] SUCCESS")
+            return
+
+    if args.dry_run:
+        print(f"[DRY-RUN] Would insert {len(channels)} channels into youtube_channels.")
+        for cid, meta in list(channels.items())[:8]:
+            d = details.get(cid) or {}
+            nm = d.get("channel_name") or meta.get("channel_name_from_search")
+            print(f"  - {nm} | last_video_at={last_uploads.get(cid) or 'unknown'} | subs={d.get('subscriber_count')}")
+        _write_summary(args.output, args.keyword, region_code, language, len(channels))
+        print(f"[DONE] YOUTUBE | Total: {len(channels)} channels (dry-run, no DB write)")
+        print("[RESULT] SUCCESS")
+        return
+
+    # Full descriptions for the surviving channels' discovered videos (Phase 3
+    # mines these for affiliate links / S-tags). Best-effort — a failure just
+    # leaves recent_video_descriptions empty.
     video_ids = [
         m.get("discovered_video_id")
         for m in channels.values()
@@ -308,7 +436,7 @@ def main() -> None:
 
     try:
         inserted = write_channels_to_db(
-            sb_url, sb_key, args.job_id, args.keyword, channels, details, descriptions,
+            sb_url, sb_key, args.job_id, args.keyword, channels, details, descriptions, last_uploads,
         )
     except Exception as exc:
         print(f"[ERROR] Supabase insert into youtube_channels failed: {exc}", file=sys.stderr)

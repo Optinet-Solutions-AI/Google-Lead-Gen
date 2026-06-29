@@ -462,6 +462,12 @@ export type YoutubeChannelRow = {
   is_new_lead_candidate: boolean | null
   /** Phase 3 relevance gate: no casino funnel link → hidden from default view. */
   is_not_relevant: boolean | null
+  last_video_at: string | null
+  /** Relative "uploaded 3mo ago" label from last_video_at, computed server-side
+   *  (Date.now is impure in a component render). */
+  last_video_label: string | null
+  /** last_video_at older than 90 days — surfaced as a soft warning colour. */
+  last_video_stale: boolean
   about_tab_scraped_at: string | null
   about_tab_captcha_blocked: boolean | null
   links: YoutubeChannelLinkRow[]
@@ -477,12 +483,15 @@ export async function fetchYoutubeChannelRows(jobId: string): Promise<YoutubeCha
     .select(
       'id, channel_url, channel_name, channel_handle, subscriber_count, email, website_url, ' +
         'twitter_url, instagram_url, tiktok_url, telegram_url, discord_url, ' +
-        'is_likely_affiliate, niche_score, is_new_lead_candidate, is_not_relevant, ' +
+        'is_likely_affiliate, niche_score, is_new_lead_candidate, is_not_relevant, last_video_at, ' +
         'about_tab_scraped_at, about_tab_captcha_blocked',
     )
     .eq('scrape_queue_id', jobId)
   if (error) throw error
-  const rows = (channels ?? []) as unknown as Omit<YoutubeChannelRow, 'links'>[]
+  const rows = (channels ?? []) as unknown as Omit<
+    YoutubeChannelRow,
+    'links' | 'last_video_label' | 'last_video_stale'
+  >[]
   if (rows.length === 0) return []
 
   const { data: links } = await svc
@@ -507,7 +516,10 @@ export async function fetchYoutubeChannelRows(jobId: string): Promise<YoutubeCha
       if (ns !== 0) return ns
       return (b.subscriber_count ?? 0) - (a.subscriber_count ?? 0)
     })
-    .map(r => ({ ...r, links: linksByChannel.get(r.id) ?? [] }))
+    .map(r => {
+      const { label, stale } = relativeActivity(r.last_video_at, 'uploaded')
+      return { ...r, last_video_label: label, last_video_stale: stale, links: linksByChannel.get(r.id) ?? [] }
+    })
 }
 
 // ============================================================
@@ -1263,22 +1275,23 @@ export type TwitchStreamerRow = {
   links: TwitchLinkRow[]
 }
 
-/** Format last_activity_at as a coarse relative label. Lives here (a plain
- *  server function) rather than in the table component so Date.now() isn't
- *  called during React render. */
-function twitchLastActive(iso: string | null): { label: string | null; stale: boolean } {
+/** Format an activity timestamp as a coarse relative label (e.g. "active 3mo
+ *  ago" / "uploaded 2y ago"). Lives here (a plain server function) rather than
+ *  in a table component so Date.now() isn't called during React render. stale
+ *  = older than 90 days. */
+function relativeActivity(iso: string | null, verb: string): { label: string | null; stale: boolean } {
   if (!iso) return { label: null, stale: false }
   const then = new Date(iso).getTime()
   if (Number.isNaN(then)) return { label: null, stale: false }
   const days = Math.floor((Date.now() - then) / 86_400_000)
   const label =
     days <= 0
-      ? 'active today'
+      ? `${verb} today`
       : days < 30
-        ? `active ${days}d ago`
+        ? `${verb} ${days}d ago`
         : days < 365
-          ? `active ${Math.floor(days / 30)}mo ago`
-          : `active ${(days / 365).toFixed(1)}y ago`
+          ? `${verb} ${Math.floor(days / 30)}mo ago`
+          : `${verb} ${(days / 365).toFixed(1)}y ago`
   return { label, stale: days >= 90 }
 }
 
@@ -1327,7 +1340,7 @@ export async function fetchTwitchStreamerRows(jobId: string): Promise<TwitchStre
       return (a.broadcaster_login ?? '').localeCompare(b.broadcaster_login ?? '')
     })
     .map(r => {
-      const { label, stale } = twitchLastActive(r.last_activity_at)
+      const { label, stale } = relativeActivity(r.last_activity_at, 'active')
       return { ...r, last_active_label: label, last_active_stale: stale, links: linksByStreamer.get(r.id) ?? [] }
     })
 }

@@ -136,6 +136,21 @@ function YoutubeChannelRowView({ r }: { r: YoutubeChannelRow }) {
         {r.channel_handle && r.channel_handle !== name && (
           <div className="text-[10px] text-[color:var(--color-text-secondary)]">{r.channel_handle}</div>
         )}
+        {r.last_video_label ? (
+          <div
+            className={['text-[10px]', r.last_video_stale ? 'text-amber-600' : 'text-[color:var(--color-text-secondary)]'].join(' ')}
+            title={r.last_video_at ? `Newest upload: ${new Date(r.last_video_at).toLocaleDateString()}` : undefined}
+          >
+            {r.last_video_label}
+          </div>
+        ) : (
+          <div
+            className="cursor-help text-[10px] text-[color:var(--color-text-secondary)] italic"
+            title="Couldn't read the channel's uploads (uploads hidden / none public). Kept rather than dropped by the recency gate."
+          >
+            uploads unknown
+          </div>
+        )}
       </td>
 
       <td className="px-3 py-2">
