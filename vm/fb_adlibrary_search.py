@@ -131,6 +131,9 @@ function findCards(){
         page_id: m[1],
         page_name: (a.innerText || '').trim().slice(0, 200) || null,
         page_url: 'https://www.facebook.com/ads/library/?view_all_page_id=' + m[1],
+        // id_kind 'library': m[1] came from a real view_all_page_id link, so it
+        // IS the Ad Library Page id — view_all_page_id deep-links work.
+        id_kind: 'library',
       });
     }
   }
@@ -161,20 +164,19 @@ function findCards(){
       // anchor was an over-grab, not the advertiser name.
       let nm = ((a.innerText || '').split('\n').map(s => s.trim()).filter(Boolean)[0]) || null;
       if (nm && (nm.length > 100 || /https?:\/\//i.test(nm))) nm = null;
-      // A purely-numeric slug (>=5 digits) is the page's numeric id.
+      // A purely-numeric slug (>=5 digits) is the slug's numeric id. CAUTION:
+      // this came from a facebook.com/{slug} PROFILE anchor, not a
+      // view_all_page_id link — for personal-profile advertisers (fake-name
+      // gambling Pages) that number is the PROFILE id, which is NOT the Ad
+      // Library Page id, so view_all_page_id={it} returns no ads (blank). We
+      // tag id_kind 'profile' and let the writer pick a name-search link
+      // instead. We keep the captured profile/vanity URL as the raw fallback.
       const pid = /^\d{5,}$/.test(slug) ? slug : null;
-      // When we have the numeric page id, point page_url at the Ad Library
-      // "see all ads from this advertiser" view (same as the primary signal
-      // above) — not facebook.com/{id}, which is login-walled and shows "This
-      // content isn't available" for these thin ad-only Pages. The advertiser's
-      // gambling ads are visible in the Ad Library view even when the profile
-      // isn't. Vanity-only slugs (no numeric id) keep the profile URL.
       cards.set(card, {
         page_id: pid,
         page_name: nm,
-        page_url: pid
-          ? 'https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&view_all_page_id=' + pid
-          : 'https://www.facebook.com/' + slug,
+        page_url: 'https://www.facebook.com/' + slug,
+        id_kind: 'profile',
       });
     }
   }
@@ -254,6 +256,7 @@ for (const [card, info] of findCards()) {
     page_id: info.page_id,
     page_name: info.page_name,
     page_url: info.page_url,
+    id_kind: info.id_kind,
     ad_copy: copy || null,
     links: cardLinks(card),
   });
@@ -316,6 +319,7 @@ def _aggregate_advertisers(ad_cards: list[dict[str, Any]]) -> list[dict[str, Any
                 "page_id": page_id,
                 "page_name": c.get("page_name"),
                 "page_url": page_url,
+                "id_kind": c.get("id_kind"),
                 "ad_count": 0,
                 "_copy_parts": [],
                 "_links": {},   # dest url -> source (dedupe across the Page's ads)
@@ -324,6 +328,10 @@ def _aggregate_advertisers(ad_cards: list[dict[str, Any]]) -> list[dict[str, Any
         entry["ad_count"] += 1
         if not entry.get("page_name") and c.get("page_name"):
             entry["page_name"] = c.get("page_name")
+        # A real Ad Library page id (from a view_all_page_id link) always wins
+        # over a profile-anchor guess for the same advertiser.
+        if c.get("id_kind") == "library":
+            entry["id_kind"] = "library"
         copy = c.get("ad_copy")
         # Measure with the SAME separator the final sample uses (" · "), so the
         # accumulation cap matches the stored string's real length.
@@ -371,25 +379,44 @@ def search_advertisers(driver, keyword: str, country_code: str, max_cycles: int)
 # Supabase
 # ---------------------------------------------------------------------------
 
-def _advertiser_page_url(page_id: Any, cc: str, fallback: str) -> str:
-    """Stored page_url for an advertiser. For a numeric page_id, return the
-    canonical, COUNTRY-SCOPED Ad Library "see all ads from this advertiser" deep
-    link — the form FB redirects to that actually renders the Page's ads. A bare
-    facebook.com/{id} profile is login-walled (empty shell), and an Ad Library
-    link scoped to country=ALL normalises to the "isn't running ads in the
-    selected country" empty state for region-targeted (gambling) ads — both show
-    BLANK, the "FB Ad Library appears blank for each result" QA report. We scope
-    here at write time because the stored value is what Monday + external
-    reviewers open, not just the in-app table (which re-scopes on render).
-    Vanity-only Pages (no numeric id) keep their captured profile URL."""
-    if page_id and str(page_id).isdigit():
-        cc = (cc or "ALL").upper()
+def _advertiser_page_url(advertiser: dict[str, Any], cc: str) -> str:
+    """Stored page_url — the link a reviewer (in-app, Monday, export) opens to
+    SEE this advertiser's ads. The recurring "FB Ad Library appears blank" QA
+    report comes from linking to a page FB renders empty:
+      - bare facebook.com/{id}                     -> login-walled empty shell
+      - Ad Library view scoped to country=ALL      -> "not running ads in the
+                                                        selected country" state
+      - view_all_page_id={PROFILE id}              -> profile id != Page id, so
+                                                        the Ad Library matches
+                                                        nothing -> no ads
+    Two tiers, keyed on HOW the id was captured (id_kind), not its digits:
+
+    Tier 1 (id_kind 'library'): the id came from a real view_all_page_id link, so
+      it IS the Ad Library Page id. Deep-link straight to that Page's ads, scoped
+      to the job country. Precise — only this advertiser.
+    Tier 2 (everything else — personal-profile / vanity advertisers we have no
+      real Page id for): link to the Ad Library NAME SEARCH for this advertiser
+      in-country. Guaranteed non-blank — searching their name is how we found
+      them. Less precise (a generic name surfaces a few neighbours) but never the
+      blank "no ads" page."""
+    cc = (cc or "ALL").upper()
+    page_id = advertiser.get("page_id")
+    page_name = (advertiser.get("page_name") or "").strip()
+    page_url = (advertiser.get("page_url") or "").strip()
+
+    if advertiser.get("id_kind") == "library" and page_id and str(page_id).isdigit():
         return (
             f"{FB_ADLIB_BASE}/?active_status=all&ad_type=all"
             f"&country={quote(cc)}&view_all_page_id={page_id}"
             "&search_type=page&media_type=all"
         )
-    return fallback
+    if page_name:
+        return (
+            f"{FB_ADLIB_BASE}/?active_status=all&ad_type=all"
+            f"&country={quote(cc)}&q={quote(page_name)}"
+            "&search_type=keyword_unordered&media_type=all"
+        )
+    return page_url or f"{FB_ADLIB_BASE}/?view_all_page_id={page_id}"
 
 
 def _build_advertiser_payloads(
@@ -403,12 +430,11 @@ def _build_advertiser_payloads(
         page_name = (a.get("page_name") or "").strip()
         if not page_url and not page_name:
             continue
-        fallback = page_url or f"{FB_ADLIB_BASE}/?view_all_page_id={a.get('page_id')}"
         row = {
             "scrape_queue_id": job_id,
             "page_id": a.get("page_id"),
             "page_name": page_name or (a.get("page_id") or "Unknown advertiser"),
-            "page_url": _advertiser_page_url(a.get("page_id"), country_code, fallback),
+            "page_url": _advertiser_page_url(a, country_code),
             "discovered_from_keyword": keyword,
             "ad_count": a.get("ad_count"),
             "ad_text_sample": a.get("ad_text_sample"),

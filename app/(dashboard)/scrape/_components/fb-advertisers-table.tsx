@@ -8,23 +8,20 @@ import type { FbAdvertiserRow } from '../_lib/queries'
  * active-ad count, contacts mined from the ad copy, the Page website, and the
  * ad landing/CTA affiliate links that drove the flag. Server component.
  *
- * Sibling of x-creators-table.tsx. The Advertiser link points at the Page's
- * Ad Library view (…/ads/library/?view_all_page_id={page_id}) whenever we have
- * the numeric page id, NOT facebook.com/{vanity}. The bare FB profile is
- * login-walled and often shows "This content isn't available" or an empty
- * shell — these are thin ad-only Pages whose gambling content lives in their
- * ads, not on the profile (the cause of the "does not exist / no gambling
- * content" QA feedback). The Ad Library view shows those ads even when the
- * profile is restricted. Vanity-only Pages (no page_id) fall back to page_url.
- *
- * The Ad Library link is SCOPED TO THE JOB'S COUNTRY (e.g. country=AU), not
- * country=ALL. FB's page-specific view (view_all_page_id) requires a concrete
- * country: with country=ALL it normalises to search_type=page and returns the
- * "No ads match your search criteria — isn't running ads in the selected
- * country" empty state, even when the Page has live AU ads (the cause of the
- * "Ad Library appears blank for each result" QA feedback, batch 1636).
+ * Sibling of x-creators-table.tsx. The Advertiser link is whatever the scraper
+ * stored in page_url — the single source of truth, identical to what's pushed
+ * to Monday + exports, so every surface opens the same working page. The
+ * scraper builds a COUNTRY-SCOPED Ad Library NAME SEARCH for the advertiser
+ * (…/ads/library/?country=AU&q={page_name}&search_type=keyword_unordered). We
+ * do NOT deep-link by view_all_page_id={page_id}: FB's results grid no longer
+ * exposes a real Ad Library Page id per card, and the numeric id we capture is
+ * usually a personal-PROFILE id (fake-name gambling advertisers), which the
+ * Ad Library doesn't match → the blank "no ads / isn't running ads in the
+ * selected country" empty state (the "Ad Library appears blank for each result"
+ * QA report, batches 1636 + 1741). The name search always re-surfaces the
+ * advertiser — that's how we found them. See fb_adlibrary_search.py.
  */
-export function FbAdvertisersTable({ rows, country }: { rows: FbAdvertiserRow[]; country: string }) {
+export function FbAdvertisersTable({ rows }: { rows: FbAdvertiserRow[] }) {
   if (rows.length === 0) return null
 
   return (
@@ -53,7 +50,7 @@ export function FbAdvertisersTable({ rows, country }: { rows: FbAdvertiserRow[];
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <FbAdvertiserRowView key={r.id} r={r} n={i + 1} country={country} />
+            <FbAdvertiserRowView key={r.id} r={r} n={i + 1} />
           ))}
         </tbody>
       </table>
@@ -61,7 +58,7 @@ export function FbAdvertisersTable({ rows, country }: { rows: FbAdvertiserRow[];
   )
 }
 
-function FbAdvertiserRowView({ r, n, country }: { r: FbAdvertiserRow; n: number; country: string }) {
+function FbAdvertiserRowView({ r, n }: { r: FbAdvertiserRow; n: number }) {
   const niche = r.niche_score == null ? null : Number(r.niche_score)
   const adCount = r.total_active_ads ?? r.ad_count
 
@@ -70,14 +67,10 @@ function FbAdvertiserRowView({ r, n, country }: { r: FbAdvertiserRow; n: number;
       <td className="px-3 py-2 text-right tabular-nums text-[color:var(--color-text-secondary)]">{n}</td>
       <td className="px-3 py-2">
         <a
-          href={advertiserAdLibraryHref(r, country)}
+          href={r.page_url}
           target="_blank"
           rel="noreferrer"
-          title={
-            r.page_id
-              ? "Opens this advertiser's ads in the Ad Library — these thin Pages often show nothing on the profile, but their gambling ads live here."
-              : r.page_url
-          }
+          title="Opens this advertiser's ads in the Ad Library (name search scoped to the job country) — these thin ad-only Pages show nothing on the profile, but their gambling ads surface here."
           className="inline-flex items-center gap-1 font-medium text-[color:var(--color-text-primary)] hover:underline"
         >
           {r.page_name}
@@ -273,29 +266,6 @@ function LinkChip({ href, label, isNew }: { href: string; label: string; isNew?:
       <span className="truncate">{label}</span>
     </a>
   )
-}
-
-/** Where the Advertiser name links. Prefer the Ad Library "see all ads from
- *  this advertiser" view (view_all_page_id) when we have the numeric page id —
- *  that's where a thin ad-only Page's gambling ads are visible, even when the
- *  public facebook.com/{id} profile is login-walled or empty. Fall back to the
- *  stored page_url for vanity-only Pages we couldn't pin a numeric id to.
- *
- *  Scope to the job's country (country=AU, …) — NOT country=ALL. FB's
- *  page-specific view requires a concrete country; country=ALL returns the
- *  empty "isn't running ads in the selected country" state for regionally
- *  targeted (gambling) ads. We pass search_type=page&media_type=all to match
- *  the canonical form FB redirects to, so the deep link lands directly. */
-function advertiserAdLibraryHref(r: FbAdvertiserRow, country: string): string {
-  if (r.page_id && /^\d+$/.test(r.page_id)) {
-    const cc = country.trim().toUpperCase() || 'ALL'
-    return (
-      'https://www.facebook.com/ads/library/?active_status=all&ad_type=all' +
-      `&country=${encodeURIComponent(cc)}&view_all_page_id=${r.page_id}` +
-      '&search_type=page&media_type=all'
-    )
-  }
-  return r.page_url
 }
 
 function hostLabel(url: string): string {
