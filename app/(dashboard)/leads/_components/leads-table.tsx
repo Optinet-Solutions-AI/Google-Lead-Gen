@@ -21,6 +21,7 @@ import { BooleanLabelEditor } from './boolean-label-editor'
 import { BulkActionsBar } from './bulk-actions-bar'
 import { LeadDetailDrawer } from './lead-detail-drawer'
 import { MondayLabelEditor } from './monday-label-editor'
+import { StagCheckHint } from './stag-check-hint'
 
 type Props = {
   rows: LeadRow[]
@@ -690,12 +691,15 @@ export function LeadsTable({
                   />
                 </Td>
                 <Td>
-                  <BooleanLabelEditor
-                    leadId={row.id}
-                    value={row.has_s_tags}
-                    isOverridden={row.is_stag_overridden_at !== null}
-                    action={setStagLabel}
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <BooleanLabelEditor
+                      leadId={row.id}
+                      value={row.has_s_tags}
+                      isOverridden={row.is_stag_overridden_at !== null}
+                      action={setStagLabel}
+                    />
+                    <StagCheckHint checkedAt={row.s_tags_checked_at} hasTags={row.has_s_tags} />
+                  </div>
                 </Td>
                 {/* Verified-s-tags cell removed — see Th comment above. */}
                 <Td>
@@ -816,12 +820,15 @@ export function LeadsTable({
                 />
               </Field>
               <Field label="S-tags">
-                <BooleanLabelEditor
-                  leadId={row.id}
-                  value={row.has_s_tags}
-                  isOverridden={row.is_stag_overridden_at !== null}
-                  action={setStagLabel}
-                />
+                <div className="flex items-center gap-1.5">
+                  <BooleanLabelEditor
+                    leadId={row.id}
+                    value={row.has_s_tags}
+                    isOverridden={row.is_stag_overridden_at !== null}
+                    action={setStagLabel}
+                  />
+                  <StagCheckHint checkedAt={row.s_tags_checked_at} hasTags={row.has_s_tags} />
+                </div>
               </Field>
               {/* Verified s-tags Field hidden — see desktop Th comment. */}
               <Field label="Has contacts?">
