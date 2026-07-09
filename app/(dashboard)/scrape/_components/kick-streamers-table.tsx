@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { CheckCircle2, ExternalLink, Mail, MessageCircle, Pin, Send } from 'lucide-react'
 import type { KickStreamerRow } from '../_lib/queries'
+import { MondayStatusCell } from './monday-status-cell'
 
 /**
  * Per-streamer results table for Kick jobs (Phase 3). Affiliates first,
@@ -31,6 +32,12 @@ export function KickStreamersTable({ rows }: { rows: KickStreamerRow[] }) {
               title="Affiliate likelihood + niche score (0–100). “affiliate” = scored ≥30 (likely a casino affiliate); “no” = below 30. Hover a badge for the breakdown."
             >
               Affiliate
+            </th>
+            <th
+              className="cursor-help px-3 py-2 font-medium"
+              title="Monday recognition. Green ✓ = the streamer’s channel slug / affiliate ID / any of its casino links is already on a Monday board. Grey ✕ = we checked and found no match. Blank = scoring hasn’t run yet."
+            >
+              On Monday
             </th>
             <th
               className="cursor-help px-3 py-2 font-medium"
@@ -106,6 +113,10 @@ function KickStreamerRowView({ r }: { r: KickStreamerRow }) {
             no · {niche}
           </span>
         )}
+      </td>
+
+      <td className="px-3 py-2">
+        <MondayStatusCell isKnownOnMonday={r.is_known_on_monday} links={r.links} />
       </td>
 
       <td className="px-3 py-2">

@@ -926,7 +926,7 @@ export async function runKickStreamerAnalysis(
   const { data: streamers, error: sErr } = await svc
     .from('kick_streamers')
     .select(
-      'id, channel_description, stream_title, custom_tags, category_name, ' +
+      'id, slug, channel_description, stream_title, custom_tags, category_name, ' +
         'instagram_handle, twitter_handle, facebook_handle, youtube_handle, tiktok_handle',
     )
     .eq('scrape_queue_id', jobId)
@@ -938,11 +938,20 @@ export async function runKickStreamerAnalysis(
 
   const { data: links, error: lErr } = await svc
     .from('kick_links')
-    .select('id, kick_streamer_id, url, resolved_url, source, promo_brand, promo_bonus_terms')
+    .select(
+      'id, kick_streamer_id, url, resolved_url, source, promo_brand, promo_bonus_terms, ' +
+        's_tag, brand, is_known_on_monday',
+    )
     .in('kick_streamer_id', streamerIds)
   if (lErr) return { status: 'error', error: safeError(lErr, 'Failed to load streamer links.') }
-  const allLinks = (links ?? []) as Array<
-    KickScoreLink & { id: string; kick_streamer_id: string }
+  const allLinks = (links ?? []) as unknown as Array<
+    KickScoreLink & {
+      id: string
+      kick_streamer_id: string
+      s_tag: string | null
+      brand: string | null
+      is_known_on_monday: boolean | null
+    }
   >
 
   // Casino-operator domain set (host suffixes) for promo-link classification.
@@ -971,8 +980,52 @@ export async function runKickStreamerAnalysis(
     }
   }
 
-  // 2. Score each streamer.
-  const linksByStreamer = new Map<string, KickScoreLink[]>()
+  const mondayCache = new Map<string, { kind: string; item_id: string } | null>()
+  async function checkMonday(key0: string): Promise<{ kind: string; item_id: string } | null> {
+    const key = key0.toLowerCase()
+    if (mondayCache.has(key)) return mondayCache.get(key) ?? null
+    const { data } = await svc.rpc('search_s_tag_on_monday', { p_tag: key0 })
+    const hit = (Array.isArray(data) ? data[0] : data) as { kind: string; item_id: string } | null | undefined
+    const val = hit?.item_id ? hit : null
+    mondayCache.set(key, val)
+    return val
+  }
+
+  // 2. Parse the S-tag / operator brand for each casino link + check it
+  // against Monday (search_s_tag_on_monday) — same pattern as the twitch
+  // scorer this one mirrors. Non-casino links (own site, plain socials) are
+  // left null. Writes the per-link Monday verdict back to kick_links so the
+  // "On Monday" column can show which URLs matched.
+  let affiliateLinks = 0
+  for (const l of allLinks) {
+    const dest = l.resolved_url ?? l.url
+    const parsed = parseStagFromUrl(dest)
+    const isCasino = !!parsed || isAffiliateCasinoLink(dest, denylist)
+    if (!isCasino) continue
+    affiliateLinks++
+    const brand = guessBrandFromUrl(dest)
+    const checkKey = parsed?.tag || brand || ''
+    let hit: { kind: string; item_id: string } | null = null
+    if (checkKey) hit = await checkMonday(checkKey)
+    const update = {
+      s_tag: parsed?.tag ?? null,
+      s_tag_param: parsed?.param ?? null,
+      brand,
+      is_known_on_monday: checkKey ? !!hit : null,
+      monday_match_kind: hit?.kind ?? null,
+      monday_match_item_id: hit?.item_id ?? null,
+    }
+    const { error: upErr } = await svc.from('kick_links').update(update).eq('id', l.id)
+    if (!upErr) {
+      l.s_tag = update.s_tag
+      l.brand = update.brand
+      l.is_known_on_monday = update.is_known_on_monday
+    }
+  }
+
+  // 3. Score each streamer + derive the new-vs-known verdict.
+  type KickLinkFull = (typeof allLinks)[number]
+  const linksByStreamer = new Map<string, KickLinkFull[]>()
   for (const l of allLinks) {
     const arr = linksByStreamer.get(l.kick_streamer_id) ?? []
     arr.push(l)
@@ -981,9 +1034,11 @@ export async function runKickStreamerAnalysis(
 
   let scored = 0
   let likelyAffiliates = 0
+  let newCandidates = 0
   let withContacts = 0
   for (const s of streamers as unknown as Array<{
     id: string
+    slug: string
     channel_description: string | null
     stream_title: string | null
     custom_tags: string[] | null
@@ -1008,9 +1063,28 @@ export async function runKickStreamerAnalysis(
       linkUrls,
     )
 
+    // New-vs-known: a likely affiliate is "new" if any of its casino links
+    // resolved to an S-tag/brand NOT on Monday, or its channel slug (the
+    // kick.com/{slug} identity, Kick's analogue of the Twitch @login) isn't
+    // on Monday. Mirror the twitch verdict exactly.
+    const hasNewTag = streamerLinks.some(l => l.is_known_on_monday === false)
+    let handleIsNew = false
+    let handleChecked = false
+    if (result.isLikelyAffiliate) {
+      const handle = (s.slug ?? '').replace(/^@/, '').trim()
+      if (handle.length >= 2) {
+        const known = await checkMonday(handle)
+        handleIsNew = !known
+        handleChecked = true
+      }
+    }
+    const isNewCandidate = result.isLikelyAffiliate && (hasNewTag || handleIsNew)
+
     const update: Record<string, unknown> = {
       is_likely_affiliate: result.isLikelyAffiliate,
       niche_score: result.nicheScore,
+      is_new_lead_candidate: isNewCandidate,
+      is_known_on_monday: result.isLikelyAffiliate && handleChecked ? !handleIsNew : null,
       contact_email: contacts.email,
       telegram_url: contacts.telegram_url,
       discord_url: contacts.discord_url,
@@ -1027,6 +1101,7 @@ export async function runKickStreamerAnalysis(
     if (upErr) continue
     scored++
     if (result.isLikelyAffiliate) likelyAffiliates++
+    if (isNewCandidate) newCandidates++
     if (contacts.email || contacts.telegram_url || contacts.discord_url) withContacts++
   }
 
@@ -1034,13 +1109,13 @@ export async function runKickStreamerAnalysis(
     action: 'enrichment.kick_score',
     entity_type: 'scrape_job',
     entity_id: jobId,
-    details: { scored, likelyAffiliates, linksResolved, withContacts },
+    details: { scored, likelyAffiliates, newCandidates, affiliateLinks, linksResolved, withContacts },
   })
 
   revalidatePath(`/scrape/${jobId}`)
   return {
     status: 'ok',
-    message: `Scored ${scored} streamer${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${withContacts} with contact${withContacts === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
+    message: `Scored ${scored} streamer${scored === 1 ? '' : 's'} — ${likelyAffiliates} likely affiliate${likelyAffiliates === 1 ? '' : 's'}, ${newCandidates} new lead candidate${newCandidates === 1 ? '' : 's'}, ${withContacts} with contact${withContacts === 1 ? '' : 's'}${linksResolved > 0 ? `, ${linksResolved} link${linksResolved === 1 ? '' : 's'} resolved` : ''}.`,
   }
 }
 

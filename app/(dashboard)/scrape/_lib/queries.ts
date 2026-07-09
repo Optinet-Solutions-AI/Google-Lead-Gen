@@ -280,6 +280,7 @@ export type KickLinkRow = {
   resolved_url: string | null
   source: 'channel_description' | 'stream_title' | 'promo_card' | 'pinned_chat'
   promo_brand: string | null
+  is_known_on_monday: boolean | null
 }
 
 export type KickStreamerRow = {
@@ -300,6 +301,11 @@ export type KickStreamerRow = {
   discord_url: string | null
   is_likely_affiliate: boolean | null
   niche_score: number | null
+  /** True when the streamer (via its channel slug or any of its casino
+   *  links' S-tags / brands) is already known on a Monday board. Null
+   *  before scoring runs. */
+  is_known_on_monday: boolean | null
+  is_new_lead_candidate: boolean | null
   about_scraped_at: string | null
   links: KickLinkRow[]
 }
@@ -315,7 +321,7 @@ export async function fetchKickStreamerRows(jobId: string): Promise<KickStreamer
       'id, slug, channel_url, follower_count, is_live, category_name, stream_language, stream_viewer_count, ' +
         'instagram_handle, twitter_handle, facebook_handle, youtube_handle, tiktok_handle, ' +
         'contact_email, telegram_url, discord_url, ' +
-        'is_likely_affiliate, niche_score, about_scraped_at',
+        'is_likely_affiliate, niche_score, is_known_on_monday, is_new_lead_candidate, about_scraped_at',
     )
     .eq('scrape_queue_id', jobId)
   if (error) throw error
@@ -325,12 +331,18 @@ export async function fetchKickStreamerRows(jobId: string): Promise<KickStreamer
 
   const { data: links } = await svc
     .from('kick_links')
-    .select('kick_streamer_id, url, resolved_url, source, promo_brand')
+    .select('kick_streamer_id, url, resolved_url, source, promo_brand, is_known_on_monday')
     .in('kick_streamer_id', rows.map(r => r.id))
   const linksByStreamer = new Map<string, KickLinkRow[]>()
   for (const l of (links ?? []) as unknown as Array<KickLinkRow & { kick_streamer_id: string }>) {
     const arr = linksByStreamer.get(l.kick_streamer_id) ?? []
-    arr.push({ url: l.url, resolved_url: l.resolved_url, source: l.source, promo_brand: l.promo_brand })
+    arr.push({
+      url: l.url,
+      resolved_url: l.resolved_url,
+      source: l.source,
+      promo_brand: l.promo_brand,
+      is_known_on_monday: l.is_known_on_monday,
+    })
     linksByStreamer.set(l.kick_streamer_id, arr)
   }
 
