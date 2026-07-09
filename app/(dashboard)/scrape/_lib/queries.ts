@@ -910,6 +910,9 @@ export type FbAdvertiserRow = {
   discord_url: string | null
   is_likely_affiliate: boolean | null
   niche_score: number | null
+  /** True when this Page (via name / ID / any of its links' S-tags) is
+   *  already known on a Monday board. Null before scoring runs. */
+  is_known_on_monday: boolean | null
   is_new_lead_candidate: boolean | null
   about_scraped_at: string | null
   links: FbLinkRow[]
@@ -925,7 +928,7 @@ export async function fetchFbAdvertiserRows(jobId: string): Promise<FbAdvertiser
     .select(
       'id, page_id, page_name, page_url, page_category, ad_count, total_active_ads, page_website_url, ' +
         'contact_email, telegram_url, discord_url, ' +
-        'is_likely_affiliate, niche_score, is_new_lead_candidate, about_scraped_at',
+        'is_likely_affiliate, niche_score, is_known_on_monday, is_new_lead_candidate, about_scraped_at',
     )
     .eq('scrape_queue_id', jobId)
   if (error) throw error
