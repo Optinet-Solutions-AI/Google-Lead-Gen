@@ -459,6 +459,9 @@ export type YoutubeChannelRow = {
   discord_url: string | null
   is_likely_affiliate: boolean | null
   niche_score: number | null
+  /** True when the channel's affiliate IDs / brands / links match an
+   *  existing Monday item. Null before scoring runs. */
+  is_known_on_monday: boolean | null
   is_new_lead_candidate: boolean | null
   /** Phase 3 relevance gate: no casino funnel link → hidden from default view. */
   is_not_relevant: boolean | null
@@ -483,7 +486,7 @@ export async function fetchYoutubeChannelRows(jobId: string): Promise<YoutubeCha
     .select(
       'id, channel_url, channel_name, channel_handle, subscriber_count, email, website_url, ' +
         'twitter_url, instagram_url, tiktok_url, telegram_url, discord_url, ' +
-        'is_likely_affiliate, niche_score, is_new_lead_candidate, is_not_relevant, last_video_at, ' +
+        'is_likely_affiliate, niche_score, is_known_on_monday, is_new_lead_candidate, is_not_relevant, last_video_at, ' +
         'about_tab_scraped_at, about_tab_captcha_blocked',
     )
     .eq('scrape_queue_id', jobId)
@@ -628,6 +631,9 @@ export type XCreatorRow = {
   discord_url: string | null
   is_likely_affiliate: boolean | null
   niche_score: number | null
+  /** True when the creator's affiliate IDs / brands / links match an
+   *  existing Monday item. Null before scoring runs. */
+  is_known_on_monday: boolean | null
   is_new_lead_candidate: boolean | null
   about_scraped_at: string | null
   links: XLinkRow[]
@@ -644,7 +650,7 @@ export async function fetchXCreatorRows(jobId: string): Promise<XCreatorRow[]> {
       'id, username, profile_url, display_name, followers_count, verified, location, website_url, ' +
         'instagram_handle, youtube_handle, tiktok_handle, facebook_handle, ' +
         'contact_email, telegram_url, discord_url, ' +
-        'is_likely_affiliate, niche_score, is_new_lead_candidate, about_scraped_at',
+        'is_likely_affiliate, niche_score, is_known_on_monday, is_new_lead_candidate, about_scraped_at',
     )
     .eq('scrape_queue_id', jobId)
   if (error) throw error
@@ -791,6 +797,9 @@ export type TiktokCreatorRow = {
   discord_url: string | null
   is_likely_affiliate: boolean | null
   niche_score: number | null
+  /** True when the creator's bio/caption links resolve to an S-tag on
+   *  a Monday board. Null before scoring runs. */
+  is_known_on_monday: boolean | null
   is_new_lead_candidate: boolean | null
   /** Phase 2 gate: no funnel link → name-squatter, hidden from default view. */
   is_not_relevant: boolean | null
@@ -808,7 +817,7 @@ export async function fetchTiktokCreatorRows(jobId: string): Promise<TiktokCreat
     .select(
       'id, username, profile_url, display_name, bio, bio_link, follower_count, verified, ' +
         'contact_email, telegram_url, discord_url, ' +
-        'is_likely_affiliate, niche_score, is_new_lead_candidate, is_not_relevant, about_scraped_at',
+        'is_likely_affiliate, niche_score, is_known_on_monday, is_new_lead_candidate, is_not_relevant, about_scraped_at',
     )
     .eq('scrape_queue_id', jobId)
   if (error) throw error
@@ -1042,6 +1051,9 @@ export type SnapchatCreatorRow = {
   discord_url: string | null
   is_likely_affiliate: boolean | null
   niche_score: number | null
+  /** True when the creator's bio-link resolves to an S-tag on a
+   *  Monday board. Null before scoring runs. */
+  is_known_on_monday: boolean | null
   is_new_lead_candidate: boolean | null
   /** Phase 3 relevance gate: no affiliate funnel link → hidden from default view. */
   is_not_relevant: boolean | null
@@ -1058,7 +1070,7 @@ export async function fetchSnapchatCreatorRows(jobId: string): Promise<SnapchatC
     .select(
       'id, username, profile_url, display_name, bio, bio_link, subscriber_count, is_snap_star, ' +
         'contact_email, telegram_url, discord_url, ' +
-        'is_likely_affiliate, niche_score, is_new_lead_candidate, is_not_relevant',
+        'is_likely_affiliate, niche_score, is_known_on_monday, is_new_lead_candidate, is_not_relevant',
     )
     .eq('scrape_queue_id', jobId)
   if (error) throw error
@@ -1154,6 +1166,9 @@ export type TelegramChannelRow = {
   discord_url: string | null
   is_likely_affiliate: boolean | null
   niche_score: number | null
+  /** True when the channel's posted / description links resolve to
+   *  an S-tag on a Monday board. Null before scoring runs. */
+  is_known_on_monday: boolean | null
   is_new_lead_candidate: boolean | null
   links: TelegramLinkRow[]
 }
@@ -1168,7 +1183,7 @@ export async function fetchTelegramChannelRows(jobId: string): Promise<TelegramC
     .select(
       'id, username, channel_url, title, description, subscriber_count, ' +
         'contact_email, telegram_url, discord_url, ' +
-        'is_likely_affiliate, niche_score, is_new_lead_candidate',
+        'is_likely_affiliate, niche_score, is_known_on_monday, is_new_lead_candidate',
     )
     .eq('scrape_queue_id', jobId)
   if (error) throw error

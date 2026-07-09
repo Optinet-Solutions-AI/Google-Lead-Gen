@@ -7,9 +7,9 @@ import {
   MessageCircle,
   Send,
   Sparkles,
-  XCircle,
 } from 'lucide-react'
 import type { FbAdvertiserRow } from '../_lib/queries'
+import { MondayStatusCell } from './monday-status-cell'
 
 /**
  * Per-advertiser results table for Facebook Ad Library jobs (Phase 3). New lead
@@ -134,7 +134,10 @@ function FbAdvertiserRowView({ r, n }: { r: FbAdvertiserRow; n: number }) {
       </td>
 
       <td className="px-3 py-2">
-        <MondayCell r={r} />
+        <MondayStatusCell
+          isKnownOnMonday={r.is_known_on_monday}
+          links={r.links}
+        />
       </td>
 
       <td className="px-3 py-2">
@@ -171,58 +174,6 @@ function FbAdvertiserRowView({ r, n }: { r: FbAdvertiserRow; n: number }) {
         </div>
       </td>
     </tr>
-  )
-}
-
-/** Monday recognition badge — three states:
- *   - is_known_on_monday === true  → green ✓ "On Monday" (with matched-links count)
- *   - is_known_on_monday === false → grey ✕ "Not on Monday"
- *   - is_known_on_monday === null  → dash (scoring hasn't run)
- *
- * When on Monday, the subtitle counts how many of the Page's ad links
- * resolved to a Monday item so operators can drill in via the last
- * column's blue chips.
- */
-function MondayCell({ r }: { r: FbAdvertiserRow }) {
-  if (r.is_known_on_monday === null || r.is_known_on_monday === undefined) {
-    return (
-      <span
-        className="cursor-help text-[11px] text-[color:var(--color-text-secondary)]"
-        title="Not scored yet — click “Score & check” to run the Monday match."
-      >
-        —
-      </span>
-    )
-  }
-  const matchedLinks = r.links.filter(l => l.is_known_on_monday === true).length
-  const totalLinks = r.links.length
-  if (r.is_known_on_monday === true) {
-    return (
-      <div className="flex flex-col gap-0.5">
-        <span
-          className="inline-flex w-fit cursor-help items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800"
-          title="This Page is already known on a Monday board — either the Page name / ID matched, or an ad link resolved to an S-tag on Monday. See the ad-links column (blue chips) for which URLs matched."
-        >
-          <CheckCircle2 className="h-3 w-3" /> On Monday
-        </span>
-        {totalLinks > 0 && (
-          <span
-            className="text-[10px] text-[color:var(--color-text-secondary)]"
-            title={`${matchedLinks} of ${totalLinks} ad links matched a Monday item.`}
-          >
-            {matchedLinks}/{totalLinks} links
-          </span>
-        )}
-      </div>
-    )
-  }
-  return (
-    <span
-      className="inline-flex cursor-help items-center gap-1 rounded-full bg-[color:var(--color-bg-secondary)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-text-secondary)]"
-      title="Not on Monday yet — the Page name, its affiliate IDs, and its ad links were all checked against the four Monday boards and none matched."
-    >
-      <XCircle className="h-3 w-3" /> Not on Monday
-    </span>
   )
 }
 

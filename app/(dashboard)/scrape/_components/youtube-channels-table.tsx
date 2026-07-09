@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from 'react'
 import { CheckCircle2, ExternalLink, Eye, Filter, Globe, Mail, MessageCircle, Send, ShieldAlert, Sparkles } from 'lucide-react'
 import type { YoutubeChannelRow } from '../_lib/queries'
+import { MondayStatusCell } from './monday-status-cell'
 
 /**
  * Per-channel results table for YouTube jobs (Phase 3). New-lead candidates
@@ -91,6 +92,12 @@ function YoutubeTable({ rows }: { rows: YoutubeChannelRow[] }) {
               title="Affiliate likelihood + niche score (0–100). “affiliate” = scored ≥30 or carrying a casino affiliate link. A NEW badge means a likely affiliate whose channel isn’t on Monday yet."
             >
               Affiliate
+            </th>
+            <th
+              className="cursor-help px-3 py-2 font-medium"
+              title="Monday recognition. Green ✓ = the channel / affiliate ID / any of its links is already on a Monday board. Grey ✕ = we checked and found no match (worth reviewing for outreach). Blank = scoring hasn’t run yet."
+            >
+              On Monday
             </th>
             <th
               className="cursor-help px-3 py-2 font-medium"
@@ -186,6 +193,13 @@ function YoutubeChannelRowView({ r }: { r: YoutubeChannelRow }) {
             </span>
           )}
         </div>
+      </td>
+
+      <td className="px-3 py-2">
+        <MondayStatusCell
+          isKnownOnMonday={r.is_known_on_monday}
+          links={r.links}
+        />
       </td>
 
       <td className="px-3 py-2">

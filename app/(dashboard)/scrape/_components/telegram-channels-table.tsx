@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { CheckCircle2, ExternalLink, Mail, MessageCircle, Send, Sparkles } from 'lucide-react'
 import type { TelegramChannelRow } from '../_lib/queries'
+import { MondayStatusCell } from './monday-status-cell'
 
 /**
  * Per-channel results table for Telegram jobs (Phase 3). New lead candidates
@@ -24,6 +25,12 @@ export function TelegramChannelsTable({ rows }: { rows: TelegramChannelRow[] }) 
               title="Affiliate likelihood + niche score (0–100). “affiliate” = scored ≥30 (or posts a casino link directly). NEW = a likely affiliate whose affiliate ID / @handle isn’t on Monday yet. Hover a badge for the breakdown."
             >
               Affiliate
+            </th>
+            <th
+              className="cursor-help px-3 py-2 font-medium"
+              title="Monday recognition. Green ✓ = the channel / affiliate ID / any of its posted links is already on a Monday board. Grey ✕ = we checked and found no match. Blank = scoring hasn’t run yet."
+            >
+              On Monday
             </th>
             <th
               className="cursor-help px-3 py-2 font-medium"
@@ -98,6 +105,13 @@ function TelegramChannelRowView({ r }: { r: TelegramChannelRow }) {
             )}
           </div>
         )}
+      </td>
+
+      <td className="px-3 py-2">
+        <MondayStatusCell
+          isKnownOnMonday={r.is_known_on_monday}
+          links={r.links}
+        />
       </td>
 
       <td className="px-3 py-2">

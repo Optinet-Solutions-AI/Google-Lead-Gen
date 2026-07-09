@@ -1,5 +1,6 @@
 import { CheckCircle2, Circle, ExternalLink, Mail, MessageCircle, MonitorPlay, Send, Sparkles } from 'lucide-react'
 import type { TwitchStreamerRow } from '../_lib/queries'
+import { MondayStatusCell } from './monday-status-cell'
 
 /**
  * Per-streamer results table for Twitch jobs (Phase 3). New lead candidates
@@ -26,6 +27,12 @@ export function TwitchStreamersTable({ rows }: { rows: TwitchStreamerRow[] }) {
               title="Affiliate likelihood + niche score (0–100). “affiliate” = scored ≥30 (or links a casino directly in an About-panel). NEW = a likely affiliate whose affiliate ID / @login isn’t on Monday yet. Hover a badge for the breakdown."
             >
               Affiliate
+            </th>
+            <th
+              className="cursor-help px-3 py-2 font-medium"
+              title="Monday recognition. Green ✓ = the streamer / affiliate ID / any of their About-panel links is already on a Monday board. Grey ✕ = we checked and found no match. Blank = scoring hasn’t run yet."
+            >
+              On Monday
             </th>
             <th className="px-3 py-2 font-medium">Game / language</th>
             <th className="px-3 py-2 font-medium">Contact</th>
@@ -118,6 +125,13 @@ function TwitchStreamerRowView({ r }: { r: TwitchStreamerRow }) {
             )}
           </div>
         )}
+      </td>
+
+      <td className="px-3 py-2">
+        <MondayStatusCell
+          isKnownOnMonday={r.is_known_on_monday}
+          links={r.links}
+        />
       </td>
 
       <td className="px-3 py-2 text-[11px] text-[color:var(--color-text-secondary)]">

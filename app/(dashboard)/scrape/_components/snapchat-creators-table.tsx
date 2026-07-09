@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from 'react'
 import { BadgeCheck, CheckCircle2, Eye, ExternalLink, Filter, Mail, MessageCircle, Send, Sparkles } from 'lucide-react'
 import type { SnapchatCreatorRow } from '../_lib/queries'
+import { MondayStatusCell } from './monday-status-cell'
 
 /**
  * Per-creator results table for Snapchat jobs (Phase 3). New lead candidates
@@ -95,6 +96,12 @@ function SnapchatTable({ rows }: { rows: SnapchatCreatorRow[] }) {
             </th>
             <th
               className="cursor-help px-3 py-2 font-medium"
+              title="Monday recognition. Green ✓ = the creator / bio-link is already on a Monday board. Grey ✕ = we checked and found no match. Blank = scoring hasn’t run yet."
+            >
+              On Monday
+            </th>
+            <th
+              className="cursor-help px-3 py-2 font-medium"
               title="Outreach contacts mined from the bio — priority email › Telegram › Discord. Run “Score & check” to populate."
             >
               Contact
@@ -166,6 +173,13 @@ function SnapchatCreatorRowView({ r }: { r: SnapchatCreatorRow }) {
             )}
           </div>
         )}
+      </td>
+
+      <td className="px-3 py-2">
+        <MondayStatusCell
+          isKnownOnMonday={r.is_known_on_monday}
+          links={r.links}
+        />
       </td>
 
       <td className="px-3 py-2">
