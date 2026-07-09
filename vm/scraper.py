@@ -2696,9 +2696,10 @@ def scrape_google_search(
 BING_COUNTRY_TO_CC = {
     "Australia": "AU", "Austria": "AT", "Bahrain": "BH",
     "Canada": "CA", "Denmark": "DK", "Germany": "DE",
-    "Italy": "IT", "Kuwait": "KW", "New Zealand": "NZ",
-    "Norway": "NO", "Oman": "OM", "Qatar": "QA",
-    "Saudi Arabia": "SA", "UAE": "AE", "UK": "GB",
+    "Ireland": "IE", "Italy": "IT", "Kuwait": "KW",
+    "New Zealand": "NZ", "Norway": "NO", "Oman": "OM",
+    "Qatar": "QA", "Saudi Arabia": "SA", "Slovenia": "SI",
+    "Switzerland": "CH", "UAE": "AE", "UK": "GB",
 }
 
 

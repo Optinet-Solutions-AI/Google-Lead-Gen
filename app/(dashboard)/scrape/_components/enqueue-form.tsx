@@ -30,6 +30,7 @@ const LANG_NAMES: Record<string, string> = {
   fr: 'French',
   da: 'Danish',
   no: 'Norwegian',
+  sl: 'Slovenian',
 }
 
 function langOptions(profile: Profile | null): string[] {
