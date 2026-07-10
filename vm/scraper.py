@@ -2787,12 +2787,18 @@ def _decode_bing_ck_url(href):
 
 
 def _bing_serp_state(driver):
-    """Classify the current Bing page as 'captcha', 'results', or ''.
+    """Classify the current Bing page as 'captcha', 'results', 'empty', or ''.
 
     - 'captcha': Cloudflare Turnstile challenge is up. No amount of
       waiting will produce results on the current proxy/fingerprint.
     - 'results': result containers (b_algo / data-bm) have hydrated.
-    - '': neither yet — keep waiting.
+    - 'empty': Bing's genuine "There are no results for …" page (li.b_no).
+      A real, terminal empty query — respect it and complete with 0.
+    - '': none of the above yet — keep waiting. If this persists past the
+      wait deadline with no results it means a DEGRADED / SOFT-BLOCKED SERP
+      (proxy-reputation block that never renders the Turnstile), which the
+      caller treats as a soft-block and retries rather than recording a
+      misleading "completed, 0 results".
     """
     try:
         return driver.execute_script("""
@@ -2815,6 +2821,13 @@ def _bing_serp_state(driver):
                 || src.indexOf('challenge/verify') !== -1
                 || src.indexOf('captcha_text') !== -1) {
               return 'captcha';
+            }
+            // Genuine no-results page — Bing renders <li class="b_no">
+            // "There are no results for …". Distinct from a soft block:
+            // this is a real, terminal empty query, so we stop waiting and
+            // let the job complete with 0 rather than retrying forever.
+            if (document.querySelector('li.b_no, .b_no') !== null) {
+              return 'empty';
             }
             return '';
         """) or ''
@@ -2931,6 +2944,11 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
             captcha_detected = True
             break
         if state == 'results':
+            break
+        if state == 'empty':
+            # Genuine "no results for …" page — terminal, don't keep
+            # waiting. Falls through to parse (0 results) and completes.
+            print("[INFO] Bing genuine no-results page (b_no) detected")
             break
         if not scrolled and time.time() > deadline - 20:
             try:
@@ -3158,6 +3176,30 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
         f"{sum(r['resultType']=='PPC' for r in results)} PPC | "
         f"{sum(r['resultType']=='Organic' for r in results)} Organic"
     )
+
+    # Soft-block detection. A degraded / flagged Bing SERP comes back with
+    # NO result containers, NO Cloudflare Turnstile (so the captcha gates
+    # above never fired), and NO genuine "no results" (b_no) marker — the
+    # page just never hydrates real results. Google returns 20+ results for
+    # the same gambling query, so a silent 0 here is a proxy-reputation
+    # block, not an empty query. On page 0 (nothing collected yet) signal it
+    # as a captcha-class block so the worker auto-retries on a fresh
+    # proxy/fingerprint, instead of recording a misleading "completed, 0
+    # results". A genuine no-results page (state 'empty') is respected and
+    # completes with 0; a 'results' state with 0 parsed rows is a parser
+    # miss, not a block, so we don't retry that either.
+    if page == 0 and not results and _bing_serp_state(driver) == '':
+        print(
+            "[WARN] Bing page 0 returned 0 results with no b_algo, no "
+            "Turnstile, and no b_no 'no results' marker — degraded/flagged "
+            "SERP. Signalling soft-block so the worker retries on a fresh "
+            "proxy/fingerprint."
+        )
+        raise CaptchaDetectedException(
+            "Bing degraded SERP (0 results, no captcha, no b_no) — "
+            "proxy/fingerprint flagged for this query class"
+        )
+
     return results
 
 
