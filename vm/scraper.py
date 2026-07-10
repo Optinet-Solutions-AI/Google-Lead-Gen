@@ -705,6 +705,35 @@ def _upload_checkpoint_screenshot(driver, job_id: str) -> str | None:
         return None
 
 
+def record_x_session_expired(*, worker_id: str | None = None, job_id: str | None = None,
+                             keyword: str | None = None, detail: str | None = None) -> None:
+    """Signal that X's injected clean-IP session (X_AUTH_TOKEN / X_CT0) is dead.
+
+    Writes an `x_session.expired` row to activity_log so the Vercel health-check
+    cron (/api/x-session/health-check) can WhatsApp-alert the operator to refresh
+    the cookies — instead of X scrapes silently failing / returning 0 results.
+    Best-effort: never raises (an alerting hiccup must not change job outcome)."""
+    try:
+        _supabase_request("POST", "/rest/v1/activity_log", json_body={
+            "user_id": None,
+            "user_email": None,
+            "user_is_shadow": False,
+            "action": "x_session.expired",
+            "entity_type": "x_session",
+            "entity_id": job_id,
+            "details": {
+                "worker_id": worker_id,
+                "job_id": job_id,
+                "keyword": keyword,
+                "detail": detail,
+            },
+        })
+        print("[ALERT] recorded x_session.expired — operator refresh alert will fire",
+              file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] could not record x_session.expired signal: {exc}", file=sys.stderr)
+
+
 def request_interactive_checkpoint(
     driver,
     *,

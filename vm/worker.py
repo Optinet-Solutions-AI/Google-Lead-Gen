@@ -333,6 +333,16 @@ def fail_job(job_id: str, error: str) -> None:
 # because most of the recognisable signatures (BadZipFile, WebDriver
 # crashes, proxy errors) show up in either path.
 _FAILURE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # ---- X (x.com) injected-session expiry — actionable, not auto-recoverable ----
+    # X blocks logins from our proxy IP, so X scrapes ride a clean-IP session
+    # (X_AUTH_TOKEN/X_CT0). When that session expires this is the ONE thing an
+    # operator must act on: refresh the cookies. Surface it plainly instead of
+    # the generic "no specific cause" fallback.
+    (re.compile(r"X_SESSION_EXPIRED", re.I),
+     "X login session expired — an operator needs to refresh the X session "
+     "cookies (X_AUTH_TOKEN / X_CT0) from a clean-IP login. X scraping is "
+     "paused until then; other engines are unaffected."),
+
     # ---- GoLogin profile transient (already auto-retried by scraper) ----
     (re.compile(r"BadZipFile|bad zip file", re.I),
      "GoLogin profile download glitched — auto-retry usually fixes this."),

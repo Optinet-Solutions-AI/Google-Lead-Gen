@@ -99,14 +99,65 @@ def _is_logged_in_to_x(driver) -> bool:
         return False
 
 
+def _inject_x_session_cookies(driver) -> bool:
+    """Bypass X's proxy-flagged login wall with a session captured on a CLEAN IP.
+
+    Root cause (2026-07-10): X rate-limits *logins* that originate from our
+    shared residential proxy IP — "We've temporarily limited your login" —
+    regardless of the account (proven: the same account signs in fine from a
+    clean connection, and fails every time through the proxy). But X does NOT
+    block *reusing* an already-authenticated session from that IP.
+
+    So the operator signs in once from a clean connection, copies the
+    `auth_token` (+ `ct0`) cookies out of the browser, and sets them on the VM
+    env as X_AUTH_TOKEN / X_CT0. We drop them onto x.com here so the scrape
+    rides that existing session instead of ever hitting the login form.
+
+    Returns True only when the injected cookies produce a signed-in session.
+    No-op (returns False) when X_AUTH_TOKEN isn't set, so the caller falls
+    through to the normal auto-login / checkpoint path.
+    """
+    auth = os.environ.get("X_AUTH_TOKEN", "").strip()
+    ct0 = os.environ.get("X_CT0", "").strip()
+    if not auth:
+        return False
+    print("[INFO] x login: injecting clean-IP session cookies (X_AUTH_TOKEN set)",
+          file=sys.stderr)
+    try:
+        # add_cookie requires the driver to already be on the cookie's domain.
+        driver.get(f"{X_BASE}/")
+        time.sleep(2)
+        cookies = [{"name": "auth_token", "value": auth, "domain": ".x.com",
+                    "path": "/", "secure": True, "httpOnly": True}]
+        if ct0:
+            cookies.append({"name": "ct0", "value": ct0, "domain": ".x.com",
+                            "path": "/", "secure": True})
+        for c in cookies:
+            try:
+                driver.add_cookie(c)  # same-name cookie is overwritten
+            except Exception as exc:  # noqa: BLE001
+                print(f"[WARN] x login: add_cookie {c['name']} failed: {exc}",
+                      file=sys.stderr)
+        driver.get(f"{X_BASE}/home")
+        time.sleep(3)
+        ok = _is_logged_in_to_x(driver)
+        print(f"[INFO] x login: injected-cookie session logged_in={ok}", file=sys.stderr)
+        return ok
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] x login: cookie injection failed: {exc}", file=sys.stderr)
+        return False
+
+
 def ensure_logged_in(driver, scraper_mod, *, interactive: bool, job_id: str | None,
                      worker_id: str | None, worker_port: int) -> bool:
     """Make sure the session is signed into X. Tries, in order: (1) the
-    existing GoLogin session, (2) auto-login from the X_LOGIN_USERNAME /
-    X_LOGIN_PASSWORD env credentials (handing any Arkose login captcha to
-    2Captcha — same path the other engines use), (3) the noVNC checkpoint as a
-    last resort (disabled in this deployment, so it usually just times out).
-    Returns True when logged in."""
+    existing GoLogin session, (1.5) an injected clean-IP session from
+    X_AUTH_TOKEN / X_CT0 (the primary path while X rate-limits logins from our
+    proxy IP — see _inject_x_session_cookies), (2) auto-login from the
+    X_LOGIN_USERNAME / X_LOGIN_PASSWORD env credentials (handing any Arkose
+    login captcha to 2Captcha — same path the other engines use), (3) the
+    noVNC checkpoint as a last resort (disabled in this deployment, so it
+    usually just times out). Returns True when logged in."""
     try:
         driver.get(f"{X_BASE}/home")
     except Exception as exc:  # noqa: BLE001
@@ -114,6 +165,13 @@ def ensure_logged_in(driver, scraper_mod, *, interactive: bool, job_id: str | No
     time.sleep(3)
 
     if _is_logged_in_to_x(driver):
+        return True
+
+    # (1.5) Injected clean-IP session — the primary path while X rate-limits
+    # logins from our proxy IP. Ride cookies captured on a clean connection
+    # (X_AUTH_TOKEN / X_CT0) instead of ever touching the login form.
+    if _inject_x_session_cookies(driver):
+        print("[INFO] x login: authenticated via injected clean-IP session")
         return True
 
     print("[INFO] X session is logged OUT — attempting auto-login", file=sys.stderr)
@@ -395,8 +453,21 @@ def run(args, scraper_mod) -> int:
             print("[RESULT] FAILED")
             return 1
         if not logged_in:
-            print("[ERROR] X session is not logged in — cannot search behind the login wall",
-                  file=sys.stderr)
+            if os.environ.get("X_AUTH_TOKEN", "").strip():
+                # A session WAS injected but no longer authenticates → the
+                # clean-IP cookies expired/were revoked. Fail loud + distinct
+                # (classify_failure maps X_SESSION_EXPIRED to a clear message)
+                # and record the signal so the operator gets a refresh alert
+                # instead of X silently "completing" 0 results.
+                print("[ERROR] X_SESSION_EXPIRED: the injected clean-IP session "
+                      "(X_AUTH_TOKEN / X_CT0) is no longer valid. Refresh it from a "
+                      "clean-IP login and re-set the VM env.", file=sys.stderr)
+                scraper_mod.record_x_session_expired(
+                    worker_id=args.worker_id, job_id=args.job_id,
+                    keyword=keyword, detail="x_search phase 1")
+            else:
+                print("[ERROR] X session is not logged in — cannot search behind the login wall",
+                      file=sys.stderr)
             print("[RESULT] FAILED")
             return 2
 
