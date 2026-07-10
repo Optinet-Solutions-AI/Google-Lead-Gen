@@ -6,13 +6,10 @@ import 'server-only'
  *
  * ACTIVE SOURCE: Enigma (resi.enigmaproxy.net). The GoLogin profiles
  * route through Enigma residential proxies on a metered plan that Chris
- * tops up (the "15 GB"). Enigma has no usable API (its public API is
- * reseller-gated) and its login is Cloudflare-Turnstile-protected, so we
- * read the balance by fetching the logged-in dashboard with a copied
- * `__session` cookie (ENIGMA_COOKIE) and scraping the remaining-GB value.
- * See fetchEnigmaBandwidth below. The cookie is a "session" cookie and
- * will eventually expire — when it does the poll fails and the dashboard
- * card goes stale until a fresh cookie is pasted into the env.
+ * tops up (the "15 GB"). We read the balance from Enigma's Customer API
+ * (bearer `epk_…` key in ENIGMA_API_KEY) — see fetchEnigmaBandwidth below.
+ * This replaced an earlier cookie-scraping approach that broke when Enigma
+ * moved to a Cloudflare-fronted SPA with IP-bound sessions.
  *
  * SECONDARY SOURCE: GoLogin's own datacenter traffic API
  * (fetchGoLoginTraffic). This tracks a *different*, barely-used proxy
@@ -181,105 +178,130 @@ export async function fetchGoLoginTraffic(): Promise<ProxyTraffic> {
 }
 
 // ---------------------------------------------------------------------------
-// Enigma (active source) — scrape remaining GB from the logged-in dashboard.
+// Enigma (active source) — read remaining GB from the Customer API.
 // ---------------------------------------------------------------------------
+//
+// History: this used to scrape the logged-in dashboard HTML with a copied
+// `__session` cookie. That broke for good when Enigma migrated to a
+// Cloudflare-fronted Remix SPA whose session is IP-bound — a cookie copied
+// from a browser could not be replayed from Vercel's rotating IPs, so the
+// poller silently wrote no real snapshot for weeks (PMS: "auto-poller dead").
+//
+// Enigma has since shipped a proper **Customer API** (enable it under
+// Dashboard → Customer API to mint an `epk_…` key). It is a plain
+// bearer-authenticated JSON API with no cookie, no Cloudflare challenge and
+// no IP binding, so it works from anywhere including serverless. It is
+// undocumented publicly (the docs subdomain is stock Mintlify boilerplate);
+// the endpoints below were confirmed live against the account:
+//
+//   GET /api/customer/packages
+//        → [{ id, product, username, created_at, ... }]     (one per plan)
+//   GET /api/customer/packages/{id}
+//        → { packageId, product, usedBandwidth, remainingBandwidth, ... }
+//          usedBandwidth / remainingBandwidth are in **GB** (floats).
+//
+// We list the packages, fetch each one's usage, and sum remaining GB across
+// active packages into a single pool figure — mirroring the old "sum every
+// active plan" behaviour. We report remaining only (used/limit left null) so
+// the poller keeps pairing it with the admin-configured plan size exactly as
+// before; only the *source* of `remaining` changed.
 
-const ENIGMA_DASHBOARD_URL = 'https://enigmaproxy.net/dashboard'
-const BROWSER_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+const ENIGMA_API_BASE = 'https://enigmaproxy.net'
 
-/**
- * Pull the remaining-GB total out of the Enigma dashboard HTML.
- *
- * The dashboard renders an "Active plans" panel containing one card per
- * active plan (Residential, Mobile, etc.), each showing its remaining
- * data as e.g. `11.67 GB`. We anchor on the panel heading text and sum
- * every "N GB" inside that scope so multiple active plans collapse into
- * one pool figure.
- *
- * History: the original parser required a literal `<!-- -->` between
- * the number and "GB" (React text-node separator). When that markup
- * shape changed the parser silently started matching unrelated "0 GB"
- * elements elsewhere on the page (a depleted-plan card or a "0 days"
- * counter), writing remaining=0 snapshots forever. Scoping to the
- * "Active plans" panel + dropping the comment requirement avoids both
- * failure modes.
- *
- * Returns null when the heading anchor can't be found (layout change or
- * a logged-out shell) so the poller skips writing a bogus snapshot.
- */
-const ENIGMA_ACTIVE_PLANS_RE = /Active\s+plans?/i
-// Number, optional whitespace + arbitrary HTML tags/comments, then "GB"
-// as a word. Accepts every Enigma markup variant seen so far:
-//   `11.67<!-- --> GB`   (old React separator)
-//   `11.67 GB`           (current)
-//   `11.67<span>GB</span>` (hypothetical future)
-const GB_VALUE_RE = /(\d+(?:\.\d+)?)\s*(?:<!--[\s\S]*?-->|<[^>]*>|\s)*GB\b/gi
-// Slice cap: an "Active plans" panel with a handful of cards is well
-// under 8 KB of HTML. Larger windows risk leaking into the next panel
-// (Billing / Buy more / etc.) where unrelated GB values appear.
-const ENIGMA_PANEL_WINDOW = 8_000
-
-export function parseEnigmaRemainingGb(html: string): number | null {
-  const anchor = html.search(ENIGMA_ACTIVE_PLANS_RE)
-  if (anchor === -1) return null
-  const panel = html.slice(anchor, anchor + ENIGMA_PANEL_WINDOW)
-  const matches = [...panel.matchAll(GB_VALUE_RE)]
-    .map(m => parseFloat(m[1] ?? ''))
-    .filter(n => Number.isFinite(n))
-  if (matches.length === 0) return null
-  return matches.reduce((a, b) => a + b, 0)
+type EnigmaPackage = { id?: string; product?: string; inactive?: unknown }
+type EnigmaPackageUsage = {
+  packageId?: string
+  product?: string
+  usedBandwidth?: number
+  remainingBandwidth?: number
+  inactive?: unknown
 }
 
-/**
- * Fetch the Enigma dashboard with the copied session cookie and return
- * remaining bandwidth. Throws (so the poller reports it and skips writing
- * a bogus snapshot) when the cookie is missing/expired or the page shape
- * changed.
- */
-export async function fetchEnigmaBandwidth(): Promise<ProxyTraffic> {
-  const cookie = process.env.ENIGMA_COOKIE
-  if (!cookie) {
-    throw new Error(
-      'ENIGMA_COOKIE is not set — copy the __session cookie from the Enigma dashboard into the env.',
-    )
-  }
-
+async function enigmaApiGet<T>(path: string, key: string): Promise<T> {
   let res: Response
   try {
-    res = await fetch(ENIGMA_DASHBOARD_URL, {
-      headers: {
-        Cookie: `__session=${cookie}`,
-        'User-Agent': BROWSER_UA,
-        Accept: 'text/html',
-      },
-      redirect: 'manual', // a redirect to /login means the session died
+    res = await fetch(`${ENIGMA_API_BASE}${path}`, {
+      headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+      // Don't let a hung Enigma call stall the whole cron tick.
       signal: AbortSignal.timeout(15_000),
     })
   } catch (err) {
-    throw new Error(`Enigma dashboard unreachable: ${err instanceof Error ? err.message : String(err)}`)
+    throw new Error(`Enigma API unreachable (${path}): ${err instanceof Error ? err.message : String(err)}`)
   }
-
-  if (res.status >= 300 && res.status < 400) {
-    throw new Error('Enigma session expired (redirected to login) — paste a fresh ENIGMA_COOKIE.')
-  }
-  if (!res.ok) {
-    throw new Error(`Enigma dashboard returned ${res.status} (Cloudflare block or session issue).`)
-  }
-
-  const html = await res.text()
-  const remainingGb = parseEnigmaRemainingGb(html)
-  if (remainingGb === null) {
+  if (res.status === 401 || res.status === 403) {
     throw new Error(
-      'Could not find a remaining-GB value on the Enigma dashboard — the session may be invalid or the page layout changed.',
+      `Enigma API rejected the key (${res.status}) on ${path} — ENIGMA_API_KEY is missing scope, ` +
+        'revoked or wrong. Re-mint it under Dashboard → Customer API.',
+    )
+  }
+  const text = await res.text()
+  if (!res.ok) {
+    throw new Error(`Enigma API ${path} returned ${res.status}: ${text.slice(0, 200)}`)
+  }
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    // A JSON endpoint that hands back HTML means the route resolved to the
+    // SPA shell (wrong path / auth silently dropped), not real data.
+    throw new Error(`Enigma API ${path} returned non-JSON (got ${text.slice(0, 80)}…).`)
+  }
+}
+
+/**
+ * Read remaining proxy bandwidth from the Enigma Customer API. Throws (so
+ * the poller reports it and skips writing a bogus snapshot) when the key is
+ * missing/invalid or the API shape changed.
+ */
+export async function fetchEnigmaBandwidth(): Promise<ProxyTraffic> {
+  const key = process.env.ENIGMA_API_KEY
+  if (!key) {
+    throw new Error(
+      'ENIGMA_API_KEY is not set — mint an epk_ key under the Enigma dashboard (Customer API) and add it to the env.',
+    )
+  }
+
+  const packages = await enigmaApiGet<EnigmaPackage[]>('/api/customer/packages', key)
+  if (!Array.isArray(packages)) {
+    throw new Error('Enigma API /api/customer/packages did not return a list.')
+  }
+
+  const active = packages.filter(p => p && typeof p.id === 'string' && !p.inactive)
+  if (active.length === 0) {
+    throw new Error('Enigma API returned no active packages — nothing to measure.')
+  }
+
+  const usages = await Promise.all(
+    active.map(p => enigmaApiGet<EnigmaPackageUsage>(`/api/customer/packages/${p.id}`, key)),
+  )
+
+  let remainingGb = 0
+  let usedGb = 0
+  let matched = false
+  const perPackage: Array<{ id: string; remainingGb: number; usedGb: number }> = []
+  for (const u of usages) {
+    const rem = u?.remainingBandwidth
+    const used = u?.usedBandwidth
+    if (typeof rem !== 'number' || !Number.isFinite(rem)) continue
+    matched = true
+    remainingGb += rem
+    if (typeof used === 'number' && Number.isFinite(used)) usedGb += used
+    perPackage.push({ id: u?.packageId ?? '', remainingGb: rem, usedGb: typeof used === 'number' ? used : 0 })
+  }
+  if (!matched) {
+    throw new Error(
+      'Enigma API returned packages but no numeric remainingBandwidth — the API shape may have changed.',
     )
   }
 
   return {
+    // The API reports lifetime-cumulative usage, not usage against the
+    // current top-up bucket, so we leave used/limit null and let the poller
+    // pair remaining with the admin-configured plan size (unchanged card
+    // semantics). remainingBandwidth is the number that actually matters.
     usedBytes: null,
-    limitBytes: null, // Enigma's dashboard shows remaining only, not the original plan size
+    limitBytes: null,
     remainingBytes: Math.round(remainingGb * BYTES_PER_GB),
-    raw: { source: 'enigma', remainingGb },
+    raw: { source: 'enigma-api', remainingGb, usedGb, packages: perPackage },
   }
 }
 

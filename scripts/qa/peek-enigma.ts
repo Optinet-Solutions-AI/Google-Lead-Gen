@@ -1,9 +1,8 @@
 /**
- * One-shot probe: fetch the Enigma dashboard with our session cookie,
- * print every "N GB"-shaped match the parser would see, and show what
- * fetchEnigmaBandwidth would return — then print the last 5 snapshots
- * in proxy_bandwidth_snapshots so we can compare what's STORED vs what
- * Enigma is reporting RIGHT NOW.
+ * One-shot probe: hit the Enigma Customer API with ENIGMA_API_KEY, print
+ * every package's used/remaining bandwidth and the summed remaining GB the
+ * poller would record — then print the last 5 snapshots in
+ * proxy_bandwidth_snapshots so we can compare STORED vs LIVE.
  *
  * Run locally:
  *   npx tsx scripts/qa/peek-enigma.ts
@@ -14,10 +13,18 @@ import { createClient } from '@supabase/supabase-js'
 
 loadEnv({ path: join(process.cwd(), '.env.local') })
 
-const ENIGMA_DASHBOARD_URL = 'https://enigmaproxy.net/dashboard'
-const BROWSER_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+const ENIGMA_API_BASE = 'https://enigmaproxy.net'
 const BYTES_PER_GB = 1024 ** 3
+
+async function enigmaGet<T>(path: string, key: string): Promise<T> {
+  const res = await fetch(`${ENIGMA_API_BASE}${path}`, {
+    headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+    signal: AbortSignal.timeout(15_000),
+  })
+  const text = await res.text()
+  if (!res.ok) throw new Error(`GET ${path} → HTTP ${res.status}: ${text.slice(0, 200)}`)
+  return JSON.parse(text) as T
+}
 
 async function main() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -52,49 +59,33 @@ async function main() {
     )
   }
 
-  console.log('\n===== Live Enigma fetch =====')
-  const cookie = process.env.ENIGMA_COOKIE
-  if (!cookie) {
-    console.error('ENIGMA_COOKIE not set in .env.local')
+  console.log('\n===== Live Enigma Customer API =====')
+  const key = process.env.ENIGMA_API_KEY
+  if (!key) {
+    console.error('ENIGMA_API_KEY not set in .env.local')
     process.exit(1)
   }
-  const res = await fetch(ENIGMA_DASHBOARD_URL, {
-    headers: { Cookie: `__session=${cookie}`, 'User-Agent': BROWSER_UA, Accept: 'text/html' },
-    redirect: 'manual',
-  })
-  console.log('status:', res.status, res.statusText)
-  if (res.status >= 300 && res.status < 400) {
-    console.log('redirected to:', res.headers.get('location'))
-    process.exit(1)
-  }
-  const html = await res.text()
-  console.log('html length:', html.length)
 
-  const PARSER_RE = /(\d+(?:\.\d+)?)\s*<!--\s*-->\s*GB/gi
-  const parserMatches = [...html.matchAll(PARSER_RE)].map(m => parseFloat(m[1] ?? ''))
-  console.log('\nCurrent parser matches:', parserMatches)
-  console.log('Sum:', parserMatches.reduce((a, b) => a + b, 0), 'GB')
+  type Pkg = { id?: string; product?: string; inactive?: unknown }
+  type Usage = { packageId?: string; product?: string; usedBandwidth?: number; remainingBandwidth?: number }
 
-  const ALL_GB = /([\s\S]{0,80})(\d+(?:\.\d+)?)\s*(?:<[^>]*>\s*)*GB/gi
-  console.log('\nAll "N GB" hits (with 80 chars left-context):')
-  let i = 0
-  for (const m of html.matchAll(ALL_GB)) {
-    i += 1
-    if (i > 30) {
-      console.log('  ... (truncated to 30)')
-      break
-    }
-    const ctx = (m[1] ?? '').replace(/\s+/g, ' ').slice(-60)
-    console.log(`  [${i}] ...${ctx}>> ${m[2]} GB`)
+  const packages = await enigmaGet<Pkg[]>('/api/customer/packages', key)
+  console.log(`packages: ${packages.length}`)
+
+  let totalRemaining = 0
+  for (const p of packages) {
+    if (!p.id) continue
+    const u = await enigmaGet<Usage>(`/api/customer/packages/${p.id}`, key)
+    const rem = typeof u.remainingBandwidth === 'number' ? u.remainingBandwidth : NaN
+    console.log(
+      `  ${p.id} [${u.product ?? p.product ?? '?'}]${p.inactive ? ' (inactive)' : ''}  ` +
+        `used=${u.usedBandwidth ?? '?'} GB · remaining=${u.remainingBandwidth ?? '?'} GB`,
+    )
+    if (!p.inactive && Number.isFinite(rem)) totalRemaining += rem
   }
 
-  const firstGb = html.search(/\bGB\b/i)
-  if (firstGb >= 0) {
-    const start = Math.max(0, firstGb - 200)
-    const end = Math.min(html.length, firstGb + 80)
-    console.log('\nMarkup chunk around first GB (raw):')
-    console.log(html.slice(start, end))
-  }
+  console.log(`\nSummed remaining (active packages): ${totalRemaining.toFixed(2)} GB`)
+  console.log(`→ poller would record remaining_bytes = ${Math.round(totalRemaining * BYTES_PER_GB)}`)
 }
 
 main().catch(err => {

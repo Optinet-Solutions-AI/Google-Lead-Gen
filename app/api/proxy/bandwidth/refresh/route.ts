@@ -15,11 +15,11 @@ export async function GET(request: NextRequest) {
  * reusable as a manual POST. Secured by the shared CRON_SECRET bearer
  * token, same as /api/scheduler/tick.
  *
- * Enigma reports remaining only (scraped from the logged-in dashboard via
- * the ENIGMA_COOKIE session). We pair that with the admin-configured plan
+ * Enigma reports remaining only (via its Customer API, authed by the
+ * ENIGMA_API_KEY bearer key). We pair that with the admin-configured plan
  * size (system_settings.proxy_bandwidth_limit_bytes) to derive used and
- * the progress bar. If the cookie expires the fetch throws, no snapshot is
- * written, and the dashboard card goes stale until a fresh cookie lands.
+ * the progress bar. If the key is missing/invalid the fetch throws, no
+ * snapshot is written, and the dashboard card goes stale until it's fixed.
  *
  * On the not-low → low transition we drop a row into activity_log so the
  * dashboard's Recent activity surfaces the warning (email dispatch isn't

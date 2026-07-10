@@ -201,7 +201,7 @@ function ProxyBandwidthCard({ bw }: { bw: ProxyBandwidth | null }) {
 
       {!bw ? (
         <p className="py-3 text-[12px] text-[color:var(--color-text-secondary)]">
-          Not measured yet — usage is read from GoLogin every 30 minutes.
+          Not measured yet — usage is read from Enigma every 5 minutes.
           The first reading will appear shortly after deploy.
         </p>
       ) : (
