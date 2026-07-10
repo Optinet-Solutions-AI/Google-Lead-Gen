@@ -3177,27 +3177,34 @@ def get_bing_results(driver, keyword, country, page=0, language="en"):
         f"{sum(r['resultType']=='Organic' for r in results)} Organic"
     )
 
-    # Soft-block detection. A degraded / flagged Bing SERP comes back with
-    # NO result containers, NO Cloudflare Turnstile (so the captcha gates
-    # above never fired), and NO genuine "no results" (b_no) marker — the
-    # page just never hydrates real results. Google returns 20+ results for
-    # the same gambling query, so a silent 0 here is a proxy-reputation
-    # block, not an empty query. On page 0 (nothing collected yet) signal it
-    # as a captcha-class block so the worker auto-retries on a fresh
-    # proxy/fingerprint, instead of recording a misleading "completed, 0
-    # results". A genuine no-results page (state 'empty') is respected and
-    # completes with 0; a 'results' state with 0 parsed rows is a parser
-    # miss, not a block, so we don't retry that either.
-    if page == 0 and not results and _bing_serp_state(driver) == '':
+    # Soft-block detection (page 0). A flagged/degraded Bing SERP for a
+    # gambling-class query comes back as a FULL-SIZE page (search box,
+    # image-search UI, ad-config JSON, and hidden captcha/Turnstile marker
+    # strings) but with ZERO real organic result anchors — Bing withholds
+    # results without ever rendering a Turnstile challenge or a genuine
+    # "no results" page. _bing_serp_state reports 'results' on it because
+    # div[data-bm] matches Bing's UI chrome, not real result cards, so we
+    # can't gate on the DOM state — the reliable signal is the PARSER's own
+    # yield: the only external links on such a page are r.bing.com /
+    # th.bing.com internals, which we filter, so we extract 0. Google
+    # returns 20+ results for the identical keyword, so 0 real results on
+    # page 0 is a proxy-reputation block, not an empty query (Darren's
+    # 2026-07-10 AU report). Signal it as a captcha-class block so the
+    # worker auto-retries on a fresh proxy/fingerprint (bounded by
+    # max_attempts) instead of recording a misleading "completed, 0
+    # results".
+    #
+    # The one legitimate 0 is Bing's real "There are no results for …" page
+    # (li.b_no → state 'empty'); respect that and complete with 0.
+    if page == 0 and not results and _bing_serp_state(driver) != 'empty':
         print(
-            "[WARN] Bing page 0 returned 0 results with no b_algo, no "
-            "Turnstile, and no b_no 'no results' marker — degraded/flagged "
-            "SERP. Signalling soft-block so the worker retries on a fresh "
-            "proxy/fingerprint."
+            "[WARN] Bing page 0: 0 real organic results and no b_no "
+            "no-results marker — degraded/flagged SERP. Signalling "
+            "soft-block so the worker retries on a fresh proxy/fingerprint."
         )
         raise CaptchaDetectedException(
-            "Bing degraded SERP (0 results, no captcha, no b_no) — "
-            "proxy/fingerprint flagged for this query class"
+            "Bing degraded SERP (0 real results, no b_no no-results marker) "
+            "— proxy/fingerprint flagged for this query class"
         )
 
     return results
