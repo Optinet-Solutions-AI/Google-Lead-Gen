@@ -1468,11 +1468,13 @@ export async function runYoutubeChannelAnalysis(
     // leave the channel un-flagged rather than guess — it still shows as a likely
     // affiliate, just without the NEW badge.
     let channelIsNew = false
+    let handleChecked = false
     if (result.isLikelyAffiliate) {
       const handle = (c.channel_handle ?? '').replace(/^@/, '').trim()
       if (handle.length >= 3) {
         const known = await checkMonday(`@${handle}`)
         channelIsNew = !known
+        handleChecked = true
       }
     }
 
@@ -1481,6 +1483,11 @@ export async function runYoutubeChannelAnalysis(
       is_not_relevant: result.isNotRelevant,
       niche_score: result.nicheScore,
       is_new_lead_candidate: result.isLikelyAffiliate && channelIsNew,
+      // Channel-level Monday verdict, mirroring kick/twitch scorers: known
+      // only when we actually checked the @handle; null otherwise (non-
+      // affiliate or handle too short to verify). Feeds the "On Monday"
+      // column added across every platform table (commit 7934ae5).
+      is_known_on_monday: handleChecked ? !channelIsNew : null,
     }
     if (!c.email && contacts.email) update.email = contacts.email
     if (!c.telegram_url && contacts.telegram_url) update.telegram_url = contacts.telegram_url
