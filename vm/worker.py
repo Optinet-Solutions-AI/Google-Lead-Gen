@@ -598,6 +598,7 @@ def run_scrape(
     requires_google_login: bool = False,
     view_mode: str = "both",
     result_type_filter: str | None = None,
+    allow_human_checkpoint: bool = True,
 ) -> tuple[int, str, Path, Path]:
     """
     Invoke the scraper as a subprocess.
@@ -646,7 +647,15 @@ def run_scrape(
     # (admin toggle via /admin/system). Both must be true. The DB lookup
     # happens once per job at this point — not per poll-loop iteration —
     # so the runtime cost is negligible.
-    solver_active = bool(job_id) and captcha_solver_should_run()
+    #
+    # allow_human_checkpoint gates the HUMAN park specifically: a captcha
+    # auto-retry (captcha_attempts > 0) runs headless — the automated
+    # 2Captcha solver + a fresh GoLogin session still fire, but we never
+    # re-park an operator on a job they already solved once. This is what
+    # keeps the "solve it by hand → it reappears → solve again" experience
+    # from happening across retries (the operator is asked at most once
+    # per job; a fresh session is what actually clears these anyway).
+    solver_active = bool(job_id) and captcha_solver_should_run() and allow_human_checkpoint
     if solver_active:
         # When the Captcha solver is on, hand the scraper enough context
         # to write interactive_checkpoints rows. Subprocess timeout
@@ -2355,6 +2364,17 @@ def process_job(job: dict[str, Any]) -> None:
     # Defensive: make sure this port is free before we start
     _kill_port()
 
+    # Only park a HUMAN on a job's FIRST captcha. Any captcha auto-retry
+    # (captcha_attempts > 0) runs headless — the auto-solver + a fresh
+    # GoLogin session still get a shot, but we never ask the operator to
+    # solve the same job twice. Stops the "solve → reappears → solve again"
+    # loop from spanning retries (a fresh session is what clears these).
+    prior_captcha_attempts = int(job.get("captcha_attempts") or 0)
+    allow_human_checkpoint = prior_captcha_attempts == 0
+    if not allow_human_checkpoint:
+        log.info("job %s is a captcha auto-retry (captcha_attempts=%d) — running headless, no human park",
+                 job_id, prior_captcha_attempts)
+
     try:
         exit_code, combined_log, output_path, log_path = run_scrape(
             profile_id, keyword, country_name, pages,
@@ -2363,6 +2383,7 @@ def process_job(job: dict[str, Any]) -> None:
             requires_google_login=requires_google_login,
             view_mode=view_mode,
             result_type_filter=result_type_filter,
+            allow_human_checkpoint=allow_human_checkpoint,
         )
     except subprocess.TimeoutExpired:
         _kill_port()

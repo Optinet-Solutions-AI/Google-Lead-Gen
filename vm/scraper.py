@@ -917,13 +917,15 @@ CHECKPOINT_MAX_REFRESH_ATTEMPTS = 10
 # enough that the operator's wait time isn't padded.
 CHECKPOINT_POST_REFRESH_SETTLE_S = 4.0
 # How many times an operator may solve a checkpoint (click Resume) only for
-# the page to re-wall immediately before we conclude the exit IP is burned
-# for this query class and stop re-parking humans. One tolerated re-wall
-# absorbs a premature/mis-click on a multi-step reCAPTCHA; a second confirms
-# the solve genuinely isn't sticking (the Darren "same captchas keep coming
-# up after Resolve + Resume" loop). Only *human-solved-then-reblocked* cycles
-# count — a TTL elapse (operator away) still rides the refresh loop below.
-CHECKPOINT_MAX_HUMAN_SOLVE_REBLOCKS = 2
+# the page to re-wall immediately before we STOP re-parking them and hand off
+# to a fresh-session retry. Set to 1: the operator is asked ONCE — if the
+# solve doesn't stick, the session/IP is flagged and re-asking on the same
+# session can't win (the Darren "same captchas keep coming up after Resolve +
+# Resume" loop), so we bail immediately rather than loop. Only
+# *human-solved-then-reblocked* cycles count — a TTL elapse (operator away)
+# still rides the refresh loop below. worker.py also runs any captcha
+# auto-retry headless, so the operator is never asked twice for one job.
+CHECKPOINT_MAX_HUMAN_SOLVE_REBLOCKS = 1
 
 
 def _request_interactive_checkpoint_with_refresh(
@@ -997,11 +999,11 @@ def _request_interactive_checkpoint_with_refresh(
         # Operator solved (clicked Resume) but the wall is STILL up: the solve
         # didn't stick because THIS session/IP is flagged, not because the
         # challenge was hard. Each solve only buys one request, so re-parking
-        # the operator on this session loops forever (the Darren report). Give
-        # them CHECKPOINT_MAX_HUMAN_SOLVE_REBLOCKS chances (absorbs a premature
-        # Resume click on a multi-step reCAPTCHA), then stop re-parking and hand
-        # off to a fresh-session auto-retry (worker.py), which is what actually
-        # clears it — verified 2026-07-13, both jobs completed on the retry.
+        # the operator on this session loops forever (the Darren report). After
+        # CHECKPOINT_MAX_HUMAN_SOLVE_REBLOCKS (=1) — i.e. immediately — stop
+        # re-parking and hand off to a fresh-session auto-retry (worker.py),
+        # which is what actually clears it (verified 2026-07-13, both jobs
+        # completed on the retry). No looping: the operator is asked once.
         if resumed and _still_blocked():
             human_solve_reblocks += 1
             if human_solve_reblocks >= CHECKPOINT_MAX_HUMAN_SOLVE_REBLOCKS:
