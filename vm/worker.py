@@ -2403,6 +2403,18 @@ def process_job(job: dict[str, Any]) -> None:
         _kill_port()
         captcha_terminal(job_id)
         return
+    elif "[RESULT] CAPTCHA_REBLOCK" in combined_log:
+        # Operator solved the checkpoint but the engine re-walled immediately,
+        # repeatedly — the exit IP is reputation-flagged for this query class
+        # (the "same captchas keep coming up after Resolve + Resume" report).
+        # Terminal, no auto-retry: cycling fresh sessions on a flagged query
+        # just burns metered proxy bandwidth. Checked BEFORE the generic
+        # "[RESULT] CAPTCHA" branch, whose substring this contains. Operator
+        # re-queues later when the pool is cleaner; other engines cover it now.
+        log.warning("job %s solved-but-reblocked (flagged IP for query class, log=%s) — terminal, no retry", job_id, log_path)
+        _kill_port()
+        captcha_terminal(job_id, "Solved the captcha, but the search engine re-blocked immediately — the proxy IP is flagged for this query. Not retried (it would keep re-blocking). Other engines cover this keyword; re-queue later when the pool is cleaner.")
+        return
     elif "[RESULT] CAPTCHA" in combined_log:
         log.warning("job %s hit CAPTCHA (log=%s)", job_id, log_path)
         _kill_port()
