@@ -525,12 +525,14 @@ RESULT_MARKER_CAPTCHA_SOLVER_TIMEOUT = "[RESULT] CAPTCHA_SOLVER_TIMEOUT"
 # no-auto-retry path in worker.py, with an accurate log/message.
 RESULT_MARKER_CAPTCHA_NO_REVIEWER = "[RESULT] CAPTCHA_NO_REVIEWER"
 # Emitted when an operator DID solve the checkpoint (clicked Resume) but the
-# search engine re-walled on the very next probe, repeatedly — the exit IP is
-# reputation-flagged for this query class, not a solvable challenge. Parking
-# more humans can't win (each solve buys one request), and blindly cycling
-# fresh sessions would just burn metered proxy bandwidth on a query the pool
-# is flagged for. Routed to the same terminal, no-auto-retry path with an
-# accurate message so the operator can re-queue later / rely on other engines.
+# search engine re-walled on the very next probe, repeatedly — the CURRENT
+# session/IP is flagged, not a solvable challenge. Parking more humans on this
+# session can't win (each solve buys one request). worker.py routes this to
+# the bounded fresh-session auto-retry (captcha_scrape_job), which is what
+# actually clears it — a fresh GoLogin session/IP; verified 2026-07-13 (both
+# Darren jobs completed with real results on the retry). The win over a plain
+# captcha is that we bail the dead-session human loop immediately instead of
+# re-parking the operator up to CHECKPOINT_MAX_REFRESH_ATTEMPTS times.
 RESULT_MARKER_CAPTCHA_REBLOCK = "[RESULT] CAPTCHA_REBLOCK"
 
 
@@ -943,12 +945,14 @@ def _request_interactive_checkpoint_with_refresh(
     to clear the wall returns True without burning another operator slot.
 
     Returns True when the page is clear (operator solved OR a refresh
-    cleared it). Returns False on two terminal conditions, each emitting a
-    distinct marker so worker.py routes the job terminal (no auto-retry):
+    cleared it). Returns False on two give-up conditions, each emitting a
+    distinct marker so worker.py routes appropriately:
       - max_attempts exhausted → RESULT_MARKER_CAPTCHA_SOLVER_TIMEOUT
+        (terminal, no auto-retry — operator was away / TTL elapsed)
       - operator solved but the page re-walled
         CHECKPOINT_MAX_HUMAN_SOLVE_REBLOCKS times → RESULT_MARKER_CAPTCHA_REBLOCK
-        (exit IP flagged for the query class; more human solves can't win)
+        (current session/IP flagged; worker.py fresh-session auto-retries —
+        more human solves on THIS session can't win, a fresh one clears it)
 
     InteractiveCancelException (operator clicked Cancel) propagates
     immediately — explicit cancel is not retried.
@@ -991,21 +995,21 @@ def _request_interactive_checkpoint_with_refresh(
             return True
 
         # Operator solved (clicked Resume) but the wall is STILL up: the solve
-        # didn't stick because the exit IP is reputation-flagged for this query
-        # class, not because the challenge was hard. Each solve only buys one
-        # request, so re-parking would loop forever (the Darren report). Give
-        # the operator CHECKPOINT_MAX_HUMAN_SOLVE_REBLOCKS chances (absorbs a
-        # premature Resume click on a multi-step reCAPTCHA), then stop parking
-        # humans and route the job terminal — no auto-retry, because cycling
-        # fresh sessions on a flagged query just burns metered proxy bandwidth.
+        # didn't stick because THIS session/IP is flagged, not because the
+        # challenge was hard. Each solve only buys one request, so re-parking
+        # the operator on this session loops forever (the Darren report). Give
+        # them CHECKPOINT_MAX_HUMAN_SOLVE_REBLOCKS chances (absorbs a premature
+        # Resume click on a multi-step reCAPTCHA), then stop re-parking and hand
+        # off to a fresh-session auto-retry (worker.py), which is what actually
+        # clears it — verified 2026-07-13, both jobs completed on the retry.
         if resumed and _still_blocked():
             human_solve_reblocks += 1
             if human_solve_reblocks >= CHECKPOINT_MAX_HUMAN_SOLVE_REBLOCKS:
                 print(
                     f"[WARN] checkpoint: operator solved but the page re-walled "
-                    f"{human_solve_reblocks}x ({reason!r}) — exit IP is flagged for "
-                    f"this query class, not a solvable challenge. Stopping human "
-                    f"re-park and routing terminal (no auto-retry).",
+                    f"{human_solve_reblocks}x ({reason!r}) — this session/IP is "
+                    f"flagged, not a solvable challenge. Stopping human re-park "
+                    f"and handing off to a fresh-session retry.",
                     file=sys.stderr,
                 )
                 print(RESULT_MARKER_CAPTCHA_REBLOCK)
