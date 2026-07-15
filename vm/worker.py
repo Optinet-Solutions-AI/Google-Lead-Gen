@@ -28,6 +28,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,10 @@ SCRAPE_TIMEOUT_S     = int(os.environ.get("SCRAPE_TIMEOUT_SECONDS", "1200"))  # 
 # 70+ min. Set CAPTCHA_SOLVER_MODE=off to disable.
 CAPTCHA_SOLVER_MODE       = os.environ.get("CAPTCHA_SOLVER_MODE", "on").strip().lower() != "off"
 INTERACTIVE_TIMEOUT_S     = int(os.environ.get("INTERACTIVE_SCRAPE_TIMEOUT_SECONDS", "3900"))  # 65 min
+# How often the lock heartbeat advances active_profile_locks.locked_at while a
+# job is in flight. Must be comfortably below the release_stale_locks() reaper
+# window so a LIVE worker's lock is never mistaken for a dead one.
+LOCK_HEARTBEAT_INTERVAL_S = int(os.environ.get("LOCK_HEARTBEAT_INTERVAL_SECONDS", "300"))  # 5 min
 
 
 def _captcha_solver_enabled_per_db() -> bool:
@@ -2506,6 +2511,57 @@ def process_job(job: dict[str, Any]) -> None:
 # Main loop
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Lock heartbeat
+# ---------------------------------------------------------------------------
+# A worker holds its country's active_profile_lock for the entire duration of a
+# job — up to INTERACTIVE_TIMEOUT_S (65 min) when the captcha solver is on.
+# active_profile_locks.locked_at is stamped once at claim and never advanced, so
+# release_stale_locks() (the pg_cron reaper) cannot tell a LIVE long scrape from
+# a DEAD worker and used to reclaim live locks mid-scrape. This heartbeat pushes
+# locked_at forward every LOCK_HEARTBEAT_INTERVAL_S while a job is in flight, so
+# the reaper can run on a tight window yet only ever reclaim genuinely dead
+# workers.
+#
+# Uses its OWN Supabase client: supabase-py / httpx is not guaranteed
+# thread-safe and the main thread uses `supabase` concurrently during a job.
+_hb_supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+class LockHeartbeat:
+    """Context manager that refreshes active_profile_locks.locked_at for
+    ``job_id`` on a background daemon thread for as long as the job runs."""
+
+    def __init__(self, job_id: str, interval_s: int = LOCK_HEARTBEAT_INTERVAL_S):
+        self.job_id = job_id
+        self.interval_s = max(30, interval_s)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name=f"lock-hb-{str(job_id)[:8]}", daemon=True
+        )
+
+    def _run(self) -> None:
+        # Event.wait() returns True the moment we're stopped and False on
+        # timeout, so this ticks every interval_s and exits promptly when the
+        # job finishes (no fixed sleep to wait out on shutdown).
+        while not self._stop.wait(self.interval_s):
+            try:
+                _hb_supabase.rpc(
+                    "touch_active_profile_lock", {"p_job_id": self.job_id}
+                ).execute()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("lock heartbeat failed for job %s: %s", self.job_id, exc)
+
+    def __enter__(self) -> "LockHeartbeat":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: Any) -> bool:
+        self._stop.set()
+        self._thread.join(timeout=5)
+        return False
+
+
 def main() -> None:
     log.info("worker started | port=%d poll=%ds", GOLOGIN_PORT, POLL_INTERVAL)
     while _running:
@@ -2514,7 +2570,10 @@ def main() -> None:
             if job is None:
                 time.sleep(POLL_INTERVAL)
                 continue
-            process_job(job)
+            # Keep the country lock's locked_at fresh for the whole job so the
+            # stale-lock reaper doesn't reclaim a lock we're still using.
+            with LockHeartbeat(job["id"]):
+                process_job(job)
         except Exception as exc:  # noqa: BLE001
             log.error("loop error: %s", exc)
             time.sleep(POLL_INTERVAL)
