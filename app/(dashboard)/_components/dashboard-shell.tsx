@@ -11,6 +11,7 @@ import {
   Clock,
   DollarSign,
   Database,
+  Fingerprint,
   Gauge,
   Globe,
   Hand,
@@ -57,6 +58,12 @@ const NAV_ITEMS = [
     href: '/monday/leads',
     icon: Database,
     match: (p: string) => p.startsWith('/monday'),
+  },
+  {
+    label: 'S-tag Mapping',
+    href: '/stag-mapping',
+    icon: Fingerprint,
+    match: (p: string) => p.startsWith('/stag-mapping'),
   },
   {
     // Open to all signed-in users so the whole ops team can clear
@@ -146,6 +153,12 @@ const ADMIN_NAV_ITEMS = [
     href: '/admin/operations',
     icon: DollarSign,
     match: (p: string) => p.startsWith('/admin/operations'),
+  },
+  {
+    label: 'Utilization (Admin)',
+    href: '/admin/utilization',
+    icon: Gauge,
+    match: (p: string) => p.startsWith('/admin/utilization'),
   },
   {
     label: 'System (Admin)',

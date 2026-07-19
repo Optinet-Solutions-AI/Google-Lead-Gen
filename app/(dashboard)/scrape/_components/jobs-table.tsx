@@ -41,6 +41,10 @@ import { BulkScrapeActionsBar } from './bulk-actions-bar'
 import { JobActionsButton } from './job-row-actions'
 import { ReviewedCheckbox } from './reviewed-checkbox'
 
+/** Per-pending-job position + ETA lookup, keyed by scrape_queue.id.
+ *  Sourced from FleetQueueSnapshot.positionsByJobId on the server. */
+export type PendingPositions = Record<string, { position: number; etaMinutes: number | null }>
+
 type Props = {
   jobs: ScrapeJob[]
   /** When true, show the "Select rows" toggle + bulk-action bar. The
@@ -57,6 +61,10 @@ type Props = {
    *  false, the Rows picker is a hard limit and the sentinel never
    *  renders. Toggled in /account/password. */
   infiniteScrollEnabled?: boolean
+  /** Live queue position + ETA for pending rows. Rendered as a small
+   *  "#N · ~Xm" pill inside the status cell so operators can watch
+   *  their spot move up as the queue drains. */
+  pendingPositions?: PendingPositions
 }
 
 const STATUS_STYLES: Record<ScrapeJob['status'], string> = {
@@ -143,6 +151,48 @@ function StatusBadge({ job }: { job: ScrapeJob }) {
         'inline-block rounded-full px-2 py-0.5 text-[10px] font-medium',
         style,
       ].join(' ')}
+    >
+      {label}
+    </span>
+  )
+}
+
+/** Live queue position + ETA for pending rows. Renders `#N · ~Xm`
+ *  next to the status badge so operators can watch their spot move up.
+ *  Hidden for non-pending jobs and when no position is available
+ *  (e.g. the row is beyond the fleet-snapshot lookup window). */
+function QueuePositionBadge({
+  job,
+  positions,
+}: {
+  job: ScrapeJob
+  positions: PendingPositions | undefined
+}) {
+  if (!positions) return null
+  if (job.status !== 'pending') return null
+  const pos = positions[job.id]
+  if (!pos) return null
+  const etaLabel =
+    pos.etaMinutes === null
+      ? null
+      : pos.etaMinutes === 0
+        ? 'starting now'
+        : pos.etaMinutes < 1
+          ? '<1 min'
+          : pos.etaMinutes < 60
+            ? `~${Math.round(pos.etaMinutes)} min`
+            : `~${Math.floor(pos.etaMinutes / 60)}h ${Math.round(pos.etaMinutes % 60)}m`
+  const label = etaLabel ? `#${pos.position} · ${etaLabel}` : `#${pos.position}`
+  const tone =
+    pos.etaMinutes === 0
+      ? 'bg-emerald-100 text-emerald-800'
+      : pos.etaMinutes !== null && pos.etaMinutes >= 30
+        ? 'bg-amber-100 text-amber-900'
+        : 'bg-sky-100 text-sky-800'
+  return (
+    <span
+      title={`Queue position: #${pos.position} for ${job.country_code}${pos.etaMinutes !== null ? ` · est start in ${etaLabel}` : ''}. Refresh the page to update as the queue drains.`}
+      className={['inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', tone].join(' ')}
     >
       {label}
     </span>
@@ -420,6 +470,7 @@ export function JobsTable({
   isAdmin = false,
   pageInfo,
   infiniteScrollEnabled = false,
+  pendingPositions,
 }: Props) {
   // ----- Infinite scroll -----
   // The page server-renders the first chunk (size rows for `page`).
@@ -874,9 +925,10 @@ export function JobsTable({
                 </LinkTd>
                 <LinkTd href={href}>{job.pages}</LinkTd>
                 <LinkTd href={href}>
-                  <span className="inline-flex items-center gap-1">
+                  <span className="inline-flex flex-wrap items-center gap-1">
                     <StatusBadge job={job} />
                     <OutcomeMarker job={job} />
+                    <QueuePositionBadge job={job} positions={pendingPositions} />
                   </span>
                 </LinkTd>
                 <LinkTd
@@ -982,7 +1034,7 @@ export function JobsTable({
 }
 
 // Mobile card layout below — same data, stacked.
-export function JobsCardList({ jobs }: Props) {
+export function JobsCardList({ jobs, pendingPositions }: Props) {
   if (jobs.length === 0) return null
   return (
     <div className="flex flex-col gap-2 md:hidden">
@@ -1002,9 +1054,10 @@ export function JobsCardList({ jobs }: Props) {
                 {job.keyword}
               </p>
             </div>
-            <span className="inline-flex items-center gap-1">
+            <span className="inline-flex flex-wrap items-center gap-1">
               <StatusBadge job={job} />
               <OutcomeMarker job={job} />
+              <QueuePositionBadge job={job} positions={pendingPositions} />
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-text-secondary)]">

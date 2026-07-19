@@ -1,5 +1,15 @@
 # Scaling from 1 VM to N VMs
 
+> **Current fleet state (as of 2026-07-19): 2 VMs × 9 workers = 18 concurrent slots.**
+> Down from 3 VMs on 2026-07-17 after utilization analysis showed <1%
+> peak load. The remaining two VMs are being upgraded from 29 GB → 50
+> GB EBS. See [`docs/CHANGELOG-2026-07-19.md`](./CHANGELOG-2026-07-19.md)
+> for context. Fleet dimensions are read from
+> [`lib/fleet.ts`](../lib/fleet.ts) — every capacity calculation
+> across the app (utilization dashboard, enqueue-form queue depth,
+> per-job ETAs) reads from that single constant. To scale back up,
+> edit `FLEET_VM_COUNT` and follow the steps below.
+
 This runbook covers cloning the current EC2 worker VM into a fleet of
 N (you'll usually want 2 or 3) so the dashboard can dispatch scrapes
 in parallel and route Captcha-solver captchas to whichever VM parked the job.

@@ -13,7 +13,7 @@ import { AutoRefresh } from './_components/auto-refresh'
 import { EnqueueForm } from './_components/enqueue-form'
 import { JobsCardList, JobsTable } from './_components/jobs-table'
 import { OwnerScopeToggle } from './_components/owner-scope-toggle'
-import { listActiveProfiles, queryJobs } from './_lib/queries'
+import { getFleetQueueSnapshot, listActiveProfiles, queryJobs } from './_lib/queries'
 
 type SearchParams = Record<string, string | string[] | undefined>
 
@@ -54,7 +54,7 @@ export default async function ScrapePage({
   const restrictToOwnerEmail =
     ownerScope === 'mine' && callerEmail ? callerEmail : undefined
 
-  const [profiles, jobsResult, isAdmin, prefs, quotaSnap, mineCount, allCount] = await Promise.all([
+  const [profiles, jobsResult, isAdmin, prefs, quotaSnap, fleet, mineCount, allCount] = await Promise.all([
     listActiveProfiles(),
     queryJobs({
       page,
@@ -72,6 +72,7 @@ export default async function ScrapePage({
     })(),
     getUserPreferences(),
     getQuotaForCurrentUser(),
+    getFleetQueueSnapshot(),
     // Independent counts for the toggle pills. Head-only queries; the
     // shadow filter still applies so the Mine / All numbers respect
     // shadow isolation. parent_scrape_job_id is null mirrors what
@@ -145,7 +146,7 @@ export default async function ScrapePage({
         </p>
       </header>
 
-      <EnqueueForm profiles={profiles} quota={quota} />
+      <EnqueueForm profiles={profiles} quota={quota} fleet={fleet} />
 
       <section className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -177,8 +178,9 @@ export default async function ScrapePage({
           isAdmin={isAdmin}
           pageInfo={{ page, size, total }}
           infiniteScrollEnabled={prefs.infiniteScrollEnabled}
+          pendingPositions={fleet.positionsByJobId}
         />
-        <JobsCardList jobs={rows} />
+        <JobsCardList jobs={rows} pendingPositions={fleet.positionsByJobId} />
       </section>
 
       <Pagination page={page} size={size} total={total} pageSizeOptions={PAGE_SIZES} />

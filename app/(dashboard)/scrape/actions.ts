@@ -30,6 +30,7 @@ import { parseStagFromUrl, guessBrandFromUrl } from '@/lib/stag-extraction/extra
 import { decodeAdUrl } from '@/lib/decode-ad-url'
 import { logActivity } from '@/lib/activity-log'
 import { checkQuota } from '@/lib/scrape-quota'
+import { getFleetQueueSnapshot } from './_lib/queries'
 import { pushJobToMonday as pushJobToMondayLib } from '@/lib/monday/push-job'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
 import { translateKeywordsToEnglish } from '@/lib/translate'
@@ -288,8 +289,12 @@ export async function enqueueScrape(
   const quota = await checkQuota(rows.length)
   if (!quota.ok) return { status: 'error', error: quota.error }
 
-  const { error: insertError } = await svc.from('scrape_queue').insert(rows)
+  const { data: insertedRows, error: insertError } = await svc
+    .from('scrape_queue')
+    .insert(rows)
+    .select('id')
   if (insertError) return { status: 'error', error: safeError(insertError, 'Failed to queue the scrape.') }
+  const insertedIds = new Set(((insertedRows ?? []) as { id: string }[]).map(r => r.id))
 
   const flag = withEnrichment ? ' with full enrichment pipeline' : ''
   const when = scheduledAtIso
@@ -335,12 +340,45 @@ export async function enqueueScrape(
     enginesToRun.length === 2
       ? ` (${rows.length} jobs total — one per keyword per engine)`
       : ''
+
+  // Post-insert queue peek — gives the operator a concrete "you're Nth
+  // in the queue, come back in ~X min" tail so they know whether the
+  // fleet is picking their job up immediately or parking it behind a
+  // backlog. Failure here is non-fatal; base success message still lands.
+  let queuePosSuffix = ''
+  try {
+    const snap = await getFleetQueueSnapshot()
+    // Find this submit's OWN earliest row (min position) on its country —
+    // that's the first of this submit's jobs to start.
+    let minPosition = Infinity
+    let minEta: number | null = null
+    for (const id of insertedIds) {
+      const pos = snap.positionsByJobId[id]
+      if (pos && pos.position < minPosition) {
+        minPosition = pos.position
+        minEta = pos.etaMinutes
+      }
+    }
+    if (Number.isFinite(minPosition)) {
+      const bits: string[] = []
+      bits.push(`you're #${minPosition} in the ${country_code} queue`)
+      if (minEta !== null && minEta >= 1) {
+        bits.push(`come back in ~${Math.round(minEta)} min`)
+      } else if (minEta === 0) {
+        bits.push('starting now')
+      }
+      queuePosSuffix = ` — ${bits.join(' · ')}.`
+    }
+  } catch (err) {
+    console.error('[scrape/actions] queue-peek failed:', err)
+  }
+
   return {
     status: 'ok',
     message:
       keywords.length === 1
-        ? `Added "${keywords[0]}" to the queue for ${country_code}${engineDescription}${flag}${when}${rowsLabel}.`
-        : `Added ${keywords.length} keyword${keywords.length === 1 ? '' : 's'} to the queue for ${country_code}${engineDescription}${flag}${when}${rowsLabel}.`,
+        ? `Added "${keywords[0]}" to the queue for ${country_code}${engineDescription}${flag}${when}${rowsLabel}.${queuePosSuffix}`
+        : `Added ${keywords.length} keyword${keywords.length === 1 ? '' : 's'} to the queue for ${country_code}${engineDescription}${flag}${when}${rowsLabel}.${queuePosSuffix}`,
   }
 }
 

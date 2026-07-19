@@ -1,6 +1,7 @@
 import 'server-only'
 import { applyFilters, applySorts } from '@/lib/filters/apply'
 import { JOBS_COLUMNS } from '@/lib/filters/columns-jobs'
+import { FLEET_TOTAL_SLOTS, readMaxPerCountry } from '@/lib/fleet'
 import type { Filter, Sort } from '@/lib/filters/types'
 import { applyShadowFilter, getShadowContext } from '@/lib/shadow-filter'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -55,6 +56,201 @@ export async function listActiveProfiles(): Promise<GoLoginProfile[]> {
     ...p,
     languages: p.languages ?? ['en'],
   }))
+}
+
+export type CountryQueueState = {
+  country_code: string
+  /** Rows in status='pending' AND (scheduled_at IS NULL OR <= now). */
+  pending: number
+  /** Rows in status='running' — one per active worker on this country. */
+  running: number
+  /** max_concurrent_per_country. */
+  capacity: number
+  /** Est. minutes until a new pending job on this country would start,
+   *  given current running + queued and the fleet avg duration. Null
+   *  when we don't have enough duration data to compute. */
+  etaMinutes: number | null
+}
+
+export type PendingPosition = {
+  /** 1-indexed position within the country queue (lower = sooner). */
+  position: number
+  /** Estimated minutes until this job starts. Null when no duration data. */
+  etaMinutes: number | null
+}
+
+export type FleetQueueSnapshot = {
+  /** Ready-to-run pending jobs across the whole fleet. */
+  totalPending: number
+  /** Currently-running jobs across the whole fleet. */
+  totalRunning: number
+  /** Pending rows with a future scheduled_at — parked, not competing. */
+  scheduledLater: number
+  /** Fleet slots in use / total (utilization %). */
+  slotsInUse: number
+  totalSlots: number
+  utilizationPct: number
+  /** Avg completed-job duration in the last 24h (seconds). */
+  avgDurationSec: number | null
+  /** Fleet-wide back-of-envelope drain-time estimate for the pending backlog. */
+  fleetEtaMinutes: number | null
+  perCountry: CountryQueueState[]
+  /** Per-pending-job position + ETA lookup, keyed by scrape_queue.id. */
+  positionsByJobId: Record<string, PendingPosition>
+}
+
+export async function getFleetQueueSnapshot(): Promise<FleetQueueSnapshot> {
+  const svc = createServiceClient()
+  const nowIso = new Date().toISOString()
+  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+
+  const [
+    { data: pendingRows },
+    { data: runningRows },
+    { count: scheduledLater },
+    { data: recent },
+    capacity,
+  ] = await Promise.all([
+    // Pending & ready-to-run (no future schedule). Ordered by the same
+    // (priority desc, created_at asc) worker-claim order so per-country
+    // index reflects real pickup sequence.
+    svc
+      .from('scrape_queue')
+      .select('id, country_code, priority, created_at')
+      .eq('status', 'pending')
+      .or(`scheduled_at.is.null,scheduled_at.lte.${nowIso}`)
+      .is('parent_scrape_job_id', null)
+      .order('priority', { ascending: false })
+      .order('created_at', { ascending: true })
+      .limit(5000),
+    // Running.
+    svc
+      .from('scrape_queue')
+      .select('country_code')
+      .eq('status', 'running')
+      .is('parent_scrape_job_id', null)
+      .limit(5000),
+    // Scheduled-for-later (parked, doesn't add to queue depth right now).
+    svc
+      .from('scrape_queue')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending')
+      .gt('scheduled_at', nowIso)
+      .is('parent_scrape_job_id', null),
+    // Recent completed durations to derive avg (seed the ETA maths).
+    svc
+      .from('scrape_queue')
+      .select('started_at, completed_at')
+      .eq('status', 'completed')
+      .gte('completed_at', since24h)
+      .not('started_at', 'is', null)
+      .not('completed_at', 'is', null)
+      .limit(1000),
+    readMaxPerCountry(),
+  ])
+
+  type PendingRow = { id: string; country_code: string; priority: number | null; created_at: string }
+  type RunningRow = { country_code: string }
+  const pending = (pendingRows as PendingRow[] | null) ?? []
+  const running = (runningRows as RunningRow[] | null) ?? []
+  const pendingByCountry = new Map<string, number>()
+  const perCountryPendingOrder = new Map<string, PendingRow[]>()
+  for (const r of pending) {
+    pendingByCountry.set(r.country_code, (pendingByCountry.get(r.country_code) ?? 0) + 1)
+    if (!perCountryPendingOrder.has(r.country_code)) perCountryPendingOrder.set(r.country_code, [])
+    perCountryPendingOrder.get(r.country_code)!.push(r)
+  }
+  const runningByCountry = new Map<string, number>()
+  for (const r of running) runningByCountry.set(r.country_code, (runningByCountry.get(r.country_code) ?? 0) + 1)
+
+  type Recent = { started_at: string | null; completed_at: string | null }
+  const durationsSec = ((recent as Recent[] | null) ?? [])
+    .map(r => (new Date(r.completed_at!).getTime() - new Date(r.started_at!).getTime()) / 1000)
+    .filter(d => d > 0 && d < 60 * 60 * 6)
+  const avgDurationSec = durationsSec.length
+    ? Math.round(durationsSec.reduce((s, d) => s + d, 0) / durationsSec.length)
+    : null
+
+  const totalPending = pending.length
+  const totalRunning = running.length
+  const slotsInUse = totalRunning
+  const utilizationPct = FLEET_TOTAL_SLOTS > 0 ? (slotsInUse / FLEET_TOTAL_SLOTS) * 100 : 0
+
+  // Fleet-wide back-of-envelope: how long to drain the ready backlog if
+  // load stays flat and every slot keeps churning at avg duration.
+  const freeSlotsNow = Math.max(0, FLEET_TOTAL_SLOTS - slotsInUse)
+  const fleetEtaMinutes =
+    avgDurationSec !== null && totalPending > 0
+      ? Math.max(
+          0,
+          Math.ceil(Math.max(0, totalPending - freeSlotsNow) / Math.max(1, FLEET_TOTAL_SLOTS)) *
+            (avgDurationSec / 60),
+        )
+      : totalPending === 0
+        ? 0
+        : null
+
+  const codes = new Set<string>([...pendingByCountry.keys(), ...runningByCountry.keys()])
+  const perCountry: CountryQueueState[] = Array.from(codes)
+    .map(code => {
+      const p = pendingByCountry.get(code) ?? 0
+      const r = runningByCountry.get(code) ?? 0
+      // Per-country ETA is bounded by max_concurrent_per_country.
+      const freeThisCountry = Math.max(0, capacity - r)
+      const etaMinutes =
+        avgDurationSec !== null && p > 0
+          ? Math.max(
+              0,
+              Math.ceil(Math.max(0, p - freeThisCountry) / Math.max(1, capacity)) *
+                (avgDurationSec / 60),
+            )
+          : p === 0
+            ? 0
+            : null
+      return {
+        country_code: code,
+        pending: p,
+        running: r,
+        capacity,
+        etaMinutes,
+      }
+    })
+    .sort((a, b) => b.pending + b.running - (a.pending + a.running))
+
+  // Per-job position + ETA lookup. Position is 1-indexed within the
+  // country queue and reflects (priority desc, created_at asc) —
+  // exactly what claim_scrape_job uses to pick the next job.
+  const positionsByJobId: Record<string, PendingPosition> = {}
+  for (const [code, list] of perCountryPendingOrder.entries()) {
+    const runningHere = runningByCountry.get(code) ?? 0
+    const freeSlotsHere = Math.max(0, capacity - runningHere)
+    list.forEach((row, i) => {
+      const position = i + 1 // 1-indexed
+      // Jobs 1..freeSlotsHere can start immediately; the rest wait in
+      // batches of `capacity` per average duration.
+      const etaMinutes =
+        avgDurationSec === null
+          ? null
+          : position <= freeSlotsHere
+            ? 0
+            : Math.ceil((position - freeSlotsHere) / Math.max(1, capacity)) *
+              (avgDurationSec / 60)
+      positionsByJobId[row.id] = { position, etaMinutes }
+    })
+  }
+
+  return {
+    totalPending,
+    totalRunning,
+    scheduledLater: scheduledLater ?? 0,
+    slotsInUse,
+    totalSlots: FLEET_TOTAL_SLOTS,
+    utilizationPct,
+    avgDurationSec,
+    fleetEtaMinutes,
+    perCountry,
+    positionsByJobId,
+  }
 }
 
 export type StageStatus = {

@@ -59,6 +59,27 @@ type Quota = {
   remaining: number
 }
 
+/** Fleet-wide queue snapshot loaded on the server. Drives the "N ahead
+ *  of you" banner + per-country capacity badges + wait-time toast. */
+type CountryQueueState = {
+  country_code: string
+  pending: number
+  running: number
+  capacity: number
+  etaMinutes: number | null
+}
+type FleetSnapshot = {
+  totalPending: number
+  totalRunning: number
+  scheduledLater: number
+  slotsInUse: number
+  totalSlots: number
+  utilizationPct: number
+  avgDurationSec: number | null
+  fleetEtaMinutes: number | null
+  perCountry: CountryQueueState[]
+}
+
 /** Display label for the non-leads-pipeline engines (the ones whose results
  *  land in their own entity table). Used by the enrichment-toggle note. */
 const ENGINE_LABELS: Record<string, string> = {
@@ -78,9 +99,11 @@ function sourceLabelFor(engine: string): string {
 export function EnqueueForm({
   profiles,
   quota,
+  fleet,
 }: {
   profiles: Profile[]
   quota: Quota | null
+  fleet: FleetSnapshot
 }) {
   const [state, formAction, pending] = useActionState(enqueueScrape, initial)
   const formRef = useRef<HTMLFormElement>(null)
@@ -146,6 +169,28 @@ export function EnqueueForm({
   const loginWarning =
     selectedProfile?.requires_google_login && !selectedProfile.is_google_logged_in
 
+  // Per-country queue state for the currently-selected country (if any).
+  const selectedCountryState = useMemo(
+    () => (selectedCountry ? fleet.perCountry.find(c => c.country_code === selectedCountry) : null),
+    [selectedCountry, fleet.perCountry],
+  )
+  // "Busy" threshold for the fleet-load banner: any pending backlog, or
+  // ≥ 60% of slots in use. Below this the banner stays hidden so the
+  // form doesn't get noisy on an idle fleet.
+  const fleetIsBusy = fleet.totalPending > 0 || fleet.utilizationPct >= 60
+  // Estimated additional wait this submit would add for the selected
+  // country: pending backlog plus this submit's rows, drained at
+  // per-country cap × avg duration.
+  const submitEtaMin = useMemo(() => {
+    if (!selectedCountryState || fleet.avgDurationSec === null || count === 0) return null
+    const cap = Math.max(1, selectedCountryState.capacity)
+    const freeSlots = Math.max(0, cap - selectedCountryState.running)
+    const cyclesAhead = Math.ceil(Math.max(0, selectedCountryState.pending - freeSlots) / cap)
+    // Add rough cycles for THIS submit (batches of `cap`).
+    const cyclesOwn = Math.ceil(count / cap)
+    return Math.max(0, (cyclesAhead + cyclesOwn) * (fleet.avgDurationSec / 60))
+  }, [selectedCountryState, fleet.avgDurationSec, count])
+
   useEffect(() => {
     if (state?.status === 'ok') {
       formRef.current?.reset()
@@ -194,6 +239,7 @@ export function EnqueueForm({
               {quota.remaining}/{quota.cap} left today
             </span>
           )}
+          <FleetLoadPill fleet={fleet} />
         </span>
         <ChevronDown
           className={[
@@ -209,6 +255,7 @@ export function EnqueueForm({
           action={formAction}
           className="border-t border-[color:var(--color-border)] p-4"
         >
+          {fleetIsBusy && <FleetLoadBanner fleet={fleet} />}
           <div className="grid gap-3 md:grid-cols-[1fr_120px_160px_140px_100px_100px] md:items-start">
         <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
           <span className="flex items-baseline justify-between">
@@ -266,12 +313,20 @@ export function EnqueueForm({
             <option value="" disabled>
               Pick…
             </option>
-            {profiles.map(p => (
-              <option key={p.country_code} value={p.country_code}>
-                {p.country_name} ({p.country_code}){loginBadge(p)}
-              </option>
-            ))}
+            {profiles.map(p => {
+              const cs = fleet.perCountry.find(c => c.country_code === p.country_code)
+              const load = cs ? countryLoadSuffix(cs) : ''
+              return (
+                <option key={p.country_code} value={p.country_code}>
+                  {p.country_name} ({p.country_code}){loginBadge(p)}
+                  {load}
+                </option>
+              )
+            })}
           </select>
+          {selectedCountryState && (
+            <CountryQueueBadge state={selectedCountryState} />
+          )}
         </label>
 
         <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
@@ -395,11 +450,7 @@ export function EnqueueForm({
           disabled={pending || count === 0}
           className="rounded-md bg-[color:var(--color-accent)] px-4 py-2 text-[13px] font-medium text-[color:var(--color-text-primary)] transition-colors hover:bg-[color:var(--color-accent-hover)] disabled:opacity-50"
         >
-          {pending
-            ? 'Starting…'
-            : count <= 1
-              ? 'Start scraping'
-              : `Start ${count} scrapes`}
+          {submitButtonLabel({ pending, count, etaMin: submitEtaMin })}
         </button>
       </div>
 
@@ -429,4 +480,122 @@ export function EnqueueForm({
       )}
     </section>
   )
+}
+
+/* ---------- Fleet / queue-depth UI helpers ---------- */
+
+function fmtMinutes(min: number): string {
+  if (min < 1) return '<1 min'
+  if (min < 60) return `~${Math.round(min)} min`
+  const h = Math.floor(min / 60)
+  const m = Math.round(min - h * 60)
+  return m === 0 ? `~${h}h` : `~${h}h ${m}m`
+}
+
+function submitButtonLabel({
+  pending,
+  count,
+  etaMin,
+}: {
+  pending: boolean
+  count: number
+  etaMin: number | null
+}): string {
+  if (pending) return 'Starting…'
+  if (count === 0) return 'Start scraping'
+  const base = count === 1 ? 'Queue scrape' : `Queue ${count} scrapes`
+  if (etaMin !== null && etaMin >= 1) return `${base} — starts in ${fmtMinutes(etaMin)}`
+  return count === 1 ? 'Start scraping' : `Start ${count} scrapes`
+}
+
+function utilizationTone(pct: number): {
+  chip: string
+  dot: string
+} {
+  if (pct >= 80) return { chip: 'bg-red-100 text-red-800', dot: 'bg-red-500' }
+  if (pct >= 60) return { chip: 'bg-amber-100 text-amber-900', dot: 'bg-amber-500' }
+  if (pct >= 20) return { chip: 'bg-emerald-100 text-emerald-800', dot: 'bg-emerald-500' }
+  return { chip: 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]', dot: 'bg-[color:var(--color-border-strong)]' }
+}
+
+function FleetLoadPill({ fleet }: { fleet: FleetSnapshot }) {
+  const tone = utilizationTone(fleet.utilizationPct)
+  const label =
+    fleet.totalPending === 0 && fleet.totalRunning === 0
+      ? 'Fleet idle'
+      : fleet.totalPending === 0
+        ? `${fleet.slotsInUse}/${fleet.totalSlots} slots busy`
+        : `${fleet.totalPending} queued · ${fleet.slotsInUse}/${fleet.totalSlots} busy`
+  return (
+    <span
+      className={['inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium', tone.chip].join(' ')}
+      title={`Fleet: ${fleet.slotsInUse} of ${fleet.totalSlots} slots active (${fleet.utilizationPct.toFixed(0)}%), ${fleet.totalPending} pending${fleet.scheduledLater > 0 ? `, ${fleet.scheduledLater} scheduled for later` : ''}`}
+    >
+      <span className={['inline-block h-1.5 w-1.5 rounded-full', tone.dot].join(' ')} />
+      {label}
+    </span>
+  )
+}
+
+function FleetLoadBanner({ fleet }: { fleet: FleetSnapshot }) {
+  const tone =
+    fleet.utilizationPct >= 80
+      ? 'border-red-200 bg-red-50 text-red-900'
+      : fleet.utilizationPct >= 60
+        ? 'border-amber-200 bg-amber-50 text-amber-900'
+        : 'border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-primary)]'
+  const eta = fleet.fleetEtaMinutes
+  return (
+    <div className={['mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-[12px]', tone].join(' ')}>
+      <span>
+        <strong>Fleet is {fleet.utilizationPct.toFixed(0)}% busy.</strong>{' '}
+        {fleet.totalPending > 0
+          ? `${fleet.totalPending} scrape${fleet.totalPending === 1 ? '' : 's'} pending across the queue`
+          : `${fleet.slotsInUse}/${fleet.totalSlots} slots running`}
+        {fleet.scheduledLater > 0 && <> · {fleet.scheduledLater} scheduled for later</>}
+      </span>
+      {eta !== null && eta > 0 && (
+        <span className="text-[11px] opacity-80">
+          Backlog drain time: {fmtMinutes(eta)}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function CountryQueueBadge({ state }: { state: CountryQueueState }) {
+  const busyPct = state.capacity > 0 ? (state.running / state.capacity) * 100 : 0
+  const tone =
+    busyPct >= 100
+      ? 'border-red-200 bg-red-50 text-red-900'
+      : busyPct >= 66
+        ? 'border-amber-200 bg-amber-50 text-amber-900'
+        : state.pending > 0
+          ? 'border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-primary)]'
+          : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+  const line = [
+    `${state.running}/${state.capacity} slots busy`,
+    state.pending > 0 ? `${state.pending} pending` : null,
+    state.etaMinutes !== null && state.pending > 0 ? `~${fmtMinutes(state.etaMinutes)} wait` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  return (
+    <span
+      className={['mt-1 inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-medium', tone].join(' ')}
+    >
+      {state.running === 0 && state.pending === 0 ? 'Country is idle' : line}
+    </span>
+  )
+}
+
+function countryLoadSuffix(state: CountryQueueState): string {
+  const busy = state.running >= state.capacity
+  const parts: string[] = []
+  if (state.running > 0 || state.pending > 0) {
+    parts.push(`${state.running}/${state.capacity}`)
+    if (state.pending > 0) parts.push(`+${state.pending} pending`)
+  }
+  if (parts.length === 0) return ''
+  return busy ? ` · ⏳ ${parts.join(' ')}` : ` · ${parts.join(' ')}`
 }
