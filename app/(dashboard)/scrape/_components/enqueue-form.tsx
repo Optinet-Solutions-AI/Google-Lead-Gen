@@ -31,6 +31,7 @@ const LANG_NAMES: Record<string, string> = {
   da: 'Danish',
   no: 'Norwegian',
   sl: 'Slovenian',
+  sv: 'Swedish',
 }
 
 function langOptions(profile: Profile | null): string[] {

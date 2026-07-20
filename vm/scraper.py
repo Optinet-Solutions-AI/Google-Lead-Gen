@@ -2775,7 +2775,7 @@ BING_COUNTRY_TO_CC = {
     "Ireland": "IE", "Italy": "IT", "Kuwait": "KW",
     "New Zealand": "NZ", "Norway": "NO", "Oman": "OM",
     "Qatar": "QA", "Saudi Arabia": "SA", "Slovenia": "SI",
-    "Switzerland": "CH", "UAE": "AE", "UK": "GB",
+    "Sweden": "SE", "Switzerland": "CH", "UAE": "AE", "UK": "GB",
 }
 
 
