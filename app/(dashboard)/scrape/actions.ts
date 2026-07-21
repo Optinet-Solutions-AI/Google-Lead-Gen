@@ -30,6 +30,7 @@ import { parseStagFromUrl, guessBrandFromUrl } from '@/lib/stag-extraction/extra
 import { decodeAdUrl } from '@/lib/decode-ad-url'
 import { logActivity } from '@/lib/activity-log'
 import { checkQuota } from '@/lib/scrape-quota'
+import { filterOutInFlight } from '@/lib/scrape/filter-in-flight'
 import { getFleetQueueSnapshot } from './_lib/queries'
 import { pushJobToMonday as pushJobToMondayLib } from '@/lib/monday/push-job'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
@@ -3493,6 +3494,21 @@ export async function rerunScrapeFiltered(
     created_by_is_shadow: boolean | null
   }
 
+  // Dedup guard: skip if this (keyword, country, engine) triple already
+  // has an in-flight sibling. Prevents duplicate work when users repeat-
+  // click "Try again". Terminal statuses (captcha/failed/completed/
+  // cancelled) do NOT count — a fresh retry is fine if nothing is
+  // actively working on the same keyword.
+  const { safe: safeArr, skippedKeys } = await filterOutInFlight(svc, [j])
+  if (safeArr.length === 0) {
+    return {
+      status: 'error',
+      error:
+        `${skippedKeys[0] ?? '"' + j.keyword + '"'} is already in the queue (pending, running, or awaiting human review). ` +
+        `Wait for the existing attempt to finish (or Cancel it) before re-running.`,
+    }
+  }
+
   // Re-run = one new scrape_queue row → counts against the daily cap
   // just like a fresh enqueue. Admins are exempt inside checkQuota.
   const quota = await checkQuota(1)
@@ -3887,10 +3903,24 @@ export async function bulkRerunScrapeJobs(
   const rows = (jobs ?? []) as Row[]
   if (rows.length === 0) return { status: 'error', error: 'No matching jobs found.' }
 
+  // Dedup guard: skip any (keyword, country, engine) triple that
+  // already has an in-flight sibling (pending/running/needs_human).
+  // Prevents the retry-clone explosion when the same batch is bulk-
+  // retried multiple times (issue observed 2026-07-20).
+  const { safe: safeRows, skipped: skippedRows, skippedKeys } = await filterOutInFlight(svc, rows)
+  if (safeRows.length === 0) {
+    return {
+      status: 'error',
+      error:
+        `All ${rows.length} selected scrape${rows.length === 1 ? '' : 's'} already have an in-flight copy in the queue — nothing new to re-run. ` +
+        `Wait for the existing attempt to finish (or Cancel it) before retrying.`,
+    }
+  }
+
   // Insert one fresh queue row per selected source job. Same shape as
   // rerunScrapeFiltered, just batched. Workers pick them up via the
   // normal claim flow within ~5s.
-  const inserts = rows.map(r => ({
+  const inserts = safeRows.map(r => ({
     keyword: r.keyword,
     country_code: r.country_code,
     pages: r.pages,
@@ -3911,14 +3941,21 @@ export async function bulkRerunScrapeJobs(
   await logActivity({
     action: 'scrape.bulk_rerun',
     entity_type: 'scrape_jobs_bulk',
-    details: { requested: jobIds.length, queued: rows.length },
+    details: {
+      requested: jobIds.length,
+      queued: safeRows.length,
+      skipped: skippedRows.length,
+      skipped_keys: skippedKeys.slice(0, 20), // cap to avoid huge log entries
+    },
   })
 
   revalidatePath('/scrape')
-  return {
-    status: 'ok',
-    message: `Re-queued ${rows.length} scrape${rows.length === 1 ? '' : 's'}. Workers will pick them up within ~5 s.`,
-  }
+  const baseMsg = `Re-queued ${safeRows.length} scrape${safeRows.length === 1 ? '' : 's'}. Workers will pick them up within ~5 s.`
+  const suffix =
+    skippedRows.length > 0
+      ? ` Skipped ${skippedRows.length} that already had an in-flight copy in the queue.`
+      : ''
+  return { status: 'ok', message: baseMsg + suffix }
 }
 
 export async function bulkDeleteScrapeJobs(
