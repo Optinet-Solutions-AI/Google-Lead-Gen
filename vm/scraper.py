@@ -2137,6 +2137,67 @@ def _page_shows_google_block(page_lower: str) -> bool:
     return any(m in page_lower for m in _GOOGLE_BLOCK_PAGE_MARKERS)
 
 
+# --- Free-recovery helpers (added 2026-07-21) ---
+# When a captcha wall appears, we try three progressively-more-expensive
+# recovery paths in order: (1) free refresh with session-state wipe,
+# (2) paid 2Captcha, (3) human via noVNC. Previously we went straight
+# to 2Captcha, spending credits on captchas a simple refresh would
+# have cleared. Refresh + cookie clear is free — always try it first.
+_FREE_RECOVERY_MAX_ATTEMPTS = 3
+_FREE_RECOVERY_SETTLE_S = 4.0
+_2CAPTCHA_MAX_ATTEMPTS = 3
+_2CAPTCHA_INTER_ATTEMPT_SETTLE_S = 3.0
+
+
+def _clear_session_state(driver, *, keep_google_login: bool = False) -> None:
+    """Best-effort wipe of the browser session state so the next request
+    starts with no cookies / localStorage / sessionStorage carried over.
+
+    keep_google_login=True skips the cookie delete (only clears storage).
+    Used on DE/GB/NO where Google-login continuity is needed for PPC ads —
+    losing the login cookies mid-session means the ad panel doesn't render
+    on retry.
+    """
+    try:
+        driver.execute_script(
+            "try { window.localStorage.clear(); } catch (e) {} "
+            "try { window.sessionStorage.clear(); } catch (e) {}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] session clear: storage wipe failed: {exc}", file=sys.stderr)
+    if keep_google_login:
+        return
+    try:
+        driver.delete_all_cookies()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] session clear: cookie wipe failed: {exc}", file=sys.stderr)
+
+
+def _try_free_recovery(driver, is_still_blocked, *, max_attempts: int = _FREE_RECOVERY_MAX_ATTEMPTS) -> bool:
+    """Attempt to clear a captcha wall by clearing session state + refreshing
+    the page, up to max_attempts times. Returns True if the wall cleared.
+
+    Skips the cookie wipe (storage-only) when the current profile needs
+    a Google login preserved (DE/GB/NO), per _CAPTCHA_SOLVER_CTX.
+    """
+    keep_login = bool(_CAPTCHA_SOLVER_CTX.get("requires_google_login"))
+    for attempt in range(1, max_attempts + 1):
+        _clear_session_state(driver, keep_google_login=keep_login)
+        try:
+            driver.refresh()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] free-recovery attempt {attempt}: refresh raised: {exc}", file=sys.stderr)
+            return False
+        time.sleep(_FREE_RECOVERY_SETTLE_S)
+        if not is_still_blocked():
+            print(f"[INFO] free-recovery cleared the wall on attempt {attempt} "
+                  f"(cookies {'kept' if keep_login else 'wiped'})")
+            return True
+    print(f"[INFO] free-recovery: {max_attempts} refresh cycles did not clear the wall — "
+          f"falling through to 2Captcha", file=sys.stderr)
+    return False
+
+
 def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, interactive=None):
     """Detect if Google is showing a CAPTCHA or unusual traffic page.
 
@@ -2185,12 +2246,31 @@ def check_for_captcha(driver, *, job_id=None, worker_id=None, worker_port=None, 
               file=sys.stderr)
         raise CaptchaDetectedException("CAPTCHA detected (IP mismatch)")
 
-    # Automated 2Captcha first (when enabled + key present). A clean solve
-    # resumes the scrape with zero operator involvement. Anything less —
-    # disabled, unsolvable, timed out, or still blocked after injection —
-    # returns False and we fall through to the manual / fail path below.
-    if attempt_auto_captcha_solve(driver):
+    # STEP 1 — Free recovery: clear session state + refresh, up to 3×.
+    # Refreshing on a rotating proxy country picks up a new egress IP,
+    # and clearing cookies/localStorage removes the session flag that
+    # accumulated from prior requests. Many captchas clear on this alone
+    # — much cheaper than a 2Captcha call. Skipped-cookies mode on
+    # DE/GB/NO preserves the Google login for their PPC-ad rendering.
+    if _try_free_recovery(driver, _is_captcha):
         return
+
+    # STEP 2 — Paid 2Captcha auto-solve, up to 3 attempts. Each attempt
+    # re-extracts the challenge (a refresh may have swapped the sitekey)
+    # and re-injects the token. Bounded so we don't burn credits on a
+    # session Google has permanently flagged.
+    for solve_attempt in range(1, _2CAPTCHA_MAX_ATTEMPTS + 1):
+        if attempt_auto_captcha_solve(driver):
+            return
+        if solve_attempt < _2CAPTCHA_MAX_ATTEMPTS:
+            print(f"[INFO] 2captcha attempt {solve_attempt}/{_2CAPTCHA_MAX_ATTEMPTS} "
+                  f"did not clear — retrying", file=sys.stderr)
+            time.sleep(_2CAPTCHA_INTER_ATTEMPT_SETTLE_S)
+            if not _is_captcha():
+                # Wall self-cleared while we waited between attempts.
+                return
+    print(f"[INFO] 2captcha exhausted {_2CAPTCHA_MAX_ATTEMPTS} attempts — "
+          f"falling through to interactive checkpoint", file=sys.stderr)
 
     # Per-user availability gate, checked up front. If the job owner isn't
     # on call for manual CAPTCHA review, do NOT enter the park/refresh loop:
