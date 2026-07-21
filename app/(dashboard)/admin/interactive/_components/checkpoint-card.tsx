@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   Bot,
   CheckCircle2,
+  Check,
+  Copy,
   Cookie,
   ExternalLink,
   Eye,
@@ -339,6 +341,14 @@ export function CheckpointCard({
           )}
         </div>
 
+        {row.status === 'waiting' && requester?.keyword && (
+          <KeywordCopyPill keyword={requester.keyword} />
+        )}
+
+        {row.status === 'waiting' && requester?.keyword && (
+          <OperatorPlaybook keyword={requester.keyword} />
+        )}
+
         {row.status === 'waiting' && (
           <div className="flex flex-col gap-2">
             {claimOther && (
@@ -516,4 +526,111 @@ export function CheckpointCard({
 function minutesLeftFromIso(iso: string): number {
   const ms = new Date(iso).getTime() - Date.now()
   return Math.max(0, Math.ceil(ms / 60_000))
+}
+
+/** Compact copyable pill showing the scrape's keyword. Operator can copy
+ *  and paste into a fresh SERP tab inside noVNC if the auto-solver /
+ *  captcha click alone won't clear the wall. Click-to-copy with a brief
+ *  "Copied!" flash so they know it landed on the clipboard. */
+function KeywordCopyPill({ keyword }: { keyword: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(keyword)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* user can still select-and-copy the text manually */
+    }
+  }
+  return (
+    <div className="flex items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-2 py-1">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+        Keyword
+      </span>
+      <code
+        className="min-w-0 flex-1 truncate rounded bg-[color:var(--color-bg-primary)] px-1.5 py-0.5 font-mono text-[11px] text-[color:var(--color-text-primary)]"
+        title={keyword}
+      >
+        {keyword}
+      </code>
+      <button
+        type="button"
+        onClick={copy}
+        className={[
+          'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors',
+          copied
+            ? 'bg-emerald-100 text-emerald-800'
+            : 'border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)]',
+        ].join(' ')}
+        title="Copy keyword to clipboard"
+      >
+        {copied ? (
+          <>
+            <Check className="h-3 w-3" /> Copied
+          </>
+        ) : (
+          <>
+            <Copy className="h-3 w-3" /> Copy
+          </>
+        )}
+      </button>
+    </div>
+  )
+}
+
+/** Collapsible mini-playbook for the operator. Guides them through the
+ *  fallback flow when a captcha click alone isn't enough — open a
+ *  fresh tab in noVNC, paste the keyword, run the search normally,
+ *  then Resume once results are visible. Uses <details>/<summary> so
+ *  it's zero-JS collapsible and stays out of the way when not needed. */
+function OperatorPlaybook({ keyword }: { keyword: string }) {
+  return (
+    <details className="group rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)]/50 px-2.5 py-1.5 text-[11px]">
+      <summary className="cursor-pointer select-none text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]">
+        <span className="font-semibold">What to do →</span>{' '}
+        <span className="opacity-80">quick playbook</span>
+      </summary>
+      <ol className="mt-2 flex list-decimal flex-col gap-1 pl-5 text-[color:var(--color-text-primary)]">
+        <li>
+          Click <strong>Open VNC</strong> above — the browser tab opens showing
+          the paused page with the captcha (or Google&apos;s <em>Sorry</em>
+          block).
+        </li>
+        <li>
+          Try to <strong>solve the captcha</strong> directly if one is shown
+          (click the checkbox, pick images, etc.).
+        </li>
+        <li>
+          If it&apos;s a <em>&quot;Sorry, we can&apos;t verify this
+          request&quot;</em> page with no captcha — open a{' '}
+          <strong>new tab inside the noVNC window</strong> (not your own
+          browser) and go to{' '}
+          <code className="rounded bg-[color:var(--color-bg-primary)] px-1 py-0.5 font-mono">
+            google.com
+          </code>
+          .
+        </li>
+        <li>
+          Paste the keyword{' '}
+          <code className="rounded bg-[color:var(--color-bg-primary)] px-1 py-0.5 font-mono">
+            {keyword}
+          </code>{' '}
+          and hit Enter. If results appear normally, the block has lifted.
+        </li>
+        <li>
+          Come back to this page and click{' '}
+          <strong className="text-emerald-700">Resume</strong>. The scraper
+          re-navigates to the SERP with a fresh session and continues from
+          where it left off.
+        </li>
+        <li>
+          If Google keeps blocking even after step 4, click{' '}
+          <strong className="text-red-700">Cancel</strong> — this frees the
+          country slot so other work can proceed. The user can re-submit
+          tomorrow when the block usually lifts.
+        </li>
+      </ol>
+    </details>
+  )
 }
