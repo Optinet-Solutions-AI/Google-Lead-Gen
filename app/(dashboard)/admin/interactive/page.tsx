@@ -5,7 +5,34 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { buildSignedVncUrl } from '@/lib/interactive/signed-vnc-url'
 import { getShadowContext } from '@/lib/shadow-filter'
 import { CheckpointCard } from './_components/checkpoint-card'
+import { FilteredCheckpointList } from './_components/filtered-list'
 import { HideTimersToggle, TimerPrefsProvider } from './_components/timer-prefs'
+import { ScrapeOnlyPrefsProvider, ScrapeOnlyToggle } from './_components/scrape-only-prefs'
+
+// Search-engine hosts. A checkpoint on any of these = search captcha
+// (blocks the actual SERP scrape). Anything else = lead-site captcha
+// (usually a cookie banner on a casino review site — Phase-2 enrichment).
+const SEARCH_ENGINE_HOSTS = new Set([
+  'google.com',
+  'bing.com',
+  'youtube.com',
+  'duckduckgo.com',
+  'yahoo.com',
+])
+
+function isSearchEngineUrl(url: string | null): boolean {
+  if (!url) return true // no URL → assume scrape (safer default)
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, '')
+    if (SEARCH_ENGINE_HOSTS.has(host)) return true
+    for (const engine of SEARCH_ENGINE_HOSTS) {
+      if (host.endsWith('.' + engine)) return true
+    }
+    return false
+  } catch {
+    return true // parse failure → be permissive
+  }
+}
 
 export const dynamic = 'force-dynamic'
 
@@ -184,7 +211,13 @@ export default async function InteractiveCheckpointsPage({
         screenshotUrl = signed?.signedUrl ?? null
       }
       const requester = requesterByJobId.get(row.job_id) ?? null
-      return { row, vncUrl, screenshotUrl, requester }
+      return {
+        row,
+        vncUrl,
+        screenshotUrl,
+        requester,
+        isSearchEngine: isSearchEngineUrl(row.current_url),
+      }
     }),
   )
 
@@ -258,33 +291,41 @@ export default async function InteractiveCheckpointsPage({
       </nav>
 
       <TimerPrefsProvider>
-        {liveCards.length === 0 ? (
-          <div className="rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-10 text-center text-[12px] text-[color:var(--color-text-secondary)]">
-            {filter === 'waiting'
-              ? 'No paused scrapes — workers are humming along on their own.'
-              : `No checkpoints under "${filter}".`}
-          </div>
-        ) : (
-          <>
-            {filter === 'waiting' && (
-              <div className="flex justify-end">
-                <HideTimersToggle />
-              </div>
-            )}
-            <div className="flex flex-col gap-3">
-              {liveCards.map(card => (
-                <CheckpointCard
-                  key={card.row.id}
-                  row={card.row}
-                  vncUrl={card.vncUrl}
-                  screenshotUrl={card.screenshotUrl}
-                  currentUserId={user.id}
-                  requester={card.requester}
-                />
-              ))}
+        <ScrapeOnlyPrefsProvider>
+          {liveCards.length === 0 ? (
+            <div className="rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-10 text-center text-[12px] text-[color:var(--color-text-secondary)]">
+              {filter === 'waiting'
+                ? 'No paused scrapes — workers are humming along on their own.'
+                : `No checkpoints under "${filter}".`}
             </div>
-          </>
-        )}
+          ) : (
+            <>
+              {filter === 'waiting' && (
+                <div className="flex flex-wrap justify-end gap-2">
+                  <ScrapeOnlyToggle />
+                  <HideTimersToggle />
+                </div>
+              )}
+              {filter === 'waiting' ? (
+                <FilteredCheckpointList cards={liveCards} currentUserId={user.id} />
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {liveCards.map(card => (
+                    <CheckpointCard
+                      key={card.row.id}
+                      row={card.row}
+                      vncUrl={card.vncUrl}
+                      screenshotUrl={card.screenshotUrl}
+                      currentUserId={user.id}
+                      requester={card.requester}
+                      isSearchEngine={card.isSearchEngine}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </ScrapeOnlyPrefsProvider>
       </TimerPrefsProvider>
     </div>
   )

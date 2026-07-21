@@ -109,6 +109,11 @@ type Props = {
     username: string | null
     keyword: string | null
   } | null
+  /** True when this checkpoint is on a search-engine URL (google/bing/etc).
+   *  False = the worker's mid-scrape on a lead site (usually cookie
+   *  banners on casino review sites). Drives both the on-card badge and
+   *  the Scrape-only filter's hide behaviour. */
+  isSearchEngine?: boolean
 }
 
 export function CheckpointCard({
@@ -117,6 +122,7 @@ export function CheckpointCard({
   screenshotUrl,
   currentUserId,
   requester,
+  isSearchEngine = true,
 }: Props) {
   const [resolveState, resolveAction, resolvePending] = useActionState(
     resolveCheckpointAction,
@@ -254,6 +260,21 @@ export function CheckpointCard({
           >
             <ReasonIcon className="h-2.5 w-2.5" />
             {reason.label}
+          </span>
+          <span
+            className={[
+              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+              isSearchEngine
+                ? 'bg-sky-100 text-sky-800'
+                : 'bg-purple-100 text-purple-800',
+            ].join(' ')}
+            title={
+              isSearchEngine
+                ? 'This captcha is on a search-engine page (Google/Bing/etc.) — clearing it lets the scrape resume.'
+                : 'This captcha is on a lead site (usually a cookie banner on a casino review site) — happens during Phase-2 enrichment. Lower priority for scraping.'
+            }
+          >
+            {isSearchEngine ? 'search' : 'lead site'}
           </span>
           <span
             className={[
