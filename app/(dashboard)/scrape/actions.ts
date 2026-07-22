@@ -289,10 +289,19 @@ export async function enqueueScrape(
       language: finalLang,
       search_engine: engine,
       view_mode: viewMode,
-      // Only stamp on engines that honour it today (twitch). Leaves the
-      // column NULL for every other engine so the worker path for
-      // google/bing/etc. sees no change in behaviour.
-      top_n_by_follower: engine === 'twitch' ? topNByFollower : null,
+      // Only stamp on engines whose scraper honours the cap today
+      // (twitch / youtube / kick / snapchat — each has a size metric
+      // available at search time). TikTok and X return no follower
+      // count from their search endpoint, so the cap can't be applied
+      // pre-insert. Leaves NULL on every other engine so their worker
+      // path sees no change in behaviour.
+      top_n_by_follower:
+        engine === 'twitch' ||
+        engine === 'youtube' ||
+        engine === 'kick' ||
+        engine === 'snapchat'
+          ? topNByFollower
+          : null,
       created_by_email: createdByEmail,
       created_by_username: createdByUsername,
       created_by_display: createdByDisplay,

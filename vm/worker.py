@@ -706,6 +706,7 @@ def run_youtube_search(
     language: str,
     job_id: str,
     max_results: int = 50,
+    top_n_by_follower: int | None = None,
 ) -> tuple[int, str, Path, Path]:
     """Invoke youtube_search.py as a subprocess.
 
@@ -734,6 +735,8 @@ def run_youtube_search(
         "--worker-id", WORKER_ID,
         "--output", str(output_path),
     ]
+    if top_n_by_follower is not None and top_n_by_follower > 0:
+        cmd.extend(["--top-n-by-follower", str(top_n_by_follower)])
 
     env = os.environ.copy()
     log.info("launching youtube_search (keyword=%r country=%s lang=%s log=%s timeout=%ds)",
@@ -788,6 +791,20 @@ def process_youtube_job(job: dict[str, Any]) -> None:
     profile = fetch_profile(country_code) or {}
     country_name = profile.get("country_name") or country_code
 
+    # Optional per-scrape cap (same nullable column shared with twitch /
+    # kick / snapchat). YouTube honours it by sorting on subscriber_count.
+    top_n_raw = job.get("top_n_by_follower")
+    top_n_by_follower: int | None = None
+    if top_n_raw is not None:
+        try:
+            n = int(top_n_raw)
+            if n > 0:
+                top_n_by_follower = n
+        except (TypeError, ValueError):
+            top_n_by_follower = None
+    if top_n_by_follower is not None:
+        log.info("youtube job %s | top_n_by_follower=%d", job_id, top_n_by_follower)
+
     try:
         exit_code, combined_log, output_path, log_path = run_youtube_search(
             keyword=keyword,
@@ -795,6 +812,7 @@ def process_youtube_job(job: dict[str, Any]) -> None:
             country_code=country_code,
             language=language,
             job_id=job_id,
+            top_n_by_follower=top_n_by_follower,
         )
     except subprocess.TimeoutExpired:
         fail_job(job_id, f"YouTube search took too long ({YOUTUBE_SEARCH_TIMEOUT_S}s) and was stopped.")
@@ -847,6 +865,7 @@ def run_kick_search(
     job_id: str,
     keep_languages: str = "",
     max_results: int = 100,
+    top_n_by_follower: int | None = None,
 ) -> tuple[int, str, Path, Path]:
     """Invoke kick_search.py as a subprocess.
 
@@ -876,6 +895,8 @@ def run_kick_search(
         "--worker-id", WORKER_ID,
         "--output", str(output_path),
     ]
+    if top_n_by_follower is not None and top_n_by_follower > 0:
+        cmd.extend(["--top-n-by-follower", str(top_n_by_follower)])
 
     env = os.environ.copy()
     log.info("launching kick_search (keyword=%r lang=%s log=%s timeout=%ds)",
@@ -934,6 +955,20 @@ def process_kick_job(job: dict[str, Any]) -> None:
     ) or "en"
     log.info("kick job %s | language filter keep=%s", job_id, keep_languages)
 
+    # Optional per-scrape cap (shared nullable column). Kick sorts by
+    # active_subscribers_count (see kick_search.py's --top-n-by-follower).
+    top_n_raw = job.get("top_n_by_follower")
+    top_n_by_follower: int | None = None
+    if top_n_raw is not None:
+        try:
+            n = int(top_n_raw)
+            if n > 0:
+                top_n_by_follower = n
+        except (TypeError, ValueError):
+            top_n_by_follower = None
+    if top_n_by_follower is not None:
+        log.info("kick job %s | top_n_by_follower=%d", job_id, top_n_by_follower)
+
     try:
         exit_code, combined_log, output_path, log_path = run_kick_search(
             keyword=keyword,
@@ -942,6 +977,7 @@ def process_kick_job(job: dict[str, Any]) -> None:
             language=language,
             keep_languages=keep_languages,
             job_id=job_id,
+            top_n_by_follower=top_n_by_follower,
         )
     except subprocess.TimeoutExpired:
         fail_job(job_id, f"Kick search took too long ({KICK_SEARCH_TIMEOUT_S}s) and was stopped.")
@@ -1811,6 +1847,7 @@ def run_snapchat_search(
     language: str,
     job_id: str,
     max_results: int,
+    top_n_by_follower: int | None = None,
 ) -> tuple[int, str, Path, Path]:
     """Invoke snapchat_search.py as a subprocess. PURE HTTP like
     run_kick_search — no GoLogin, no port, no view_mode. Single pass:
@@ -1836,6 +1873,8 @@ def run_snapchat_search(
         "--worker-id", WORKER_ID,
         "--output", str(output_path),
     ]
+    if top_n_by_follower is not None and top_n_by_follower > 0:
+        cmd.extend(["--top-n-by-follower", str(top_n_by_follower)])
 
     env = os.environ.copy()
     log.info("launching snapchat_search (keyword=%r lang=%s log=%s timeout=%ds)",
@@ -1868,6 +1907,20 @@ def process_snapchat_job(job: dict[str, Any]) -> None:
     log.info("claimed snapchat job %s | country=%s keyword=%r lang=%s",
              job_id, country_code, keyword, language)
 
+    # Optional per-scrape cap (shared nullable column). Snapchat sorts
+    # by subscriber_count (see snapchat_search.py's --top-n-by-follower).
+    top_n_raw = job.get("top_n_by_follower")
+    top_n_by_follower: int | None = None
+    if top_n_raw is not None:
+        try:
+            n = int(top_n_raw)
+            if n > 0:
+                top_n_by_follower = n
+        except (TypeError, ValueError):
+            top_n_by_follower = None
+    if top_n_by_follower is not None:
+        log.info("snapchat job %s | top_n_by_follower=%d", job_id, top_n_by_follower)
+
     try:
         exit_code, combined_log, output_path, log_path = run_snapchat_search(
             keyword=keyword,
@@ -1875,6 +1928,7 @@ def process_snapchat_job(job: dict[str, Any]) -> None:
             language=language,
             job_id=job_id,
             max_results=SNAPCHAT_PHASE1_MAX_RESULTS,
+            top_n_by_follower=top_n_by_follower,
         )
     except subprocess.TimeoutExpired:
         fail_job(job_id, f"Snapchat search took too long ({SNAPCHAT_SEARCH_TIMEOUT_S}s) and was stopped.")

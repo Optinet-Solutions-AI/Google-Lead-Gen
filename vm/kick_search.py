@@ -332,6 +332,16 @@ def main() -> None:
              "string disables the filter.",
     )
     parser.add_argument("--max-results", type=int, default=100, help="Max total live streamers to fetch (default 100)")
+    parser.add_argument(
+        "--top-n-by-follower",
+        type=int,
+        default=0,
+        help="Optional cap: after enrichment populates active_subscribers_count, "
+             "sort DESC and keep only the top N. The tail is discarded entirely "
+             "(no DB insert). 0 (default) = disabled = keep everything. Note: "
+             "Kick has no follower count at search time; active_subscribers_count "
+             "is the closest sortable metric (and a stronger buying-intent proxy).",
+    )
     parser.add_argument("--job-id", required=True, help="scrape_queue.id this run belongs to")
     parser.add_argument("--worker-id", default="", help="Worker identifier (logged only)")
     parser.add_argument("--output", required=True, help="Path to write the summary JSON")
@@ -455,6 +465,33 @@ def main() -> None:
         print("[DONE] KICK | Total: 0 (all filtered by language)")
         print("[RESULT] SUCCESS")
         return
+
+    # Optional per-scrape cap: rank enriched channels by
+    # active_subscribers_count DESC (nulls last) and keep only the top N.
+    # The tail is discarded entirely — no DB insert. Kick's search
+    # endpoint returns no follower_count, so subscribers is the closest
+    # sortable size metric (and a stronger paying-audience proxy).
+    if args.top_n_by_follower and args.top_n_by_follower > 0:
+        cap = args.top_n_by_follower
+        if len(enriched) > cap:
+            def _sub_key(s: dict[str, Any]) -> tuple[int, int]:
+                sub = s.get("active_subscribers_count")
+                if isinstance(sub, int):
+                    return (0, -sub)  # known subs first, DESC
+                return (1, 0)         # unknowns last
+            enriched.sort(key=_sub_key)
+            dropped_n = len(enriched) - cap
+            enriched = enriched[:cap]
+            print(
+                f"[INFO] --top-n-by-follower={cap}: kept top {cap} by "
+                f"active_subscribers_count, dropped {dropped_n} lower-subscriber "
+                f"streamers (no DB insert)"
+            )
+        else:
+            print(
+                f"[INFO] --top-n-by-follower={cap}: only {len(enriched)} streamers "
+                f"available, nothing to drop"
+            )
 
     # 5. Supabase insert (skipped in --dry-run)
     if args.dry_run:

@@ -311,6 +311,17 @@ def main() -> None:
     parser.add_argument("--country-code", default="", help="ISO-2 country code → YouTube regionCode")
     parser.add_argument("--language", default="en", help="2-letter language code → relevanceLanguage")
     parser.add_argument("--max-results", type=int, default=50, help="search.list maxResults (1-50, default 50)")
+    parser.add_argument(
+        "--top-n-by-follower",
+        type=int,
+        default=0,
+        help="Optional cap: after channels.list populates subscriber_count, "
+             "sort DESC and keep only the top N. The tail is discarded "
+             "entirely (no video-description fetch, no DB insert). "
+             "0 (default) = disabled = keep everything. Answers "
+             "'top N highest-subscriber YouTube channels for this keyword' "
+             "without paying enrichment cost or DB space for the tail.",
+    )
     parser.add_argument("--job-id", required=True, help="scrape_queue.id this run belongs to")
     parser.add_argument("--worker-id", default="", help="Worker identifier (logged only)")
     parser.add_argument("--output", required=True, help="Path to write the summary JSON")
@@ -408,6 +419,32 @@ def main() -> None:
             print(f"[DONE] YOUTUBE | Total: 0 channels (all {dropped_stale} were inactive)")
             print("[RESULT] SUCCESS")
             return
+
+    # Optional per-scrape cap: rank by subscriber_count DESC (nulls last)
+    # and keep only the top N. The tail is discarded entirely — no
+    # description fetch, no DB insert. Runs before the videos.list call
+    # so we don't spend API budget on tail channels we won't keep.
+    if args.top_n_by_follower and args.top_n_by_follower > 0:
+        cap = args.top_n_by_follower
+        if len(channels) > cap:
+            def _sub_key(item: tuple[str, dict[str, Any]]) -> tuple[int, int]:
+                cid, _meta = item
+                sub = (details.get(cid) or {}).get("subscriber_count")
+                if isinstance(sub, int):
+                    return (0, -sub)  # known subs first, DESC
+                return (1, 0)         # unknowns last
+            ordered = sorted(channels.items(), key=_sub_key)
+            dropped_n = len(ordered) - cap
+            channels = OrderedDict(ordered[:cap])
+            print(
+                f"[INFO] --top-n-by-follower={cap}: kept top {cap} by subscriber_count, "
+                f"dropped {dropped_n} lower-subscriber channels (no enrichment, no DB insert)"
+            )
+        else:
+            print(
+                f"[INFO] --top-n-by-follower={cap}: only {len(channels)} channels available, "
+                f"nothing to drop"
+            )
 
     if args.dry_run:
         print(f"[DRY-RUN] Would insert {len(channels)} channels into youtube_channels.")

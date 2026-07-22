@@ -427,11 +427,22 @@ export function EnqueueForm({
           </select>
         </label>
 
-        {selectedEngine === 'twitch' && (
+        {(selectedEngine === 'twitch' ||
+          selectedEngine === 'youtube' ||
+          selectedEngine === 'kick' ||
+          selectedEngine === 'snapchat') && (
           <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
             <span>
               Top N by followers
-              <span className="ml-1 text-[10px]">(Twitch only, optional)</span>
+              <span className="ml-1 text-[10px]">
+                {selectedEngine === 'twitch'
+                  ? '(Twitch: by follower count)'
+                  : selectedEngine === 'youtube'
+                    ? '(YouTube: by subscriber count)'
+                    : selectedEngine === 'kick'
+                      ? '(Kick: by active-subscribers count)'
+                      : '(Snapchat: by subscriber count)'}
+              </span>
             </span>
             <input
               name="top_n_by_follower"
@@ -439,7 +450,7 @@ export function EnqueueForm({
               min={1}
               max={500}
               placeholder="e.g. 10"
-              title="Keep only the top N Twitch channels by follower count. Blank = keep everything the search returned. When set, the scraper fetches all raw candidates, ranks by follower_count DESC, discards the tail, and only inserts + fully enriches the top N. Saves API budget on empty-shell channels."
+              title="Keep only the top N channels by the platform's follower/subscriber metric. Blank = keep everything the search returned. When set, the scraper fetches all raw candidates, ranks DESC, discards the tail, and only inserts + fully enriches the top N. Not supported on TikTok/X (their search response has no follower metric)."
               className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-1.5 text-[12px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
             />
           </label>

@@ -252,6 +252,14 @@ def main() -> None:
     parser.add_argument("--country-code", default="", help="ISO-2 country code (unused for Snapchat)")
     parser.add_argument("--language", default="en", help="2-letter language code (logged only)")
     parser.add_argument("--max-results", type=int, default=100, help="Max creators to fetch (default 100)")
+    parser.add_argument(
+        "--top-n-by-follower",
+        type=int,
+        default=0,
+        help="Optional cap: after profile enrichment populates subscriber_count, "
+             "sort DESC and keep only the top N. The tail is discarded entirely "
+             "(no DB insert). 0 (default) = disabled = keep everything.",
+    )
     parser.add_argument("--job-id", required=True, help="scrape_queue.id this run belongs to")
     parser.add_argument("--worker-id", default="", help="Worker identifier (logged only)")
     parser.add_argument("--output", required=True, help="Path to write the summary JSON")
@@ -305,6 +313,32 @@ def main() -> None:
         prof["username"] = h
         creators.append(prof)
         time.sleep(SNAP_PROFILE_DELAY_S)
+
+    # Optional per-scrape cap: rank creators by subscriber_count DESC
+    # (nulls last) and keep only the top N. The tail is discarded
+    # entirely — no DB insert. subscriber_count was already fetched by
+    # enrich_profile() above, so nothing extra to pay for.
+    if args.top_n_by_follower and args.top_n_by_follower > 0:
+        cap = args.top_n_by_follower
+        if len(creators) > cap:
+            def _sub_key(c: dict[str, Any]) -> tuple[int, int]:
+                sub = c.get("subscriber_count")
+                if isinstance(sub, int):
+                    return (0, -sub)  # known subs first, DESC
+                return (1, 0)         # unknowns last
+            creators.sort(key=_sub_key)
+            dropped_n = len(creators) - cap
+            creators = creators[:cap]
+            print(
+                f"[INFO] --top-n-by-follower={cap}: kept top {cap} by "
+                f"subscriber_count, dropped {dropped_n} lower-subscriber "
+                f"creators (no DB insert)"
+            )
+        else:
+            print(
+                f"[INFO] --top-n-by-follower={cap}: only {len(creators)} creators "
+                f"available, nothing to drop"
+            )
 
     if args.dry_run:
         rows = [r for r, _ in _build_rows(args.job_id, args.keyword, creators)]
