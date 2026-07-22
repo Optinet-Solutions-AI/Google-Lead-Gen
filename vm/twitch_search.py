@@ -98,6 +98,13 @@ INACTIVE_CUTOFF_DAYS = int(os.environ.get("TWITCH_MAX_INACTIVE_DAYS", "365"))
 # permanently-dormant one; the trade-off is that 0 might legitimately mean
 # "new affiliate account not yet built up".
 NO_SIGNAL_FOLLOWER_MIN = int(os.environ.get("TWITCH_NO_SIGNAL_FOLLOWER_MIN", "0"))
+# Number of top-by-follower channels to fully enrich (VODs + clips + panels).
+# The tail beyond this gets follower_count populated via the fast GraphQL
+# pass but skips the expensive Helix VOD/clip fetches. Saves ~40-70% of
+# Helix API calls per scrape while ensuring the channels operators care
+# about (biggest audience) get the full enrichment treatment. 0 = enrich
+# all (old behaviour). Default 30 fits typical "top of table" review use.
+ENRICH_TOP_N = int(os.environ.get("TWITCH_ENRICH_TOP_N", "30"))
 # Video type for the /videos enrich call. "all" (archives + highlights +
 # uploads) gives both a better last-content date (highlights/uploads persist
 # after the ~14–60d archive auto-expiry) and more link-mining text than the
@@ -686,6 +693,11 @@ def main() -> None:
         users = {}
 
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Pass A — /users + fast GraphQL (panels + follower_count) on ALL
+    # candidates. Cheap; runs regardless of ENRICH_TOP_N so every kept
+    # row has follower_count populated (drives the recency gate + the
+    # UI's default follower-DESC sort).
     panels_ok = 0
     for c in channels:
         bid = c.get("id")
@@ -694,14 +706,6 @@ def main() -> None:
         c["profile_image_url"] = u.get("profile_image_url")
         c["created_at"] = u.get("created_at")
         c["description"] = u.get("description")
-        vod_texts, last_vod_at = get_videos(bid, headers) if bid else ([], None)
-        clip_titles, last_clip_at = get_clips(bid, headers) if bid else ([], None)
-        c["_vod_texts"] = vod_texts
-        c["_clip_titles"] = clip_titles
-        # last_activity_at: freshest of live-now, newest VOD, newest clip.
-        # started_at is the current stream's start (only set while live).
-        live_at = (c.get("started_at") or now_iso) if c.get("is_live") else None
-        c["_last_activity_at"] = iso_max(iso_max(live_at, last_vod_at), last_clip_at)
         if login:
             panels, follower_count, failed = fetch_channel_info(login)
             c["_panels"] = panels
@@ -711,7 +715,46 @@ def main() -> None:
             if not failed:
                 panels_ok += 1
         time.sleep(ENRICH_DELAY_S)
-    print(f"[INFO] Panels fetched for {panels_ok}/{len(channels)} channels")
+    print(f"[INFO] Panels + follower_count fetched for {panels_ok}/{len(channels)} channels")
+
+    # Pass B — sort by follower_count DESC (NULLs to bottom), pick the top
+    # ENRICH_TOP_N for full VOD/clip enrichment. This prioritises the
+    # channels operators actually pitch, saves API budget on the empty-
+    # shell tail (which stays in the results but with no VOD/clip data).
+    def _fc_sort_key(x: dict[str, Any]) -> tuple[int, int]:
+        fc = x.get("_follower_count")
+        if isinstance(fc, int):
+            return (0, -fc)  # sort key: known followers first (asc-negated → desc)
+        return (1, 0)         # unknowns last
+    channels.sort(key=_fc_sort_key)
+    top_cutoff = len(channels) if ENRICH_TOP_N <= 0 else min(ENRICH_TOP_N, len(channels))
+
+    # Pass C — VOD + clips + last_activity_at for the top N, skip for tail.
+    # Tail rows get _vod_texts=[], _clip_titles=[], _last_activity_at=None.
+    for i, c in enumerate(channels):
+        bid = c.get("id")
+        if i < top_cutoff and bid:
+            vod_texts, last_vod_at = get_videos(bid, headers)
+            clip_titles, last_clip_at = get_clips(bid, headers)
+            live_at = (c.get("started_at") or now_iso) if c.get("is_live") else None
+            c["_vod_texts"] = vod_texts
+            c["_clip_titles"] = clip_titles
+            c["_last_activity_at"] = iso_max(iso_max(live_at, last_vod_at), last_clip_at)
+            time.sleep(ENRICH_DELAY_S)
+        else:
+            c["_vod_texts"] = []
+            c["_clip_titles"] = []
+            live_at = (c.get("started_at") or now_iso) if c.get("is_live") else None
+            c["_last_activity_at"] = live_at  # only live-now signal survives for the tail
+    tail_count = len(channels) - top_cutoff
+    if tail_count > 0:
+        print(
+            f"[INFO] Full VOD/clip enrichment for top {top_cutoff} by follower_count; "
+            f"{tail_count} tail channel(s) inserted without VOD/clip data "
+            f"(ENRICH_TOP_N={ENRICH_TOP_N})"
+        )
+    else:
+        print(f"[INFO] Full VOD/clip enrichment for all {len(channels)} channels")
 
     # Recency gate — drop channels whose KNOWN last activity predates the
     # cutoff (Andrei's dead 2-8yr-old channels).
