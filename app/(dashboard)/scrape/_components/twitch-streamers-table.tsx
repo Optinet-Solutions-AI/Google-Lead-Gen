@@ -9,9 +9,10 @@ import { MondayStatusCell } from './monday-status-cell'
  * Discord), and the casino links captured from their About-panels / bio / VOD
  * descriptions (the affiliate funnel). Server component.
  *
- * Sibling of telegram-channels-table.tsx. Follower count is unavailable with
- * an app token; contacts + last-active come from the text mining in
- * twitch_search.py (no public Twitch field exposes them directly).
+ * Sibling of telegram-channels-table.tsx. Follower count is now fetched via
+ * Twitch's public web GraphQL endpoint (see fetch_channel_info in
+ * twitch_search.py, added 2026-07-22). Contacts + last-active come from text
+ * mining in twitch_search.py (no public Twitch field exposes them directly).
  */
 export function TwitchStreamersTable({ rows }: { rows: TwitchStreamerRow[] }) {
   if (rows.length === 0) return null
@@ -33,6 +34,12 @@ export function TwitchStreamersTable({ rows }: { rows: TwitchStreamerRow[] }) {
               title="Monday recognition. Green ✓ = the streamer / affiliate ID / any of their About-panel links is already on a Monday board. Grey ✕ = we checked and found no match. Blank = scoring hasn’t run yet."
             >
               On Monday
+            </th>
+            <th
+              className="cursor-help px-3 py-2 text-right font-medium"
+              title="Follower count fetched via Twitch's public web GraphQL endpoint. Shows — when the fetch failed OR for legacy rows scraped before 2026-07-22."
+            >
+              Followers
             </th>
             <th className="px-3 py-2 font-medium">Game / language</th>
             <th className="px-3 py-2 font-medium">Contact</th>
@@ -134,6 +141,13 @@ function TwitchStreamerRowView({ r }: { r: TwitchStreamerRow }) {
         />
       </td>
 
+      <td className="px-3 py-2 text-right font-mono tabular-nums text-[11px] text-[color:var(--color-text-primary)]">
+        {r.follower_count == null ? (
+          <span className="text-[color:var(--color-text-secondary)]" title="Follower count not available — GraphQL fetch failed or row scraped before follower fetch was added.">—</span>
+        ) : (
+          r.follower_count.toLocaleString()
+        )}
+      </td>
       <td className="px-3 py-2 text-[11px] text-[color:var(--color-text-secondary)]">
         {r.game_name || '—'}
         {r.broadcaster_language && (

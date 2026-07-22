@@ -40,9 +40,11 @@ per extracted URL into public.twitch_links (source panel / vod_description /
 clip_description / bio / stream_title).
 
 Helix app-token limitations (by design — NOT bugs):
-  - follower_count + total_view_count are NOT obtainable with an app token
-    (Twitch locked /channels/followers behind a broadcaster/mod token in 2023;
-    /users.view_count was removed in 2022). Both columns stay NULL.
+  - total_view_count was removed by Twitch in 2022 — permanently unavailable.
+    Column stays NULL.
+  - follower_count via Helix requires a broadcaster/mod token, BUT the public
+    web GraphQL endpoint (`gql.twitch.tv` + unauth client-id) exposes
+    `user.followers.totalCount`. We fetch it there — see fetch_channel_info().
 
   exit 1 — env vars missing / bad args
   exit 2 — Twitch Helix failure (auth, or search unreachable)
@@ -88,6 +90,11 @@ CLIPS_PER_CHANNEL   = int(os.environ.get("TWITCH_CLIPS_PER_CHANNEL", "10"))
 # activity signal at all are kept (last_activity_at stays NULL) so we don't
 # silently lose a streamer who simply has VOD storage off. 0 disables the gate.
 INACTIVE_CUTOFF_DAYS = int(os.environ.get("TWITCH_MAX_INACTIVE_DAYS", "365"))
+# Minimum follower_count needed to keep a channel with no other activity
+# signal (no VOD/clip/live). Small enough to preserve niche legit
+# streamers, big enough to drop empty-shell channels. Set 0 to disable
+# the follower gate (keep current behaviour of "no signal → keep").
+NO_SIGNAL_FOLLOWER_MIN = int(os.environ.get("TWITCH_NO_SIGNAL_FOLLOWER_MIN", "10"))
 # Video type for the /videos enrich call. "all" (archives + highlights +
 # uploads) gives both a better last-content date (highlights/uploads persist
 # after the ~14–60d archive auto-expiry) and more link-mining text than the
@@ -359,58 +366,88 @@ def get_clips(broadcaster_id: str, headers: dict[str, str]) -> tuple[list[str], 
 
 
 # ---------------------------------------------------------------------------
-# gql.twitch.tv — About panels (best-effort, public web client-id)
+# gql.twitch.tv — About panels + follower count (best-effort, public web client-id)
 # ---------------------------------------------------------------------------
 
-_PANELS_QUERY = (
-    "query ChannelPanels($login: String!) {"
-    " user(login: $login) { id panels {"
-    " __typename ... on DefaultPanel { id title description linkURL imageURL } } } }"
+# Combined query: fetches About-panels AND follower count in a single
+# round-trip. Twitch's web frontend exposes both under `user` via the
+# same unauth client-id — no persisted-query hash required for this shape.
+_CHANNEL_INFO_QUERY = (
+    "query ChannelInfo($login: String!) {"
+    " user(login: $login) {"
+    "  id"
+    "  followers { totalCount }"
+    "  panels {"
+    "   __typename ... on DefaultPanel { id title description linkURL imageURL }"
+    "  }"
+    " }"
+    "}"
 )
 
 
-def fetch_panels(login: str) -> tuple[list[dict[str, Any]], bool]:
-    """Fetch a channel's About panels via gql.twitch.tv. Returns
-    (panels, failed). panels is a list of {title, description, linkURL}.
-    Any error → ([], True) so the caller can flag panels_fetch_failed and
-    carry on (the Helix path still produced a usable row)."""
+def fetch_channel_info(login: str) -> tuple[list[dict[str, Any]], int | None, bool]:
+    """Fetch a channel's About-panels + follower count via gql.twitch.tv in
+    a single request. Returns (panels, follower_count, panels_failed).
+
+    - panels: list of {title, description, linkURL} — same shape as before
+    - follower_count: int if returned, None on any parse failure (kept
+      distinct from panels_failed so a broken followers subquery doesn't
+      also invalidate the panel data or vice versa)
+    - panels_failed: True on any transport / GraphQL error so the caller
+      can still flag panels_fetch_failed and carry on
+    """
     try:
         r = requests.post(
             TWITCH_GQL_URL,
             headers={"Client-Id": TWITCH_GQL_CLIENT_ID, "Content-Type": "application/json"},
             json={
-                "operationName": "ChannelPanels",
-                "query": _PANELS_QUERY,
+                "operationName": "ChannelInfo",
+                "query": _CHANNEL_INFO_QUERY,
                 "variables": {"login": login},
             },
             timeout=HTTP_TIMEOUT_S,
         )
     except Exception as exc:  # noqa: BLE001
-        print(f"[WARN] gql panels {login}: {exc}", file=sys.stderr)
-        return [], True
+        print(f"[WARN] gql channel-info {login}: {exc}", file=sys.stderr)
+        return [], None, True
     if r.status_code != 200:
-        print(f"[WARN] gql panels {login} HTTP {r.status_code}", file=sys.stderr)
-        return [], True
+        print(f"[WARN] gql channel-info {login} HTTP {r.status_code}", file=sys.stderr)
+        return [], None, True
     try:
         body = r.json()
     except Exception:  # noqa: BLE001
-        return [], True
+        return [], None, True
     if isinstance(body, dict) and body.get("errors"):
-        return [], True
+        return [], None, True
     user = ((body or {}).get("data") or {}).get("user") or {}
-    panels = user.get("panels")
-    if panels is None:
-        return [], True
-    out: list[dict[str, Any]] = []
-    for p in panels:
+    # Follower count — best-effort; missing / non-int leaves it None.
+    follower_count: int | None = None
+    followers = user.get("followers")
+    if isinstance(followers, dict):
+        tc = followers.get("totalCount")
+        if isinstance(tc, int):
+            follower_count = tc
+    # Panels — same handling as the old fetch_panels()
+    panels_raw = user.get("panels")
+    if panels_raw is None:
+        return [], follower_count, True
+    panels: list[dict[str, Any]] = []
+    for p in panels_raw:
         if not isinstance(p, dict):
             continue
-        out.append({
+        panels.append({
             "title": p.get("title"),
             "description": p.get("description"),
             "linkURL": p.get("linkURL"),
         })
-    return out, False
+    return panels, follower_count, False
+
+
+def fetch_panels(login: str) -> tuple[list[dict[str, Any]], bool]:
+    """Backwards-compat wrapper around fetch_channel_info() — some call
+    sites only need the panel data. Discards the follower_count."""
+    panels, _fc, failed = fetch_channel_info(login)
+    return panels, failed
 
 
 # ---------------------------------------------------------------------------
@@ -458,8 +495,10 @@ def _build_payloads(
             "game_name": s.get("game_name"),
             "stream_title": stream_title,
             "tags": s.get("tags"),
-            # follower_count / total_view_count unavailable with an app token.
-            "follower_count": None,
+            # follower_count comes from the public web GraphQL endpoint (see
+            # fetch_channel_info). total_view_count was removed by Twitch in
+            # 2022 and stays NULL forever.
+            "follower_count": s.get("_follower_count"),
             "total_view_count": None,
             "recent_vod_descriptions": vods or None,
             "recent_clip_descriptions": clips or None,
@@ -661,28 +700,48 @@ def main() -> None:
         live_at = (c.get("started_at") or now_iso) if c.get("is_live") else None
         c["_last_activity_at"] = iso_max(iso_max(live_at, last_vod_at), last_clip_at)
         if login:
-            panels, failed = fetch_panels(login)
+            panels, follower_count, failed = fetch_channel_info(login)
             c["_panels"] = panels
             c["_panels_failed"] = failed
             c["_panels_scraped_at"] = None if failed else now_iso
+            c["_follower_count"] = follower_count
             if not failed:
                 panels_ok += 1
         time.sleep(ENRICH_DELAY_S)
     print(f"[INFO] Panels fetched for {panels_ok}/{len(channels)} channels")
 
     # Recency gate — drop channels whose KNOWN last activity predates the
-    # cutoff (Andrei's dead 2–8yr-old channels). Unknown-activity channels are
-    # kept (NULL last_activity_at) so we never silently lose a live streamer
-    # who just has VODs/clips disabled.
+    # cutoff (Andrei's dead 2-8yr-old channels).
+    #
+    # Unknown-activity channels (NULL last_activity_at) used to be kept
+    # unconditionally to avoid dropping a live streamer whose VODs/clips
+    # were disabled — but the trade-off was 80+ empty-shell channels
+    # ("online casino"-flavour handles with 0 VODs, 0 clips) making it
+    # into every scrape. Now: keep an unknown-activity channel only if
+    # its follower_count is >= NO_SIGNAL_FOLLOWER_MIN — that's the
+    # cheapest signal that it's an actual channel with an audience,
+    # even if it hasn't streamed recently. GraphQL fetch failures leave
+    # follower_count as NULL, which we treat the same as "unknown but
+    # kept" so a transient network hiccup doesn't lose real data.
     if INACTIVE_CUTOFF_DAYS > 0:
         cutoff_epoch = time.time() - INACTIVE_CUTOFF_DAYS * 86400.0
         kept: list[dict[str, Any]] = []
-        dropped_stale = unknown = 0
+        dropped_stale = dropped_empty = kept_unknown = 0
         for c in channels:
             la = c.get("_last_activity_at")
             if not la:
-                unknown += 1
-                kept.append(c)
+                # No activity signal — decide based on follower_count.
+                fc = c.get("_follower_count")
+                if fc is None:
+                    # GraphQL fetch failed OR field missing — err on
+                    # the safe side and keep.
+                    kept_unknown += 1
+                    kept.append(c)
+                elif fc >= NO_SIGNAL_FOLLOWER_MIN:
+                    kept_unknown += 1
+                    kept.append(c)
+                else:
+                    dropped_empty += 1
                 continue
             try:
                 la_epoch = time.mktime(time.strptime(la[:19], "%Y-%m-%dT%H:%M:%S"))
@@ -694,8 +753,10 @@ def main() -> None:
             else:
                 kept.append(c)
         print(
-            f"[INFO] Recency gate (cutoff={INACTIVE_CUTOFF_DAYS}d): kept {len(kept)}/{len(channels)} "
-            f"— dropped {dropped_stale} stale, {unknown} kept with unknown activity"
+            f"[INFO] Recency gate (cutoff={INACTIVE_CUTOFF_DAYS}d, "
+            f"no-signal-follower-min={NO_SIGNAL_FOLLOWER_MIN}): "
+            f"kept {len(kept)}/{len(channels)} — dropped {dropped_stale} stale + "
+            f"{dropped_empty} empty-shell, {kept_unknown} kept with unknown activity"
         )
         channels = kept
         if not channels:

@@ -105,7 +105,7 @@ export function TwitchStreamersPanel({
         text, and About-panel links in one pure-HTTP pass.{' '}
         <strong className="font-medium">Score &amp; check</strong> flags likely casino affiliates (niche score), resolves
         shortener / hub links, parses affiliate S-tags, and checks each ID / @login against Monday. Re-runnable.{' '}
-        <span className="text-[color:var(--color-text-tertiary)]">Follower counts aren&apos;t available via Twitch&apos;s app API, so they show as “—”.</span>
+        <span className="text-[color:var(--color-text-tertiary)]">Follower counts are fetched via Twitch&apos;s public web GraphQL (added 2026-07-22). Legacy rows scraped before that date show as &ldquo;—&rdquo;.</span>
       </p>
 
       {(message || error) && (

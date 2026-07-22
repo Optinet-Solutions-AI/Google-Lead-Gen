@@ -1485,6 +1485,10 @@ export type TwitchStreamerRow = {
   broadcaster_language: string | null
   is_live: boolean | null
   game_name: string | null
+  /** Fetched via public gql.twitch.tv on the scrape run. NULL when the
+   *  GraphQL fetch failed OR for legacy rows scraped before the fetch was
+   *  added (2026-07-22). Render as "—" when null. */
+  follower_count: number | null
   last_activity_at: string | null
   /** Relative "active 3mo ago" label derived from last_activity_at, computed
    *  server-side (not during render — Date.now is impure in a component). */
@@ -1522,16 +1526,17 @@ function relativeActivity(iso: string | null, verb: string): { label: string | n
 }
 
 /** Per-streamer rows for the Twitch results table: new candidates first, then
- *  affiliates, then niche_score desc, then login — with each streamer's
- *  panel/bio/VOD links attached. (No follower count — unavailable with an app
- *  token, so it's never a sort key.) */
+ *  affiliates, then niche_score desc, then follower_count desc as a real
+ *  tie-breaker (bigger channel first), then login. follower_count is fetched
+ *  via public gql.twitch.tv on the scrape run — NULL for legacy rows scraped
+ *  before that path existed. */
 export async function fetchTwitchStreamerRows(jobId: string): Promise<TwitchStreamerRow[]> {
   const svc = createServiceClient()
   const { data: streamers, error } = await svc
     .from('twitch_streamers')
     .select(
       'id, broadcaster_login, display_name, broadcaster_url, profile_image_url, ' +
-        'broadcaster_language, is_live, game_name, last_activity_at, ' +
+        'broadcaster_language, is_live, game_name, follower_count, last_activity_at, ' +
         'contact_email, telegram_url, discord_url, ' +
         'is_likely_affiliate, niche_score, is_new_lead_candidate, is_known_on_monday',
     )
@@ -1563,6 +1568,10 @@ export async function fetchTwitchStreamerRows(jobId: string): Promise<TwitchStre
       if (aff !== 0) return aff
       const ns = Number(b.niche_score ?? -1) - Number(a.niche_score ?? -1)
       if (ns !== 0) return ns
+      // follower_count is now a real tie-breaker — bigger channels first,
+      // NULLs (legacy / GraphQL-fetch-failed rows) sink to the bottom.
+      const fc = (b.follower_count ?? -1) - (a.follower_count ?? -1)
+      if (fc !== 0) return fc
       return (a.broadcaster_login ?? '').localeCompare(b.broadcaster_login ?? '')
     })
     .map(r => {
