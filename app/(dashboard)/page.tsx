@@ -88,7 +88,7 @@ function Workers({ workers }: { workers: WorkerSlot[] }) {
 }
 
 function WorkerCard({ worker }: { worker: WorkerSlot }) {
-  const { busy, current, kind, worker_id, port } = worker
+  const { busy, current, kind, worker_id, label, port } = worker
   const kindCls = kind === 'scrape'
     ? 'bg-amber-100 text-amber-800'
     : 'bg-sky-100 text-sky-800'
@@ -107,8 +107,11 @@ function WorkerCard({ worker }: { worker: WorkerSlot }) {
         <span className={['rounded-full px-2 py-0.5 text-[10px] font-medium', kindCls].join(' ')}>
           {kind}
         </span>
-        <span className="font-mono text-[11px] text-[color:var(--color-text-primary)]">
-          {worker_id}
+        <span
+          className="text-[11px] font-medium text-[color:var(--color-text-primary)]"
+          title={worker_id}
+        >
+          {label}
         </span>
         <span className="text-[10px] text-[color:var(--color-text-secondary)]">port {port}</span>
         <span className="ml-auto inline-flex items-center gap-1 text-[10px]">

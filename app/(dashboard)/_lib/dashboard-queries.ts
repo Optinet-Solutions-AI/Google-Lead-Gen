@@ -98,6 +98,9 @@ export type WorkerKind = 'scrape' | 'enrichment'
 
 export type WorkerSlot = {
   worker_id: string
+  /** Friendly display label ("Scraper Bot 3 (VM1)"). Operators see this on
+   *  the Overview cards instead of the raw port-based worker_id. */
+  label: string
   kind: WorkerKind
   port: number
   busy: boolean
@@ -111,36 +114,42 @@ export type WorkerSlot = {
   }
 }
 
-// Per-VM shape (confirmed against DB 2026-07-21):
-//   - 3 scrape workers on ports 9222–9224 → claimed_by = "vmN-{port}"
-//   - 6 enrichment workers on ports 9222–9227 → claimed_by = "enrich-vmN-{port}"
+// Per-VM shape (2026-07-22 rebalance): scrape workload has been ~80× the
+// enrichment workload over the past 7 days, so we flipped the split:
+//   - 6 scrape workers per VM on ports 9222–9227 → claimed_by = "vmN-{port}"
+//   - 3 enrichment workers per VM on ports 9225–9227 → claimed_by = "enrich-vmN-{port}"
+// (Scrape and enrich share ports 9225–9227 today; active_profile_locks
+// serializes per country so only one browser holds a given port at a time.)
 // Total: 9 workers per VM × FLEET_VM_COUNT (currently 2) = 18 cards.
 // If FLEET_VM_COUNT changes in lib/fleet.ts, extend this list to match.
 export const EXPECTED_WORKERS: ReadonlyArray<{
   id: string
+  label: string
   kind: WorkerKind
   port: number
 }> = [
-  // VM1
-  { id: 'vm1-9222', kind: 'scrape', port: 9222 },
-  { id: 'vm1-9223', kind: 'scrape', port: 9223 },
-  { id: 'vm1-9224', kind: 'scrape', port: 9224 },
-  { id: 'enrich-vm1-9222', kind: 'enrichment', port: 9222 },
-  { id: 'enrich-vm1-9223', kind: 'enrichment', port: 9223 },
-  { id: 'enrich-vm1-9224', kind: 'enrichment', port: 9224 },
-  { id: 'enrich-vm1-9225', kind: 'enrichment', port: 9225 },
-  { id: 'enrich-vm1-9226', kind: 'enrichment', port: 9226 },
-  { id: 'enrich-vm1-9227', kind: 'enrichment', port: 9227 },
-  // VM2
-  { id: 'vm2-9222', kind: 'scrape', port: 9222 },
-  { id: 'vm2-9223', kind: 'scrape', port: 9223 },
-  { id: 'vm2-9224', kind: 'scrape', port: 9224 },
-  { id: 'enrich-vm2-9222', kind: 'enrichment', port: 9222 },
-  { id: 'enrich-vm2-9223', kind: 'enrichment', port: 9223 },
-  { id: 'enrich-vm2-9224', kind: 'enrichment', port: 9224 },
-  { id: 'enrich-vm2-9225', kind: 'enrichment', port: 9225 },
-  { id: 'enrich-vm2-9226', kind: 'enrichment', port: 9226 },
-  { id: 'enrich-vm2-9227', kind: 'enrichment', port: 9227 },
+  // VM1 — scrape
+  { id: 'vm1-9222', label: 'Scraper Bot 1 (VM1)', kind: 'scrape', port: 9222 },
+  { id: 'vm1-9223', label: 'Scraper Bot 2 (VM1)', kind: 'scrape', port: 9223 },
+  { id: 'vm1-9224', label: 'Scraper Bot 3 (VM1)', kind: 'scrape', port: 9224 },
+  { id: 'vm1-9225', label: 'Scraper Bot 4 (VM1)', kind: 'scrape', port: 9225 },
+  { id: 'vm1-9226', label: 'Scraper Bot 5 (VM1)', kind: 'scrape', port: 9226 },
+  { id: 'vm1-9227', label: 'Scraper Bot 6 (VM1)', kind: 'scrape', port: 9227 },
+  // VM1 — enrichment
+  { id: 'enrich-vm1-9225', label: 'Enrichment Bot 1 (VM1)', kind: 'enrichment', port: 9225 },
+  { id: 'enrich-vm1-9226', label: 'Enrichment Bot 2 (VM1)', kind: 'enrichment', port: 9226 },
+  { id: 'enrich-vm1-9227', label: 'Enrichment Bot 3 (VM1)', kind: 'enrichment', port: 9227 },
+  // VM2 — scrape
+  { id: 'vm2-9222', label: 'Scraper Bot 1 (VM2)', kind: 'scrape', port: 9222 },
+  { id: 'vm2-9223', label: 'Scraper Bot 2 (VM2)', kind: 'scrape', port: 9223 },
+  { id: 'vm2-9224', label: 'Scraper Bot 3 (VM2)', kind: 'scrape', port: 9224 },
+  { id: 'vm2-9225', label: 'Scraper Bot 4 (VM2)', kind: 'scrape', port: 9225 },
+  { id: 'vm2-9226', label: 'Scraper Bot 5 (VM2)', kind: 'scrape', port: 9226 },
+  { id: 'vm2-9227', label: 'Scraper Bot 6 (VM2)', kind: 'scrape', port: 9227 },
+  // VM2 — enrichment
+  { id: 'enrich-vm2-9225', label: 'Enrichment Bot 1 (VM2)', kind: 'enrichment', port: 9225 },
+  { id: 'enrich-vm2-9226', label: 'Enrichment Bot 2 (VM2)', kind: 'enrichment', port: 9226 },
+  { id: 'enrich-vm2-9227', label: 'Enrichment Bot 3 (VM2)', kind: 'enrichment', port: 9227 },
 ]
 
 export type DashboardData = {
@@ -461,6 +470,7 @@ export async function loadDashboardData(): Promise<DashboardData> {
       const job = scrapeByWorker.get(w.id)
       return {
         worker_id: w.id,
+        label: w.label,
         kind: w.kind,
         port: w.port,
         busy: !!job,
@@ -479,6 +489,7 @@ export async function loadDashboardData(): Promise<DashboardData> {
       const job = enrichByWorker.get(w.id)
       return {
         worker_id: w.id,
+        label: w.label,
         kind: w.kind,
         port: w.port,
         busy: !!job,
