@@ -180,6 +180,19 @@ export async function enqueueScrape(
     }
   }
 
+  // Optional per-scrape cap for channel-based engines. UI only surfaces
+  // it for Twitch today, and the scraper only honours it there — but
+  // parse defensively (positive int, 1..500) and stash it on every row
+  // in the batch so a later multi-engine cross-product carries it.
+  // Blank / non-numeric / out-of-range → null = existing behaviour
+  // (keep everything the search returned).
+  const topNRaw = String(formData.get('top_n_by_follower') ?? '').trim()
+  const topNParsed = topNRaw ? Number.parseInt(topNRaw, 10) : NaN
+  const topNByFollower: number | null =
+    Number.isFinite(topNParsed) && topNParsed >= 1 && topNParsed <= 500
+      ? topNParsed
+      : null
+
   // Parse the textarea — one keyword per line, trim whitespace,
   // dedupe exact duplicates, drop blanks.
   const keywords = Array.from(
@@ -276,6 +289,10 @@ export async function enqueueScrape(
       language: finalLang,
       search_engine: engine,
       view_mode: viewMode,
+      // Only stamp on engines that honour it today (twitch). Leaves the
+      // column NULL for every other engine so the worker path for
+      // google/bing/etc. sees no change in behaviour.
+      top_n_by_follower: engine === 'twitch' ? topNByFollower : null,
       created_by_email: createdByEmail,
       created_by_username: createdByUsername,
       created_by_display: createdByDisplay,

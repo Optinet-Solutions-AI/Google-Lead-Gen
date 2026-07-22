@@ -612,6 +612,16 @@ def main() -> None:
              "language are filtered OUT; untagged are kept. Empty disables it.",
     )
     parser.add_argument("--max-results", type=int, default=100, help="Max broadcasters to fetch (default 100)")
+    parser.add_argument(
+        "--top-n-by-follower",
+        type=int,
+        default=0,
+        help="Optional cap: after Pass A populates follower_count, sort DESC and "
+             "keep only the top N. The tail is discarded entirely (no VOD/clip "
+             "enrichment, no DB insert). 0 (default) = disabled = keep everything. "
+             "Used to answer 'top N highest-following channels for this keyword' "
+             "without paying enrichment cost for the tail.",
+    )
     parser.add_argument("--job-id", required=True, help="scrape_queue.id this run belongs to")
     parser.add_argument("--worker-id", default="", help="Worker identifier (logged only)")
     parser.add_argument("--output", required=True, help="Path to write the summary JSON")
@@ -727,6 +737,28 @@ def main() -> None:
             return (0, -fc)  # sort key: known followers first (asc-negated → desc)
         return (1, 0)         # unknowns last
     channels.sort(key=_fc_sort_key)
+
+    # Optional per-scrape cap. Distinct from ENRICH_TOP_N (which only
+    # skips VOD/clip enrichment on the tail but still inserts every
+    # channel): --top-n-by-follower TRUNCATES the list so the tail is
+    # discarded entirely — no VOD/clip fetch, no DB row. The user
+    # explicitly asked for this: "we only need those who has high
+    # following. not sort it after we get 500."
+    if args.top_n_by_follower and args.top_n_by_follower > 0:
+        cap = args.top_n_by_follower
+        if len(channels) > cap:
+            dropped_n = len(channels) - cap
+            channels = channels[:cap]
+            print(
+                f"[INFO] --top-n-by-follower={cap}: kept top {cap} by follower_count, "
+                f"dropped {dropped_n} lower-following channels (no enrichment, no DB insert)"
+            )
+        else:
+            print(
+                f"[INFO] --top-n-by-follower={cap}: only {len(channels)} channels available, "
+                f"nothing to drop"
+            )
+
     top_cutoff = len(channels) if ENRICH_TOP_N <= 0 else min(ENRICH_TOP_N, len(channels))
 
     # Pass C — VOD + clips + last_activity_at for the top N, skip for tail.

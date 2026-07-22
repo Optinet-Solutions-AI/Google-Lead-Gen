@@ -1924,11 +1924,16 @@ def run_twitch_search(
     job_id: str,
     keep_languages: str = "",
     max_results: int = 100,
+    top_n_by_follower: int | None = None,
 ) -> tuple[int, str, Path, Path]:
     """Invoke twitch_search.py as a subprocess. PURE HTTP like
     run_kick_search / run_snapchat_search — no GoLogin, no port, no view_mode.
     Single pass: Helix discovery + enrich + gql panel mining in one run, writing
     twitch_streamers + twitch_links directly.
+
+    top_n_by_follower: when set, tells the child to rank all raw candidates
+    by follower_count DESC and keep only the top N before the expensive
+    VOD/clip enrichment pass. None = no cap (existing behaviour).
 
     Returns: (exit_code, combined_log_text, json_output_path, log_path)
     """
@@ -1950,6 +1955,11 @@ def run_twitch_search(
         "--worker-id", WORKER_ID,
         "--output", str(output_path),
     ]
+    # Conditionally forward the top-N cap. Omitting the flag keeps the
+    # child on its default (no cap), so old scrape_queue rows and any
+    # child version that predates the flag still work.
+    if top_n_by_follower is not None and top_n_by_follower > 0:
+        cmd.extend(["--top-n-by-follower", str(top_n_by_follower)])
 
     env = os.environ.copy()
     log.info("launching twitch_search (keyword=%r lang=%s log=%s timeout=%ds)",
@@ -1991,6 +2001,22 @@ def process_twitch_job(job: dict[str, Any]) -> None:
     ) or "en"
     log.info("twitch job %s | language filter keep=%s", job_id, keep_languages)
 
+    # Per-scrape optional cap: keep only the top N candidates by
+    # follower_count. Column is nullable in scrape_queue; the enqueue
+    # UI only stamps it on Twitch rows today.
+    top_n_raw = job.get("top_n_by_follower")
+    top_n_by_follower: int | None = None
+    if top_n_raw is not None:
+        try:
+            n = int(top_n_raw)
+            if n > 0:
+                top_n_by_follower = n
+        except (TypeError, ValueError):
+            top_n_by_follower = None
+    if top_n_by_follower is not None:
+        log.info("twitch job %s | top_n_by_follower=%d (rank all → keep highest N)",
+                 job_id, top_n_by_follower)
+
     try:
         exit_code, combined_log, output_path, log_path = run_twitch_search(
             keyword=keyword,
@@ -1999,6 +2025,7 @@ def process_twitch_job(job: dict[str, Any]) -> None:
             job_id=job_id,
             keep_languages=keep_languages,
             max_results=TWITCH_PHASE1_MAX_RESULTS,
+            top_n_by_follower=top_n_by_follower,
         )
     except subprocess.TimeoutExpired:
         fail_job(job_id, f"Twitch search took too long ({TWITCH_SEARCH_TIMEOUT_S}s) and was stopped.")

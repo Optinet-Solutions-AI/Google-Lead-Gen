@@ -427,6 +427,24 @@ export function EnqueueForm({
           </select>
         </label>
 
+        {selectedEngine === 'twitch' && (
+          <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
+            <span>
+              Top N by followers
+              <span className="ml-1 text-[10px]">(Twitch only, optional)</span>
+            </span>
+            <input
+              name="top_n_by_follower"
+              type="number"
+              min={1}
+              max={500}
+              placeholder="e.g. 10"
+              title="Keep only the top N Twitch channels by follower count. Blank = keep everything the search returned. When set, the scraper fetches all raw candidates, ranks by follower_count DESC, discards the tail, and only inserts + fully enriches the top N. Saves API budget on empty-shell channels."
+              className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-1.5 text-[12px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
+            />
+          </label>
+        )}
+
         <label className="flex flex-col gap-1 text-[12px] text-[color:var(--color-text-secondary)]">
           <span>
             Schedule for{' '}
