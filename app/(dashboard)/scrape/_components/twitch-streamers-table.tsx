@@ -1,20 +1,48 @@
-import { CheckCircle2, Circle, ExternalLink, Mail, MessageCircle, MonitorPlay, Send, Sparkles } from 'lucide-react'
+'use client'
+
+import { useMemo, useState } from 'react'
+import { ArrowDown, ArrowUp, ArrowUpDown, CheckCircle2, Circle, ExternalLink, Mail, MessageCircle, MonitorPlay, Send, Sparkles } from 'lucide-react'
 import type { TwitchStreamerRow } from '../_lib/queries'
 import { MondayStatusCell } from './monday-status-cell'
 
 /**
- * Per-streamer results table for Twitch jobs (Phase 3). New lead candidates
- * first, then affiliates, showing the niche score + NEW badge, the streamer's
- * game/language, the contacts mined from their bio/panels (email / Telegram /
- * Discord), and the casino links captured from their About-panels / bio / VOD
- * descriptions (the affiliate funnel). Server component.
- *
- * Sibling of telegram-channels-table.tsx. Follower count is now fetched via
- * Twitch's public web GraphQL endpoint (see fetch_channel_info in
- * twitch_search.py, added 2026-07-22). Contacts + last-active come from text
- * mining in twitch_search.py (no public Twitch field exposes them directly).
+ * Per-streamer results table for Twitch jobs (Phase 3). Default order: NEW
+ * candidates first, then likely affiliates, then follower_count DESC as a
+ * tie-break (bigger channels rise). Operators can override by clicking the
+ * Followers column header — one click sorts high-to-low, another low-to-high,
+ * a third returns to the default. Follower count is fetched via Twitch's
+ * public web GraphQL (see fetch_channel_info in twitch_search.py, added
+ * 2026-07-22). Contacts + last-active come from text mining.
  */
+
+type SortMode = 'default' | 'followers_desc' | 'followers_asc'
+
 export function TwitchStreamersTable({ rows }: { rows: TwitchStreamerRow[] }) {
+  const [sortMode, setSortMode] = useState<SortMode>('default')
+
+  const sortedRows = useMemo(() => {
+    if (sortMode === 'default') return rows
+    // NULLs go to the bottom regardless of asc/desc — we can't sort by an
+    // unknown value meaningfully, so "unknown" is always last.
+    const dir = sortMode === 'followers_desc' ? -1 : 1
+    return rows.slice().sort((a, b) => {
+      const av = a.follower_count
+      const bv = b.follower_count
+      if (av == null && bv == null) return 0
+      if (av == null) return 1
+      if (bv == null) return -1
+      return dir * (av - bv)
+    })
+  }, [rows, sortMode])
+
+  const cycleSort = () => {
+    setSortMode(m =>
+      m === 'default' ? 'followers_desc' : m === 'followers_desc' ? 'followers_asc' : 'default',
+    )
+  }
+
+  const SortIcon = sortMode === 'followers_desc' ? ArrowDown : sortMode === 'followers_asc' ? ArrowUp : ArrowUpDown
+
   if (rows.length === 0) return null
 
   return (
@@ -35,11 +63,25 @@ export function TwitchStreamersTable({ rows }: { rows: TwitchStreamerRow[] }) {
             >
               On Monday
             </th>
-            <th
-              className="cursor-help px-3 py-2 text-right font-medium"
-              title="Follower count fetched via Twitch's public web GraphQL endpoint. Shows — when the fetch failed OR for legacy rows scraped before 2026-07-22."
-            >
-              Followers
+            <th className="px-3 py-2 text-right font-medium">
+              <button
+                type="button"
+                onClick={cycleSort}
+                title={
+                  sortMode === 'default'
+                    ? 'Click to sort by follower count, highest first. Follower count is fetched via Twitch\'s public web GraphQL. — = unavailable (legacy row or GraphQL fetch failed).'
+                    : sortMode === 'followers_desc'
+                      ? 'Sorted by follower count, highest first. Click again for lowest first.'
+                      : 'Sorted by follower count, lowest first. Click again to reset to default order.'
+                }
+                className={[
+                  'inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-[color:var(--color-bg-primary)]',
+                  sortMode !== 'default' ? 'text-[color:var(--color-text-primary)]' : '',
+                ].join(' ')}
+              >
+                Followers
+                <SortIcon className="h-3 w-3" />
+              </button>
             </th>
             <th className="px-3 py-2 font-medium">Game / language</th>
             <th className="px-3 py-2 font-medium">Contact</th>
@@ -47,7 +89,7 @@ export function TwitchStreamersTable({ rows }: { rows: TwitchStreamerRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map(r => (
+          {sortedRows.map(r => (
             <TwitchStreamerRowView key={r.id} r={r} />
           ))}
         </tbody>

@@ -91,10 +91,13 @@ CLIPS_PER_CHANNEL   = int(os.environ.get("TWITCH_CLIPS_PER_CHANNEL", "10"))
 # silently lose a streamer who simply has VOD storage off. 0 disables the gate.
 INACTIVE_CUTOFF_DAYS = int(os.environ.get("TWITCH_MAX_INACTIVE_DAYS", "365"))
 # Minimum follower_count needed to keep a channel with no other activity
-# signal (no VOD/clip/live). Small enough to preserve niche legit
-# streamers, big enough to drop empty-shell channels. Set 0 to disable
-# the follower gate (keep current behaviour of "no signal → keep").
-NO_SIGNAL_FOLLOWER_MIN = int(os.environ.get("TWITCH_NO_SIGNAL_FOLLOWER_MIN", "10"))
+# signal (no VOD/clip/live). Default 0 = keep everything the Helix search
+# returned; let the UI prioritize by follower_count instead of dropping.
+# Raise this via env if operators start complaining about "empty shell"
+# noise again — a brand-new empty account has 0 followers, so does a
+# permanently-dormant one; the trade-off is that 0 might legitimately mean
+# "new affiliate account not yet built up".
+NO_SIGNAL_FOLLOWER_MIN = int(os.environ.get("TWITCH_NO_SIGNAL_FOLLOWER_MIN", "0"))
 # Video type for the /videos enrich call. "all" (archives + highlights +
 # uploads) gives both a better last-content date (highlights/uploads persist
 # after the ~14–60d archive auto-expiry) and more link-mining text than the

@@ -1562,16 +1562,24 @@ export async function fetchTwitchStreamerRows(jobId: string): Promise<TwitchStre
   return rows
     .slice()
     .sort((a, b) => {
+      // Default sort: NEW candidates first, then likely affiliates, then
+      // by follower_count DESC within each tier (bigger channels rise to
+      // the top), then niche_score, then login. Follower count comes
+      // BEFORE niche_score in the tie-break chain so a huge channel with
+      // a middling score is more visible than a tiny channel with a
+      // slightly higher score — that ordering matches the operator's
+      // outreach priority (audience size matters more than score deltas).
+      // Users can override via the click-to-sort headers on the table.
       const nw = Number(b.is_new_lead_candidate ?? false) - Number(a.is_new_lead_candidate ?? false)
       if (nw !== 0) return nw
       const aff = Number(b.is_likely_affiliate ?? false) - Number(a.is_likely_affiliate ?? false)
       if (aff !== 0) return aff
-      const ns = Number(b.niche_score ?? -1) - Number(a.niche_score ?? -1)
-      if (ns !== 0) return ns
-      // follower_count is now a real tie-breaker — bigger channels first,
-      // NULLs (legacy / GraphQL-fetch-failed rows) sink to the bottom.
+      // NULLs (legacy rows scraped before follower fetch was added) sink
+      // to the bottom of every tier.
       const fc = (b.follower_count ?? -1) - (a.follower_count ?? -1)
       if (fc !== 0) return fc
+      const ns = Number(b.niche_score ?? -1) - Number(a.niche_score ?? -1)
+      if (ns !== 0) return ns
       return (a.broadcaster_login ?? '').localeCompare(b.broadcaster_login ?? '')
     })
     .map(r => {
