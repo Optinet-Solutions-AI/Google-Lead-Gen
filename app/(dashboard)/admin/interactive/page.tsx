@@ -96,11 +96,16 @@ export default async function InteractiveCheckpointsPage({
     typeof sp.status === 'string' && STATUS_TABS.some(t => t.key === sp.status)
       ? (sp.status as (typeof STATUS_TABS)[number]['key'])
       : 'waiting'
-
-  // Shadow isolation. job_is_shadow is denormalised onto each
-  // checkpoint at create time (create_interactive_checkpoint RPC),
-  // so the per-row filter is a plain boolean check.
+  // Per-user scoping. Default: operators only see checkpoints for scrape
+  // jobs they queued themselves — otherwise the Waiting list becomes a
+  // fleet-wide anxiety-inducer when Ryan / Darren / Supriya's batches
+  // pile up. Pass `?all=1` to opt into the fleet-wide view.
+  const showAllUsers = sp.all === '1'
+  // Shadow viewers are already per-user scoped further down (extra
+  // email join); the "show all users" toggle is not offered to them.
   const shadowCtx = await getShadowContext()
+  const nowIso = new Date().toISOString()
+
   let q = svc
     .from('interactive_checkpoints')
     .select(
@@ -118,7 +123,15 @@ export default async function InteractiveCheckpointsPage({
   } else if (filter !== 'all') {
     q = q.eq('status', filter)
   }
-  let countsQ = svc.from('interactive_checkpoints').select('status, resolution_method')
+  // Past-expiry rows drop out of the Waiting view entirely — they're
+  // dead sessions the worker has already given up on. The user just
+  // sees them again as `failed` on /scrape and can re-queue.
+  if (filter === 'waiting') {
+    q = q.gt('expires_at', nowIso)
+  }
+  let countsQ = svc
+    .from('interactive_checkpoints')
+    .select('status, resolution_method, expires_at, job_id')
   if (shadowCtx.isShadow) {
     q = q.eq('job_is_shadow', true)
     countsQ = countsQ.eq('job_is_shadow', true)
@@ -127,34 +140,56 @@ export default async function InteractiveCheckpointsPage({
     countsQ = countsQ.eq('job_is_shadow', false)
   }
 
-  const [{ data: rowsData, error }, { data: counts }] = await Promise.all([q, countsQ])
-  if (error) throw error
-  let rows = (rowsData ?? []) as CheckpointRow[]
-  // Extra hop for shadow viewers — even though job_is_shadow=true
-  // matches all shadow rows, multi-shadow tenants would see each
-  // other's HITL events. Filter to current viewer's own jobs by
-  // joining email through scrape_queue.
-  if (shadowCtx.isShadow && rows.length > 0) {
-    const jobIds = rows.map(r => r.job_id)
+  // Per-user job-id set (when the "show all" toggle is off, or for any
+  // shadow viewer). Empty set → no rows visible.
+  const viewerEmail = (user.email ?? '').toLowerCase()
+  const restrictToUser = !showAllUsers || shadowCtx.isShadow
+  let ownJobIds: Set<string> | null = null
+  if (restrictToUser) {
     const { data: ownJobs } = await svc
       .from('scrape_queue')
       .select('id')
-      .in('id', jobIds)
-      .eq('created_by_email', shadowCtx.email ?? '__shadow_no_email__')
-    const ownSet = new Set(((ownJobs ?? []) as Array<{ id: string }>).map(j => j.id))
-    rows = rows.filter(r => ownSet.has(r.job_id))
+      .eq('created_by_email', viewerEmail || '__no_email__')
+    ownJobIds = new Set(((ownJobs ?? []) as Array<{ id: string }>).map(j => j.id))
+    // Pre-filter the checkpoint query too so we don't ship the whole
+    // fleet's rows only to drop 90% client-side. If the user has zero
+    // jobs, we still submit the query with an empty in-list — Supabase
+    // returns [] cleanly.
+    q = q.in('job_id', Array.from(ownJobIds).slice(0, 500))
+    if (ownJobIds.size === 0) {
+      // Skip the round-trip if there's demonstrably nothing to fetch.
+      q = q.eq('id', -1)
+    }
   }
+
+  const [{ data: rowsData, error }, { data: counts }] = await Promise.all([q, countsQ])
+  if (error) throw error
+  const rows = (rowsData ?? []) as CheckpointRow[]
+  // Counts respect both the per-user filter (when active) AND drop
+  // past-expiry rows from the Waiting count — otherwise the tab badge
+  // stays inflated after cards fall off the visible list.
   const countByStatus = new Map<string, number>()
   let autoSolvedCount = 0
   let humanResolvedCount = 0
-  for (const r of (counts ?? []) as Array<{ status: string; resolution_method: string | null }>) {
+  // Same instant used to filter the fetch (nowIso above). Deriving from
+  // that string keeps the purity linter happy and gives a stable cutoff.
+  const nowMs = new Date(nowIso).getTime()
+  for (const r of (counts ?? []) as Array<{
+    status: string
+    resolution_method: string | null
+    expires_at: string | null
+    job_id: string
+  }>) {
+    if (restrictToUser && ownJobIds && !ownJobIds.has(r.job_id)) continue
+    if (r.status === 'waiting' && r.expires_at && new Date(r.expires_at).getTime() <= nowMs) continue
     countByStatus.set(r.status, (countByStatus.get(r.status) ?? 0) + 1)
     if (r.status === 'resolved') {
       if (r.resolution_method === 'auto_2captcha') autoSolvedCount += 1
       else humanResolvedCount += 1
     }
   }
-  const totalAll = counts?.length ?? 0
+  // totalAll is the sum of the buckets we counted (respects both filters).
+  const totalAll = Array.from(countByStatus.values()).reduce((a, b) => a + b, 0)
 
   // Pull the requester per job — operators on the Captcha solver page
   // need to know whose scrape they're solving, especially when multiple
@@ -248,54 +283,102 @@ export default async function InteractiveCheckpointsPage({
         )}
       </header>
 
-      <nav className="flex flex-wrap items-center gap-1 border-b border-[color:var(--color-border)]">
-        {STATUS_TABS.map(tab => {
-          const count =
-            tab.key === 'all'
-              ? totalAll
-              : tab.key === 'auto_solved'
-                ? autoSolvedCount
-                : tab.key === 'resolved'
-                  ? humanResolvedCount
-                  : countByStatus.get(tab.key) ?? 0
-          const active = filter === tab.key
-          return (
-            <Link
-              key={tab.key}
-              href={
-                tab.key === 'waiting'
-                  ? '/admin/interactive'
-                  : `/admin/interactive?status=${tab.key}`
-              }
-              className={[
-                'rounded-t-md border-b-2 px-3 py-1.5 text-[12px] font-medium transition-colors',
-                active
-                  ? 'border-[color:var(--color-accent)] text-[color:var(--color-text-primary)]'
-                  : 'border-transparent text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]',
-              ].join(' ')}
-            >
-              {tab.label}
-              <span
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--color-border)]">
+        <nav className="flex flex-wrap items-center gap-1">
+          {STATUS_TABS.map(tab => {
+            const count =
+              tab.key === 'all'
+                ? totalAll
+                : tab.key === 'auto_solved'
+                  ? autoSolvedCount
+                  : tab.key === 'resolved'
+                    ? humanResolvedCount
+                    : countByStatus.get(tab.key) ?? 0
+            const active = filter === tab.key
+            // Preserve the "show all users" toggle across tab switches so
+            // an operator who opts into fleet-wide view doesn't get bounced
+            // back to per-user every time they change tabs.
+            const params = new URLSearchParams()
+            if (tab.key !== 'waiting') params.set('status', tab.key)
+            if (showAllUsers) params.set('all', '1')
+            const qs = params.toString()
+            const href = qs ? `/admin/interactive?${qs}` : '/admin/interactive'
+            return (
+              <Link
+                key={tab.key}
+                href={href}
                 className={[
-                  'ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                  'rounded-t-md border-b-2 px-3 py-1.5 text-[12px] font-medium transition-colors',
                   active
-                    ? 'bg-[color:var(--color-accent)]/20 text-[color:var(--color-text-primary)]'
-                    : 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]',
+                    ? 'border-[color:var(--color-accent)] text-[color:var(--color-text-primary)]'
+                    : 'border-transparent text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]',
                 ].join(' ')}
               >
-                {count}
-              </span>
-            </Link>
-          )
-        })}
-      </nav>
+                {tab.label}
+                <span
+                  className={[
+                    'ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                    active
+                      ? 'bg-[color:var(--color-accent)]/20 text-[color:var(--color-text-primary)]'
+                      : 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-secondary)]',
+                  ].join(' ')}
+                >
+                  {count}
+                </span>
+              </Link>
+            )
+          })}
+        </nav>
+        {/* Per-user scoping toggle. Default = my checkpoints only; click
+            to see the whole fleet's queue. Shadow viewers don't see this
+            (they're always scoped to their own tenant, no override). */}
+        {!shadowCtx.isShadow && (
+          <div className="pb-1.5 text-[11px]">
+            {showAllUsers ? (
+              <>
+                <span className="mr-2 text-[color:var(--color-text-secondary)]">
+                  Showing <strong>every user&apos;s</strong> checkpoints.
+                </span>
+                <Link
+                  href={
+                    filter === 'waiting'
+                      ? '/admin/interactive'
+                      : `/admin/interactive?status=${filter}`
+                  }
+                  className="rounded-md border border-[color:var(--color-border)] px-2 py-0.5 font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)]"
+                >
+                  Show only mine
+                </Link>
+              </>
+            ) : (
+              <>
+                <span className="mr-2 text-[color:var(--color-text-secondary)]">
+                  Showing <strong>only your</strong> checkpoints.
+                </span>
+                <Link
+                  href={
+                    filter === 'waiting'
+                      ? '/admin/interactive?all=1'
+                      : `/admin/interactive?status=${filter}&all=1`
+                  }
+                  className="rounded-md border border-[color:var(--color-border)] px-2 py-0.5 font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)]"
+                >
+                  Show all users
+                </Link>
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       <TimerPrefsProvider>
         <ScrapeOnlyPrefsProvider>
           {liveCards.length === 0 ? (
             <div className="rounded-md border border-dashed border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-10 text-center text-[12px] text-[color:var(--color-text-secondary)]">
               {filter === 'waiting'
-                ? 'No paused scrapes — workers are humming along on their own.'
+                ? restrictToUser
+                  ? "No paused scrapes of yours right now. Toggle 'Show all users' above if you want to help others."
+                  : 'No paused scrapes — workers are humming along on their own.'
                 : `No checkpoints under "${filter}".`}
             </div>
           ) : (

@@ -231,7 +231,17 @@ export function CheckpointCard({
   const hideTimer = useHideExpiryTimers()
 
   return (
-    <article className="flex flex-col gap-3 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 md:flex-row">
+    <article
+      className={[
+        'flex flex-col gap-3 rounded-md border p-3 md:flex-row',
+        claimMine
+          ? // Distinctive "this one is mine" treatment: emerald accent + soft ring
+            // so an operator working through the list can scroll away and still
+            // spot the card they've claimed at a glance.
+            'border-emerald-400 bg-emerald-50/60 ring-2 ring-emerald-300 ring-offset-1'
+          : 'border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]',
+      ].join(' ')}
+    >
       {/* Thumbnail of the paused page */}
       <div className="flex w-full shrink-0 items-center justify-center overflow-hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] md:h-40 md:w-64">
         {screenshotUrl ? (
@@ -312,6 +322,11 @@ export function CheckpointCard({
           <span className="text-[11px] text-[color:var(--color-text-secondary)]">
             worker {row.worker_id} · port {row.worker_port}
           </span>
+          {claimMine && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+              you&apos;re on this one
+            </span>
+          )}
           {requester && (requester.display || requester.username) && (
             <span
               className="inline-flex items-center gap-1 rounded-md bg-[color:var(--color-bg-secondary)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-text-secondary)]"

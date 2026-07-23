@@ -5,12 +5,15 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 
 /**
- * Global "N scrapes waiting for human" banner. Renders on every
+ * "N of YOUR scrapes waiting for human" banner. Renders on every
  * dashboard page when at least one interactive_checkpoint is in
- * status='waiting'. Click → /admin/interactive.
+ * status='waiting' AND is on a scrape job the current user queued.
  *
- * Visible to any signed-in user — the /admin/interactive page lets
- * anyone resolve captchas, so the banner should too.
+ * Per-user scoping matches the /admin/interactive default view — a
+ * banner counting the entire fleet's backlog when only one user's
+ * batch is stuck was reading as a system-wide anxiety inducer.
+ * The Interactive page itself has a "Show all users" toggle for
+ * operators who want to help others.
  */
 export async function InteractiveBanner() {
   const supabase = await createServerClient()
@@ -20,10 +23,25 @@ export async function InteractiveBanner() {
   if (!user) return null
 
   const svc = createServiceClient()
+  const viewerEmail = (user.email ?? '').toLowerCase()
+
+  // Count only waiting checkpoints on this user's own jobs, and drop
+  // past-expiry rows (dead sessions the worker gave up on) so the
+  // banner never lies.
+  const { data: ownJobs } = await svc
+    .from('scrape_queue')
+    .select('id')
+    .eq('created_by_email', viewerEmail || '__no_email__')
+  const ownJobIds = ((ownJobs ?? []) as Array<{ id: string }>).map(j => j.id)
+  if (ownJobIds.length === 0) return null
+
+  const nowIso = new Date().toISOString()
   const { count } = await svc
     .from('interactive_checkpoints')
     .select('id', { head: true, count: 'exact' })
     .eq('status', 'waiting')
+    .gt('expires_at', nowIso)
+    .in('job_id', ownJobIds.slice(0, 500))
   if (!count || count <= 0) return null
 
   // Intentionally NOT sticky. A `sticky top-0 z-30` banner sits at the
@@ -41,7 +59,7 @@ export async function InteractiveBanner() {
     >
       <span className="inline-flex items-center gap-2">
         <Hand className="h-4 w-4 shrink-0" />
-        <strong>{count}</strong> captcha{count === 1 ? '' : 's'} 2Captcha
+        <strong>{count}</strong> of your captcha{count === 1 ? '' : 's'} 2Captcha
         couldn&apos;t auto-solve — {count === 1 ? 'needs' : 'need'} a human. Click to resolve.
       </span>
     </Link>
