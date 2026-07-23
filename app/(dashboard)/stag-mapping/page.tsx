@@ -5,7 +5,12 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { loadStagMappingData, type MondayBoardFreshness } from './_lib/queries'
 import { StagTable } from './_components/stag-table'
 import { SyncControls } from './_components/sync-controls'
-import { PlaceholderPanel } from '../_components/dashboards/dashboard-section'
+import { DashboardSection } from '../_components/dashboards/dashboard-section'
+import { TrendChart, type TrendPoint } from '../_components/dashboards/trend-chart'
+import { HeatMap, bucketToHeatmap, type HeatCell } from '../_components/dashboards/heat-map'
+import { Leaderboard } from '../_components/dashboards/leaderboard'
+import { bucketByDayInWindow } from '../_lib/bucket-timestamps'
+import type { StagGroup } from './_lib/queries'
 
 export const dynamic = 'force-dynamic'
 
@@ -119,31 +124,11 @@ export default async function StagMappingPage({
         />
       </div>
 
-      {/* Phase 5 sections — trend / heatmap / leaderboards specific to
-          S-tag extraction volume. Placeholders show where they'll go
-          so the page's shape stays stable as the queries land. */}
-      <PlaceholderPanel
-        title="Activity trend — S-tag extractions over time"
-        phase={5}
-        note="Daily extraction volume + mapped vs unmapped split. Spot when a batch of new domains lands and how fast they get Monday-mapped."
+      <AnalyticsSections
+        groups={data.groups}
+        lookbackDays={data.lookbackDays}
+        nowIso={new Date().toISOString()}
       />
-      <PlaceholderPanel
-        title="Daily × hour heatmap"
-        phase={5}
-        note="When our scrapes are producing S-tags — cross-check against captcha spikes on the System Overview heatmap."
-      />
-      <div className="grid gap-4 lg:grid-cols-2">
-        <PlaceholderPanel
-          title="Leaderboard · Top brands + S-tags"
-          phase={5}
-          note="Brands and S-tags with the most extractions in the window. Click any row → drills into the leads behind it."
-        />
-        <PlaceholderPanel
-          title="Leaderboard · Per-user extraction volume"
-          phase={5}
-          note="Which operator's scrapes are producing the most S-tag data right now."
-        />
-      </div>
 
       <FreshnessDetail freshness={data.freshness} />
     </div>
@@ -398,4 +383,106 @@ function fmtDuration(minutes: number): string {
   const d = Math.floor(h / 24)
   const rh = h - d * 24
   return rh === 0 ? `${d}d` : `${d}d ${rh}h`
+}
+
+/* =================================================================
+ * Phase 5 analytics sections — derived entirely from the groups the
+ * existing query already loads. No extra Supabase round-trip.
+ * ================================================================= */
+function AnalyticsSections({
+  groups,
+  lookbackDays,
+  nowIso,
+}: {
+  groups: StagGroup[]
+  lookbackDays: number | null
+  /** ISO timestamp captured by the (server) parent — passed in as a
+   *  stable prop so the purity linter is happy. */
+  nowIso: string
+}) {
+  // Flatten every lead's timestamp into a stream so we can trend +
+  // heatmap by lead-creation, not just by first-tag-seen.
+  const leadTimestamps: string[] = []
+  const mondayMappedTimestamps: string[] = []
+  for (const g of groups) {
+    for (const lead of g.leads) {
+      leadTimestamps.push(lead.createdAt)
+      if (g.isOnMonday) mondayMappedTimestamps.push(lead.createdAt)
+    }
+  }
+
+  // Window bounds for the trend. Use the first-seen from the earliest
+  // group and the current time — matches the "over the last N days"
+  // header. For all-time, use the earliest timestamp we found.
+  const nowMs = new Date(nowIso).getTime()
+  const oldest =
+    groups.length > 0
+      ? groups.reduce<string>(
+          (o, g) => (g.firstSeen < o ? g.firstSeen : o),
+          groups[0]!.firstSeen,
+        )
+      : nowIso
+  const windowStart =
+    lookbackDays === null
+      ? oldest
+      : new Date(nowMs - lookbackDays * 24 * 60 * 60 * 1000).toISOString()
+
+  const trendPoints: TrendPoint[] = bucketByDayInWindow(
+    leadTimestamps,
+    windowStart,
+    nowIso,
+    mondayMappedTimestamps,
+  )
+  const heatCells: HeatCell[] = bucketToHeatmap(leadTimestamps)
+
+  // Per-brand leaderboard — brand null groups roll up as "(unbranded)".
+  const brandMap = new Map<string, number>()
+  for (const g of groups) {
+    const brand = g.brand?.trim() || '(unbranded)'
+    brandMap.set(brand, (brandMap.get(brand) ?? 0) + g.leadCount)
+  }
+  const brandRows = Array.from(brandMap.entries())
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 15)
+    .map(([label, value]) => ({ key: label, label, value }))
+
+  // Mirror-group leaderboard — S-tags carried on 2+ domains, ranked
+  // by domain count.
+  const mirrorRows = groups
+    .filter(g => g.domainCount >= 2)
+    .sort((a, b) => b.domainCount - a.domainCount || b.leadCount - a.leadCount)
+    .slice(0, 15)
+    .map(g => ({
+      key: g.sTag,
+      label: g.sTag,
+      value: g.domainCount,
+      secondary: `${g.leadCount} lead${g.leadCount === 1 ? '' : 's'} · ${g.domains.slice(0, 3).join(', ')}${g.domains.length > 3 ? '…' : ''}`,
+    }))
+
+  return (
+    <>
+      <DashboardSection
+        title={`Extraction trend · ${lookbackDays === null ? 'all time' : `last ${lookbackDays} days`}`}
+        hint="Solid = all S-tag-carrying leads in the window. Dashed = subset already mapped to Monday."
+      >
+        <TrendChart points={trendPoints} />
+      </DashboardSection>
+
+      <DashboardSection
+        title="Day × hour extraction heatmap"
+        hint="Darker = more S-tag-carrying leads at that day-of-week / hour-of-day (UTC)."
+      >
+        <HeatMap data={heatCells} />
+      </DashboardSection>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <DashboardSection title="Top brands · by lead volume">
+          <Leaderboard rows={brandRows} valueLabel="Leads" />
+        </DashboardSection>
+        <DashboardSection title="Top mirror groups · S-tags on 2+ domains">
+          <Leaderboard rows={mirrorRows} valueLabel="Domains" />
+        </DashboardSection>
+      </div>
+    </>
+  )
 }
