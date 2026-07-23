@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { Cpu, Loader2 } from 'lucide-react'
 import { AutoRefresh } from '../scrape/_components/auto-refresh'
 import {
@@ -6,7 +7,11 @@ import {
 } from '../_lib/dashboard-queries'
 import { parseDateRange } from '../_lib/date-range'
 import { DateRangeToggle } from '../_components/dashboards/date-range-toggle'
-import { PlaceholderPanel } from '../_components/dashboards/dashboard-section'
+import { DashboardSection } from '../_components/dashboards/dashboard-section'
+import { StatCard } from '../_components/dashboards/stat-card'
+import { HeatMap } from '../_components/dashboards/heat-map'
+import { Leaderboard } from '../_components/dashboards/leaderboard'
+import { loadOperationsData, type PerBotStats } from '../_lib/operations-dashboard-queries'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,7 +31,45 @@ export default async function OperationsPage({
 }) {
   const sp = await searchParams
   const range = parseDateRange(sp.range)
-  const data = await loadDashboardData()
+  const [data, ops] = await Promise.all([
+    loadDashboardData(),
+    loadOperationsData(range),
+  ])
+
+  const totalClaims = ops.perBot.reduce((s, b) => s + b.claimsTotal, 0)
+  const totalSuccess = ops.perBot.reduce((s, b) => s + b.claimsCompleted, 0)
+  const totalCaptchaSolvedAuto = ops.perBot.reduce((s, b) => s + b.captchaAutoSolved, 0)
+  const totalCaptchaSolvedHuman = ops.perBot.reduce((s, b) => s + b.captchaHumanSolved, 0)
+  const totalCaptchaTimedOut = ops.perBot.reduce((s, b) => s + b.captchaTimedOut, 0)
+  const successPct = totalClaims > 0 ? Math.round((totalSuccess / totalClaims) * 100) : 0
+  const totalCheckpoints = totalCaptchaSolvedAuto + totalCaptchaSolvedHuman + totalCaptchaTimedOut
+  const autoSolvePct =
+    totalCheckpoints > 0 ? Math.round((totalCaptchaSolvedAuto / totalCheckpoints) * 100) : 0
+
+  const perBotClaimsLeader = ops.perBot
+    .filter(b => b.claimsTotal > 0)
+    .sort((a, b) => b.claimsTotal - a.claimsTotal)
+    .slice(0, 12)
+    .map(b => ({
+      key: b.workerId,
+      label: b.label,
+      value: b.claimsTotal,
+      secondary: `${b.successPct}% success · ${b.claimsCompleted} done`,
+    }))
+  const perBotCaptchaLeader = ops.perBot
+    .filter(b => b.captchaAutoSolved + b.captchaHumanSolved + b.captchaTimedOut > 0)
+    .sort(
+      (a, b) =>
+        b.captchaAutoSolved + b.captchaHumanSolved + b.captchaTimedOut -
+        (a.captchaAutoSolved + a.captchaHumanSolved + a.captchaTimedOut),
+    )
+    .slice(0, 12)
+    .map(b => ({
+      key: `${b.workerId}-captcha`,
+      label: b.label,
+      value: b.captchaAutoSolved + b.captchaHumanSolved + b.captchaTimedOut,
+      secondary: `${b.autoSolvePct}% auto-solved · ${b.captchaTimedOut} timed out`,
+    }))
 
   return (
     <div className="flex min-w-0 flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
@@ -45,23 +88,65 @@ export default async function OperationsPage({
 
       <Workers workers={data.workers} />
 
-      <PlaceholderPanel
-        title={`Bot activity heatmap · ${range.label}`}
-        phase={3}
-        note="Per-bot busy-vs-idle over the selected window — spot bots that are hammered vs bots that never claim, split by scrape / enrichment."
-      />
+      <DashboardSection
+        title={`Fleet performance · ${range.label}`}
+        hint="Click any card for the underlying rows."
+      >
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            label="Total claims"
+            value={totalClaims}
+            tone="emphasis"
+            hint={`across ${ops.perBot.length} bots`}
+            drilldown={{
+              title: 'Recent claims across the fleet',
+              subtitle: `${range.label} · ${totalClaims.toLocaleString()} total`,
+              body: <ClaimsList rows={ops.recentClaims} />,
+            }}
+          />
+          <StatCard
+            label="Successful"
+            value={totalSuccess}
+            hint={`${successPct}% of claims`}
+            tone={successPct >= 60 ? 'ok' : successPct >= 30 ? 'plain' : 'warn'}
+          />
+          <StatCard
+            label="Captchas auto-solved"
+            value={totalCaptchaSolvedAuto}
+            hint={`${autoSolvePct}% of captchas hit`}
+            tone={autoSolvePct >= 50 ? 'ok' : 'plain'}
+          />
+          <StatCard
+            label="Captchas human-solved"
+            value={totalCaptchaSolvedHuman}
+            hint={`${totalCaptchaTimedOut} timed out`}
+            tone={totalCaptchaTimedOut > totalCaptchaSolvedHuman ? 'warn' : 'plain'}
+          />
+        </div>
+      </DashboardSection>
+
+      <DashboardSection
+        title={`Fleet activity heatmap · ${range.label}`}
+        hint="Darker = more claims at that day-of-week / hour-of-day (UTC). Spot when the fleet is hammered vs idle."
+      >
+        <HeatMap data={ops.activityHeatmap} />
+      </DashboardSection>
+
       <div className="grid gap-4 lg:grid-cols-2">
-        <PlaceholderPanel
-          title="Captcha win rate per bot"
-          phase={3}
-          note="For each bot: how often 2Captcha auto-solves vs escalates to a human, so we spot bots stuck on a bad session."
-        />
-        <PlaceholderPanel
-          title="Per-bot claim history"
-          phase={3}
-          note="Recent jobs claimed by each bot — quickly answer 'is this bot alive right now?' and 'what was it last doing?'"
-        />
+        <DashboardSection title="Top bots · by claim volume">
+          <Leaderboard rows={perBotClaimsLeader} valueLabel="Claims" />
+        </DashboardSection>
+        <DashboardSection title="Top bots · by captchas hit">
+          <Leaderboard rows={perBotCaptchaLeader} valueLabel="Captchas" />
+        </DashboardSection>
       </div>
+
+      <DashboardSection
+        title="Per-bot detail"
+        hint="All bots in the fleet — includes idle bots with 0 claims in the window so you can spot which ones haven't been picking up work."
+      >
+        <PerBotTable bots={ops.perBot} />
+      </DashboardSection>
 
       <AutoRefresh enabled={data.hasActiveWork} />
     </div>
@@ -175,4 +260,110 @@ function fmtElapsed(iso: string | null): string {
   const mins = Math.floor(secs / 60)
   const rem = secs % 60
   return `${mins}m ${rem}s elapsed`
+}
+
+function ClaimsList({
+  rows,
+}: {
+  rows: Array<{
+    id: string
+    keyword: string | null
+    country_code: string | null
+    search_engine: string | null
+    status: string
+    claimed_by: string | null
+    started_at: string | null
+    created_by_display: string | null
+  }>
+}) {
+  if (rows.length === 0)
+    return <p className="text-[12px] text-[color:var(--color-text-secondary)]">No claims.</p>
+  return (
+    <ul className="flex flex-col gap-1 text-[12px]">
+      {rows.map(r => (
+        <li key={r.id}>
+          <Link
+            href={`/scrape/${r.id}`}
+            className="flex flex-wrap items-center gap-2 rounded-md px-2 py-1 hover:bg-[color:var(--color-bg-secondary)]"
+          >
+            <span className="font-mono text-[10px] text-[color:var(--color-text-secondary)]">
+              {r.claimed_by}
+            </span>
+            <span className="font-mono text-[10px] text-[color:var(--color-text-secondary)]">
+              {r.country_code}/{r.search_engine}
+            </span>
+            <span className="min-w-0 flex-1 truncate font-medium text-[color:var(--color-text-primary)]">
+              {r.keyword ?? '(no keyword)'}
+            </span>
+            <span className="text-[10px] text-[color:var(--color-text-secondary)]">
+              {r.created_by_display ?? '—'}
+            </span>
+            <span className="rounded-full bg-[color:var(--color-bg-secondary)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-text-secondary)]">
+              {r.status}
+            </span>
+            <span className="text-[10px] text-[color:var(--color-text-secondary)]">
+              {r.started_at ? new Date(r.started_at).toLocaleString() : ''}
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function PerBotTable({ bots }: { bots: PerBotStats[] }) {
+  const sorted = [...bots].sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'scrape' ? -1 : 1
+    return b.claimsTotal - a.claimsTotal
+  })
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-[12px]">
+        <thead>
+          <tr className="border-b border-[color:var(--color-border)] text-left text-[10px] uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+            <th className="py-1.5">Bot</th>
+            <th className="py-1.5">Kind</th>
+            <th className="py-1.5 text-right">Claims</th>
+            <th className="py-1.5 text-right">Done</th>
+            <th className="py-1.5 text-right">Failed</th>
+            <th className="py-1.5 text-right">Success %</th>
+            <th className="py-1.5 text-right">Captcha auto</th>
+            <th className="py-1.5 text-right">Captcha human</th>
+            <th className="py-1.5 text-right">Captcha timeout</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(b => (
+            <tr
+              key={b.workerId}
+              className="border-b border-[color:var(--color-border)]/60 last:border-b-0"
+            >
+              <td className="py-1.5 font-medium text-[color:var(--color-text-primary)]" title={b.workerId}>
+                {b.label}
+              </td>
+              <td className="py-1.5 text-[10px] text-[color:var(--color-text-secondary)]">
+                <span
+                  className={[
+                    'rounded-full px-2 py-0.5',
+                    b.kind === 'scrape' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-800',
+                  ].join(' ')}
+                >
+                  {b.kind}
+                </span>
+              </td>
+              <td className="py-1.5 text-right font-mono tabular-nums">{b.claimsTotal.toLocaleString()}</td>
+              <td className="py-1.5 text-right font-mono tabular-nums text-emerald-700">{b.claimsCompleted.toLocaleString()}</td>
+              <td className="py-1.5 text-right font-mono tabular-nums text-red-700">{b.claimsFailed.toLocaleString()}</td>
+              <td className="py-1.5 text-right font-mono tabular-nums">
+                {b.claimsTotal > 0 ? `${b.successPct}%` : '—'}
+              </td>
+              <td className="py-1.5 text-right font-mono tabular-nums text-indigo-700">{b.captchaAutoSolved.toLocaleString()}</td>
+              <td className="py-1.5 text-right font-mono tabular-nums">{b.captchaHumanSolved.toLocaleString()}</td>
+              <td className="py-1.5 text-right font-mono tabular-nums text-red-700">{b.captchaTimedOut.toLocaleString()}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
