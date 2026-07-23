@@ -5,6 +5,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { loadStagMappingData, type MondayBoardFreshness } from './_lib/queries'
 import { StagTable } from './_components/stag-table'
 import { SyncControls } from './_components/sync-controls'
+import { PlaceholderPanel } from '../_components/dashboards/dashboard-section'
 
 export const dynamic = 'force-dynamic'
 
@@ -115,6 +116,32 @@ export default async function StagMappingPage({
           groups={data.groups}
           truncated={data.truncated}
           initialFilter={initialFilter}
+        />
+      </div>
+
+      {/* Phase 5 sections — trend / heatmap / leaderboards specific to
+          S-tag extraction volume. Placeholders show where they'll go
+          so the page's shape stays stable as the queries land. */}
+      <PlaceholderPanel
+        title="Activity trend — S-tag extractions over time"
+        phase={5}
+        note="Daily extraction volume + mapped vs unmapped split. Spot when a batch of new domains lands and how fast they get Monday-mapped."
+      />
+      <PlaceholderPanel
+        title="Daily × hour heatmap"
+        phase={5}
+        note="When our scrapes are producing S-tags — cross-check against captcha spikes on the System Overview heatmap."
+      />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <PlaceholderPanel
+          title="Leaderboard · Top brands + S-tags"
+          phase={5}
+          note="Brands and S-tags with the most extractions in the window. Click any row → drills into the leads behind it."
+        />
+        <PlaceholderPanel
+          title="Leaderboard · Per-user extraction volume"
+          phase={5}
+          note="Which operator's scrapes are producing the most S-tag data right now."
         />
       </div>
 

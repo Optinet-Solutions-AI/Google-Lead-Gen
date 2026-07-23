@@ -9,6 +9,7 @@ import {
   BookOpen,
   ChevronLeft,
   Clock,
+  Cpu,
   DollarSign,
   Database,
   Fingerprint,
@@ -18,6 +19,7 @@ import {
   HelpCircle,
   KeyRound,
   LayoutDashboard,
+  LineChart,
   ListChecks,
   LogOut,
   Menu,
@@ -32,96 +34,148 @@ import { signOutAction } from '../_actions/auth'
 import { type ProxyBandwidth } from '../_lib/dashboard-queries'
 import { FeedbackWidget } from './feedback-widget'
 
-const NAV_ITEMS = [
+type NavItem = {
+  label: string
+  href: string
+  icon: typeof LayoutDashboard
+  match: (p: string) => boolean
+  badge?: 'openFeedback'
+}
+
+type NavGroup = {
+  label: string
+  items: NavItem[]
+}
+
+// Sidebar is grouped so the 4 dashboards read as a cohesive set at the
+// top, tools sit in the middle, and admin/account entries drop to the
+// bottom. Group headers show when the sidebar is expanded; when it's
+// collapsed we render a thin divider between groups so shape still
+// reads as sections.
+const NAV_GROUPS: NavGroup[] = [
   {
-    label: 'Dashboard',
-    href: '/',
-    icon: LayoutDashboard,
-    match: (p: string) => p === '/',
+    label: 'Dashboards',
+    items: [
+      {
+        // Renamed from "Dashboard" now that Dashboards is a category —
+        // avoids the "Dashboards > Dashboard" awkwardness.
+        label: 'Overview',
+        href: '/',
+        icon: LayoutDashboard,
+        match: (p: string) => p === '/',
+      },
+      {
+        label: 'Operations',
+        href: '/operations',
+        icon: Cpu,
+        match: (p: string) => p.startsWith('/operations'),
+      },
+      {
+        label: 'S-tag Mapping',
+        href: '/stag-mapping',
+        icon: Fingerprint,
+        match: (p: string) => p.startsWith('/stag-mapping'),
+      },
+      {
+        label: 'Monday Analytics',
+        href: '/monday-dashboard',
+        icon: LineChart,
+        match: (p: string) => p.startsWith('/monday-dashboard'),
+      },
+    ],
   },
   {
-    label: 'Scrape',
-    href: '/scrape',
-    icon: Search,
-    match: (p: string) => p.startsWith('/scrape'),
-  },
-  // Schedules sidebar entry hidden pending the scheduler UI work — the
-  // page still exists at /schedules; this is just a sidebar omission.
-  {
-    label: 'Leads',
-    href: '/leads',
-    icon: ListChecks,
-    match: (p: string) => p.startsWith('/leads'),
-  },
-  {
-    label: 'Monday Data',
-    href: '/monday/leads',
-    icon: Database,
-    match: (p: string) => p.startsWith('/monday'),
-  },
-  {
-    label: 'S-tag Mapping',
-    href: '/stag-mapping',
-    icon: Fingerprint,
-    match: (p: string) => p.startsWith('/stag-mapping'),
-  },
-  {
-    // Open to all signed-in users so the whole ops team can clear
-    // captchas, not just the admin. URL keeps the /admin/ prefix for
-    // backwards-compat (banner deep links, browser history).
-    label: 'Interactive Checkpoints',
-    href: '/admin/interactive',
-    icon: Hand,
-    match: (p: string) => p.startsWith('/admin/interactive'),
-  },
-  {
-    label: 'Country Profiles',
-    href: '/profiles',
-    icon: Globe,
-    match: (p: string) => p.startsWith('/profiles'),
-  },
-  {
-    label: 'Rooster Brands',
-    href: '/brands',
-    icon: Star,
-    match: (p: string) => p.startsWith('/brands'),
-  },
-  {
-    label: 'Activity Log',
-    href: '/activity',
-    icon: Clock,
-    match: (p: string) => p.startsWith('/activity'),
-  },
-  {
-    label: 'Onboarding',
-    href: '/onboarding',
-    icon: BookOpen,
-    match: (p: string) => p.startsWith('/onboarding'),
+    label: 'Tools',
+    items: [
+      {
+        label: 'Scrape',
+        href: '/scrape',
+        icon: Search,
+        match: (p: string) => p.startsWith('/scrape'),
+      },
+      {
+        label: 'Leads',
+        href: '/leads',
+        icon: ListChecks,
+        match: (p: string) => p.startsWith('/leads'),
+      },
+      {
+        // Raw Monday item list — distinct from the aggregated
+        // Monday Analytics dashboard above.
+        label: 'Monday Data',
+        href: '/monday/leads',
+        icon: Database,
+        match: (p: string) => p.startsWith('/monday/leads') || p.startsWith('/monday/updates'),
+      },
+      {
+        // Open to all signed-in users so the whole ops team can clear
+        // captchas, not just the admin. URL keeps the /admin/ prefix for
+        // backwards-compat (banner deep links, browser history).
+        label: 'Interactive Checkpoints',
+        href: '/admin/interactive',
+        icon: Hand,
+        match: (p: string) => p.startsWith('/admin/interactive'),
+      },
+      {
+        label: 'Country Profiles',
+        href: '/profiles',
+        icon: Globe,
+        match: (p: string) => p.startsWith('/profiles'),
+      },
+      {
+        label: 'Rooster Brands',
+        href: '/brands',
+        icon: Star,
+        match: (p: string) => p.startsWith('/brands'),
+      },
+      {
+        label: 'Activity Log',
+        href: '/activity',
+        icon: Clock,
+        match: (p: string) => p.startsWith('/activity'),
+      },
+    ],
   },
   {
-    label: 'Help & Docs',
-    href: '/help',
-    icon: HelpCircle,
-    match: (p: string) => p.startsWith('/help'),
+    label: 'Help',
+    items: [
+      {
+        label: 'Onboarding',
+        href: '/onboarding',
+        icon: BookOpen,
+        match: (p: string) => p.startsWith('/onboarding'),
+      },
+      {
+        label: 'Help & Docs',
+        href: '/help',
+        icon: HelpCircle,
+        match: (p: string) => p.startsWith('/help'),
+      },
+    ],
   },
   {
-    // URL keeps the /admin/ prefix for backwards-compat (sidebar
-    // entries, deep links). Page is now open to all signed-in users
-    // for reveal; admin-only for add/replace/remove.
-    label: 'Google Login',
-    href: '/admin/google-login',
-    icon: KeyRound,
-    match: (p: string) => p.startsWith('/admin/google-login'),
-  },
-  {
-    label: 'My Account',
-    href: '/account/password',
-    icon: KeyRound,
-    match: (p: string) => p.startsWith('/account'),
+    label: 'Account',
+    items: [
+      {
+        // URL keeps the /admin/ prefix for backwards-compat (sidebar
+        // entries, deep links). Page is now open to all signed-in users
+        // for reveal; admin-only for add/replace/remove.
+        label: 'Google Login',
+        href: '/admin/google-login',
+        icon: KeyRound,
+        match: (p: string) => p.startsWith('/admin/google-login'),
+      },
+      {
+        label: 'My Account',
+        href: '/account/password',
+        icon: KeyRound,
+        match: (p: string) => p.startsWith('/account'),
+      },
+    ],
   },
 ]
 
-const ADMIN_NAV_ITEMS = [
+const ADMIN_NAV_ITEMS: ReadonlyArray<NavItem> = [
   {
     label: 'Ops (Admin)',
     href: '/admin/ops',
@@ -254,54 +308,71 @@ export function DashboardShell({
           </button>
         </div>
 
-        {/* Nav */}
+        {/* Nav — groups render as sections with a header when the
+            sidebar is expanded, and as a thin divider when it's
+            collapsed. Admin items get their own group appended at
+            the bottom (only for admins). */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
-          {[...NAV_ITEMS, ...(isAdmin ? ADMIN_NAV_ITEMS : [])].map(item => {
-            const active = item.match(pathname)
-            const Icon = item.icon
-            const badgeCount =
-              'badge' in item && item.badge === 'openFeedback' ? openFeedbackCount : 0
-            return (
-              <Link
-                key={item.label}
-                href={item.href}
-                onClick={() => setMobileOpen(false)}
-                className={[
-                  'group relative flex items-center gap-3 rounded-md px-2 py-2 text-[13px] transition-colors',
-                  active
-                    ? 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-primary)]'
-                    : 'text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]',
-                ].join(' ')}
-                title={
-                  showLabels
-                    ? undefined
-                    : badgeCount > 0
-                      ? `${item.label} — ${badgeCount} unresolved`
-                      : item.label
-                }
-              >
-                <span className="relative shrink-0">
-                  <Icon
+          {[
+            ...NAV_GROUPS,
+            ...(isAdmin ? [{ label: 'Admin', items: [...ADMIN_NAV_ITEMS] }] : []),
+          ].map((group, gi) => (
+            <div key={group.label} className={gi === 0 ? '' : 'mt-2'}>
+              {showLabels ? (
+                <div className="mb-1 px-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-text-secondary)]/70">
+                  {group.label}
+                </div>
+              ) : (
+                gi > 0 && (
+                  <div className="my-1 h-px bg-[color:var(--color-border)]" />
+                )
+              )}
+              {group.items.map(item => {
+                const active = item.match(pathname)
+                const Icon = item.icon
+                const badgeCount =
+                  item.badge === 'openFeedback' ? openFeedbackCount : 0
+                return (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    onClick={() => setMobileOpen(false)}
                     className={[
-                      'h-4 w-4 shrink-0',
-                      active ? 'text-[color:var(--color-accent-hover)]' : '',
+                      'group relative flex items-center gap-3 rounded-md px-2 py-2 text-[13px] transition-colors',
+                      active
+                        ? 'bg-[color:var(--color-bg-secondary)] text-[color:var(--color-text-primary)]'
+                        : 'text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]',
                     ].join(' ')}
-                  />
-                  {/* Collapsed sidebar: a small dot on the icon stands in
-                      for the count, which has no room to render. */}
-                  {!showLabels && badgeCount > 0 && (
-                    <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-[color:var(--color-bg-primary)]" />
-                  )}
-                </span>
-                {showLabels && <span>{item.label}</span>}
-                {showLabels && badgeCount > 0 && (
-                  <span className="ml-auto inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
-                    {badgeCount > 99 ? '99+' : badgeCount}
-                  </span>
-                )}
-              </Link>
-            )
-          })}
+                    title={
+                      showLabels
+                        ? undefined
+                        : badgeCount > 0
+                          ? `${item.label} — ${badgeCount} unresolved`
+                          : item.label
+                    }
+                  >
+                    <span className="relative shrink-0">
+                      <Icon
+                        className={[
+                          'h-4 w-4 shrink-0',
+                          active ? 'text-[color:var(--color-accent-hover)]' : '',
+                        ].join(' ')}
+                      />
+                      {!showLabels && badgeCount > 0 && (
+                        <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-[color:var(--color-bg-primary)]" />
+                      )}
+                    </span>
+                    {showLabels && <span>{item.label}</span>}
+                    {showLabels && badgeCount > 0 && (
+                      <span className="ml-auto inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                        {badgeCount > 99 ? '99+' : badgeCount}
+                      </span>
+                    )}
+                  </Link>
+                )
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Footer: proxy bandwidth + user + logout */}
