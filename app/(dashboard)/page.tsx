@@ -27,7 +27,13 @@ import {
 } from './_lib/dashboard-queries'
 import { parseDateRange } from './_lib/date-range'
 import { DateRangeToggle } from './_components/dashboards/date-range-toggle'
-import { PlaceholderPanel } from './_components/dashboards/dashboard-section'
+import { DashboardSection } from './_components/dashboards/dashboard-section'
+import { StatCard } from './_components/dashboards/stat-card'
+import { TrendChart } from './_components/dashboards/trend-chart'
+import { HeatMap, bucketToHeatmap } from './_components/dashboards/heat-map'
+import { Leaderboard } from './_components/dashboards/leaderboard'
+import { loadSystemDashboardData } from './_lib/system-dashboard-queries'
+import { bucketByDayInWindow, bucketByHourInDay } from './_lib/bucket-timestamps'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,7 +55,26 @@ export default async function DashboardPage({
 }) {
   const sp = await searchParams
   const range = parseDateRange(sp.range)
-  const data = await loadDashboardData()
+  const [data, sys] = await Promise.all([
+    loadDashboardData(),
+    loadSystemDashboardData(range),
+  ])
+
+  // Trend x-axis: hourly for "Today", daily for everything else.
+  // Both variants use the same TrendChart component.
+  const successTimestamps = sys.scrapesCreated
+    .filter(r => r.status === 'completed' && r.completed_at)
+    .map(r => r.completed_at!)
+  const allTimestamps = sys.scrapesCreated.map(r => r.created_at)
+  const trendPoints =
+    range.key === 'today'
+      ? bucketByHourInDay(allTimestamps, range.since, successTimestamps)
+      : bucketByDayInWindow(allTimestamps, range.since, range.until, successTimestamps)
+
+  // Heatmap uses scrape-created timestamps across the entire window
+  // (day-of-week × hour-of-day) so a 30d/90d view surfaces the real
+  // "when do captchas cluster" pattern.
+  const heatCells = bucketToHeatmap(allTimestamps)
 
   return (
     <div className="flex min-w-0 flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
@@ -86,31 +111,42 @@ export default async function DashboardPage({
         <RecentActivity activity={data.recentActivity} />
       </div>
 
-      {/* Phase 2 sections — Activity trend, Daily heatmap, Leaderboards.
-          Placeholder cards render so the layout stays stable now vs
-          when the queries land. The date-range chip above will drive
-          the window they cover. */}
-      <PlaceholderPanel
+      <TodaysPerformance sys={sys} range={range} />
+
+      <DashboardSection
         title={`Activity trend · ${range.label}`}
-        phase={2}
-        note="Daily scrape volume + success rate over the selected window, split by search engine."
-      />
-      <PlaceholderPanel
-        title="Daily × hour heatmap"
-        phase={2}
-        note="7-day-of-week × 24-hour-of-day grid — spot when captchas cluster, when the fleet idles, when leads flow best."
-      />
+        hint="Solid = all scrapes queued in the window. Dashed = subset that completed successfully."
+      >
+        {sys.truncated && (
+          <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-900">
+            Fetched the newest 5,000 rows in this window — trend shape is
+            accurate for recent activity but the older tail may be
+            under-counted.
+          </p>
+        )}
+        <TrendChart points={trendPoints} />
+      </DashboardSection>
+
+      <DashboardSection
+        title="Day × hour heatmap"
+        hint="Darker = more scrapes at that day-of-week / hour-of-day (UTC). Spot when captchas cluster, when the fleet idles."
+      >
+        <HeatMap data={heatCells} />
+      </DashboardSection>
+
       <div className="grid gap-4 lg:grid-cols-2">
-        <PlaceholderPanel
-          title="Leaderboard · Top scrapers"
-          phase={2}
-          note="Users, engines, and countries ranked by successful scrapes for the selected window."
-        />
-        <PlaceholderPanel
-          title="Leaderboard · Top platforms + countries"
-          phase={2}
-          note="Which platforms + countries are producing the most usable leads right now."
-        />
+        <DashboardSection title="Top users · successful scrapes">
+          <Leaderboard rows={leaderRowsWithPct(sys.leaderboards.byUser)} valueLabel="Success" />
+        </DashboardSection>
+        <DashboardSection title="Top search engines">
+          <Leaderboard rows={leaderRowsWithPct(sys.leaderboards.byEngine)} valueLabel="Success" />
+        </DashboardSection>
+        <DashboardSection title="Top countries">
+          <Leaderboard rows={leaderRowsWithPct(sys.leaderboards.byCountry)} valueLabel="Success" />
+        </DashboardSection>
+        <DashboardSection title="Top keywords">
+          <Leaderboard rows={leaderRowsWithPct(sys.leaderboards.byKeyword)} valueLabel="Success" />
+        </DashboardSection>
       </div>
 
       <AutoRefresh enabled={data.hasActiveWork} />
@@ -119,8 +155,115 @@ export default async function DashboardPage({
 }
 
 // Worker cards + per-slot rendering moved to app/(dashboard)/operations/page.tsx
-// as part of the dashboards refactor. If you're looking for the Cpu/Loader2
-// worker card view, it lives at /operations now.
+// as part of the dashboards refactor.
+
+// ---------------------------------------------------------------------------
+// Today's Performance — the 4-stat header on System Overview.
+// ---------------------------------------------------------------------------
+
+function TodaysPerformance({
+  sys,
+  range,
+}: {
+  sys: Awaited<ReturnType<typeof loadSystemDashboardData>>
+  range: ReturnType<typeof parseDateRange>
+}) {
+  const total = sys.scrapesCreated.length
+  const successPct = total > 0 ? Math.round((sys.successCount / total) * 100) : 0
+  return (
+    <DashboardSection
+      title={`Performance · ${range.label}`}
+      hint="Click any card for the underlying rows."
+    >
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="Scrapes queued"
+          value={total}
+          tone="emphasis"
+          drilldown={{
+            title: 'Scrapes queued in this window',
+            subtitle: `${range.label} · ${total} rows`,
+            body: <ScrapeRowsList rows={sys.scrapesCreated.slice(0, 100)} />,
+          }}
+        />
+        <StatCard
+          label="Successful"
+          value={sys.successCount}
+          hint={`${successPct}% of total`}
+          tone={successPct >= 60 ? 'ok' : successPct >= 30 ? 'plain' : 'warn'}
+          drilldown={{
+            title: 'Successful scrapes',
+            subtitle: `${range.label} · ${sys.successCount} completed`,
+            body: <ScrapeRowsList rows={sys.scrapesCreated.filter(r => r.status === 'completed').slice(0, 100)} />,
+          }}
+        />
+        <StatCard
+          label="Failed / Captcha"
+          value={sys.failedCount}
+          tone={sys.failedCount > 0 ? 'warn' : 'plain'}
+          drilldown={{
+            title: 'Failed + captcha-stuck scrapes',
+            subtitle: `${range.label} · ${sys.failedCount} rows`,
+            body: <ScrapeRowsList rows={sys.scrapesCreated.filter(r => r.status === 'failed' || r.status === 'captcha').slice(0, 100)} />,
+          }}
+        />
+        <StatCard
+          label="Still open"
+          value={sys.openCount}
+          hint="pending + running"
+          tone={sys.openCount > 0 ? 'emphasis' : 'plain'}
+          drilldown={{
+            title: 'Still-open scrapes',
+            subtitle: `${range.label} · ${sys.openCount} in flight`,
+            body: <ScrapeRowsList rows={sys.scrapesCreated.filter(r => r.status === 'pending' || r.status === 'running').slice(0, 100)} />,
+          }}
+        />
+      </div>
+    </DashboardSection>
+  )
+}
+
+function ScrapeRowsList({ rows }: { rows: Array<{ id: string; keyword: string | null; country_code: string | null; search_engine: string | null; status: string; created_at: string; created_by_display: string | null }> }) {
+  if (rows.length === 0) return <p className="text-[12px] text-[color:var(--color-text-secondary)]">No rows.</p>
+  return (
+    <ul className="flex flex-col gap-1 text-[12px]">
+      {rows.map(r => (
+        <li key={r.id}>
+          <Link
+            href={`/scrape/${r.id}`}
+            className="flex flex-wrap items-center gap-2 rounded-md px-2 py-1 hover:bg-[color:var(--color-bg-secondary)]"
+          >
+            <span className="font-mono text-[10px] text-[color:var(--color-text-secondary)]">
+              {r.country_code}/{r.search_engine}
+            </span>
+            <span className="min-w-0 flex-1 truncate font-medium text-[color:var(--color-text-primary)]">
+              {r.keyword ?? '(no keyword)'}
+            </span>
+            <span className="text-[10px] text-[color:var(--color-text-secondary)]">
+              {r.created_by_display ?? '—'}
+            </span>
+            <span className="text-[10px] text-[color:var(--color-text-secondary)]">
+              {new Date(r.created_at).toLocaleString()}
+            </span>
+            <span className="rounded-full bg-[color:var(--color-bg-secondary)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-text-secondary)]">
+              {r.status}
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function leaderRowsWithPct(entries: Array<{ label: string; value: number }>) {
+  const total = entries.reduce((s, e) => s + e.value, 0)
+  return entries.map(e => ({
+    key: e.label,
+    label: e.label,
+    value: e.value,
+    secondary: total > 0 ? `${Math.round((e.value / total) * 100)}%` : '',
+  }))
+}
 
 // ---------------------------------------------------------------------------
 // Proxy bandwidth
