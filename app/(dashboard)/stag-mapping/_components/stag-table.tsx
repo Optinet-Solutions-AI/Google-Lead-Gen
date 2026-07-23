@@ -10,12 +10,15 @@ type Filter = 'all' | 'mapped' | 'unmapped' | 'mirror'
 type Props = {
   groups: StagGroup[]
   truncated: boolean
+  /** Initial filter to seed from the URL (?filter=...) so drill-down
+   *  links from the summary cards above land on the right view. */
+  initialFilter?: Filter
 }
 
 const PAGE_SIZE = 25
 
-export function StagTable({ groups, truncated }: Props) {
-  const [filter, setFilter] = useState<Filter>('all')
+export function StagTable({ groups, truncated, initialFilter = 'all' }: Props) {
+  const [filter, setFilter] = useState<Filter>(initialFilter)
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())

@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -9,8 +10,12 @@ export const dynamic = 'force-dynamic'
 
 type SearchParams = Record<string, string | string[] | undefined>
 
-function clampDays(raw: string | string[] | undefined, fallback: number): number {
+function parseLookback(
+  raw: string | string[] | undefined,
+  fallback: number,
+): number | null {
   if (typeof raw !== 'string') return fallback
+  if (raw.toLowerCase() === 'all') return null
   const n = Number.parseInt(raw, 10)
   if (!Number.isFinite(n)) return fallback
   return Math.min(Math.max(n, 1), 365)
@@ -31,8 +36,15 @@ export default async function StagMappingPage({
   const { data: isAdmin } = await svc.rpc('is_admin', { p_user_id: user.id })
 
   const sp = await searchParams
-  const lookbackDays = clampDays(sp.days, 90)
+  const lookbackDays = parseLookback(sp.days, 90)
   const data = await loadStagMappingData({ lookbackDays })
+  // Read optional filter shortcut from URL — the summary boxes below
+  // link here with e.g. ?filter=mapped so operators can drill straight
+  // from the top-of-page counters into the filtered table below.
+  const initialFilter =
+    typeof sp.filter === 'string' && ['all', 'mapped', 'unmapped', 'mirror'].includes(sp.filter)
+      ? (sp.filter as 'all' | 'mapped' | 'unmapped' | 'mirror')
+      : 'all'
 
   const oldest = data.freshness.reduce<MondayBoardFreshness | null>(
     (worst, b) =>
@@ -49,20 +61,62 @@ export default async function StagMappingPage({
           </h1>
           <p className="mt-0.5 max-w-3xl text-[12px] text-[color:var(--color-text-secondary)]">
             Websites sharing the same S-tag belong to the same operator. This
-            page groups every S-tag we&apos;ve extracted in the last{' '}
-            <strong>{data.lookbackDays} days</strong>, deduplicates the mirror
-            domains, and marks whether the S-tag is already recorded on Monday
-            (change window via the <code>?days=</code> URL param).
+            page groups every S-tag we&apos;ve extracted{' '}
+            {data.lookbackDays === null ? (
+              <strong>across all time</strong>
+            ) : (
+              <>
+                in the last <strong>{data.lookbackDays} days</strong>
+              </>
+            )}
+            , deduplicates the mirror domains, and marks whether the S-tag is
+            already recorded on Monday.
           </p>
+          <div className="mt-2 inline-flex items-center gap-1 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-0.5 text-[11px]">
+            {[
+              { key: '30', label: '30 days' },
+              { key: '90', label: '90 days' },
+              { key: '180', label: '180 days' },
+              { key: 'all', label: 'All time' },
+            ].map(opt => {
+              const isActive =
+                (opt.key === 'all' && data.lookbackDays === null) ||
+                (opt.key !== 'all' && String(data.lookbackDays) === opt.key)
+              return (
+                <Link
+                  key={opt.key}
+                  href={`/stag-mapping?days=${opt.key}`}
+                  className={[
+                    'rounded-sm px-2 py-1 font-medium transition-colors',
+                    isActive
+                      ? 'bg-[color:var(--color-accent)]/15 text-[color:var(--color-text-primary)]'
+                      : 'text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)]',
+                  ].join(' ')}
+                >
+                  {opt.label}
+                </Link>
+              )
+            })}
+          </div>
         </div>
         {isAdmin && <SyncControls />}
       </header>
 
       <FreshnessBanner freshness={data.freshness} oldest={oldest} />
 
-      <SummarySection summary={data.summary} lookbackDays={data.lookbackDays} />
+      <SummarySection
+        summary={data.summary}
+        lookbackDays={data.lookbackDays}
+        lookbackParam={typeof sp.days === 'string' ? sp.days : ''}
+      />
 
-      <StagTable groups={data.groups} truncated={data.truncated} />
+      <div id="stag-table">
+        <StagTable
+          groups={data.groups}
+          truncated={data.truncated}
+          initialFilter={initialFilter}
+        />
+      </div>
 
       <FreshnessDetail freshness={data.freshness} />
     </div>
@@ -109,6 +163,7 @@ function FreshnessBanner({
 function SummarySection({
   summary,
   lookbackDays,
+  lookbackParam,
 }: {
   summary: {
     totalUniqueTags: number
@@ -118,42 +173,63 @@ function SummarySection({
     totalWebsites: number
     totalLeadsWithTags: number
   }
-  lookbackDays: number
+  lookbackDays: number | null
+  /** The raw `?days=` value on the URL so drill-down links preserve it. */
+  lookbackParam: string
 }) {
   const mappedPct =
     summary.totalUniqueTags > 0
       ? (summary.mappedCount / summary.totalUniqueTags) * 100
       : 0
+  // Every drill-down link routes back to this same page with a filter
+  // shortcut + preserved window + a #stag-table anchor so the table
+  // scrolls into view. StagTable reads `initialFilter` from the URL.
+  const drillHref = (filter: 'all' | 'mapped' | 'unmapped' | 'mirror') => {
+    const params = new URLSearchParams()
+    if (lookbackParam) params.set('days', lookbackParam)
+    if (filter !== 'all') params.set('filter', filter)
+    const qs = params.toString()
+    return `/stag-mapping${qs ? `?${qs}` : ''}#stag-table`
+  }
   return (
     <section className="rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-bg-primary)] p-4">
       <header className="mb-3">
         <h2 className="text-[13px] font-semibold text-[color:var(--color-text-primary)]">
-          Summary · last {lookbackDays} days
+          Summary · {lookbackDays === null ? 'all time' : `last ${lookbackDays} days`}
         </h2>
         <p className="mt-1 text-[11px] text-[color:var(--color-text-secondary)]">
           Grouped by S-tag value. Same S-tag on multiple websites = same
           operator = counts as one row here even if 10 domains carry it.
+          Click a card to jump to the filtered table below.
         </p>
       </header>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-        <Stat label="Unique S-tags" value={summary.totalUniqueTags.toLocaleString()} tone="emphasis" />
+        <Stat
+          label="Unique S-tags"
+          value={summary.totalUniqueTags.toLocaleString()}
+          tone="emphasis"
+          href={drillHref('all')}
+        />
         <Stat
           label="Mapped to Monday"
           value={summary.mappedCount.toLocaleString()}
           hint={`${mappedPct.toFixed(0)}% of the total`}
           tone={mappedPct >= 50 ? 'ok' : 'plain'}
+          href={drillHref('mapped')}
         />
         <Stat
           label="Not on Monday"
           value={summary.unmappedCount.toLocaleString()}
           hint="Pitch opportunities"
           tone={summary.unmappedCount > 0 ? 'warn' : 'plain'}
+          href={drillHref('unmapped')}
         />
         <Stat
           label="Mirror groups"
           value={summary.mirrorGroups.toLocaleString()}
           hint="S-tags on 2+ domains"
           tone={summary.mirrorGroups > 0 ? 'emphasis' : 'plain'}
+          href={drillHref('mirror')}
         />
         <Stat
           label="Distinct websites"
@@ -236,11 +312,15 @@ function Stat({
   value,
   hint,
   tone = 'plain',
+  href,
 }: {
   label: string
   value: string
   hint?: string
   tone?: StatTone
+  /** When set, the card renders as a clickable Link that drills into
+   *  the table below (filter shortcut + #stag-table anchor). */
+  href?: string
 }) {
   const ring =
     tone === 'warn'
@@ -250,8 +330,8 @@ function Stat({
         : tone === 'emphasis'
           ? 'border-[color:var(--color-accent)] bg-[color:var(--color-bg-secondary)]'
           : 'border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)]'
-  return (
-    <div className={['rounded-md border px-3 py-2', ring].join(' ')}>
+  const body = (
+    <>
       <div className="text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-text-secondary)]">
         {label}
       </div>
@@ -263,8 +343,23 @@ function Stat({
           {hint}
         </div>
       )}
-    </div>
+    </>
   )
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className={[
+          'block rounded-md border px-3 py-2 text-left transition-colors hover:brightness-95',
+          ring,
+        ].join(' ')}
+        title="Jump to the table below with this filter applied"
+      >
+        {body}
+      </Link>
+    )
+  }
+  return <div className={['rounded-md border px-3 py-2', ring].join(' ')}>{body}</div>
 }
 
 function fmtDuration(minutes: number): string {

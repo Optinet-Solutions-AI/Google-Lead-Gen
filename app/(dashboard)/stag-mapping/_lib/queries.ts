@@ -5,12 +5,13 @@ import { BOARDS } from '@/lib/monday/board-registry'
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /** How many s_tags_table rows to pull on a page load. Groups happen
- *  in JS after the read. Keep the row-fetch budget modest so the
- *  page stays snappy even as s_tags_table grows past 100k rows. */
-const MAX_ROWS = 8000
-/** How many days back to look. All-time gets slow past ~90d worth
- *  of extractions; longer windows are available via the ?days= URL
- *  param on the page. */
+ *  in JS after the read. Bumped from 8k → 20k so ?days=all can cover
+ *  most historical extractions without truncation for typical usage.
+ *  If s_tags_table grows past ~200k, revisit. */
+const MAX_ROWS = 20000
+/** How many days back to look by default. All-time (`lookbackDays:
+ *  null`) skips the date filter entirely — the operator gets an
+ *  "older extractions dropped" banner if MAX_ROWS is exceeded. */
 const DEFAULT_LOOKBACK_DAYS = 90
 
 export type MondayBoardFreshness = {
@@ -98,7 +99,8 @@ export type StagSummary = {
 
 export type StagMappingData = {
   generatedAt: string
-  lookbackDays: number
+  /** null = all-time (no date filter applied). Any number = last N days. */
+  lookbackDays: number | null
   freshness: MondayBoardFreshness[]
   summary: StagSummary
   groups: StagGroup[]
@@ -118,30 +120,38 @@ function extractDomain(url: string | null): string | null {
 }
 
 export async function loadStagMappingData(options: {
-  lookbackDays?: number
+  /** number = last N days (clamped 1..365). null = all-time (no date
+   *  filter). undefined = use DEFAULT_LOOKBACK_DAYS. */
+  lookbackDays?: number | null
 } = {}): Promise<StagMappingData> {
   const svc = createServiceClient()
-  const lookbackDays = Math.max(1, Math.min(365, options.lookbackDays ?? DEFAULT_LOOKBACK_DAYS))
-  const since = new Date(Date.now() - lookbackDays * DAY_MS).toISOString()
+  const raw = options.lookbackDays === undefined ? DEFAULT_LOOKBACK_DAYS : options.lookbackDays
+  const lookbackDays: number | null =
+    raw === null ? null : Math.max(1, Math.min(365, raw))
 
   // Two reads: freshness (cheap, cached-friendly) + the tag+lead join
   // (bounded by MAX_ROWS, ordered by newest first so recent activity
   // always wins if we hit the cap).
+  let tagQuery = svc
+    .from('s_tags_table')
+    .select(
+      `id, lead_id, s_tag, source_param, brand, is_existing_on_monday,
+       monday_match_kind, monday_match_item_id, created_at,
+       lead:google_lead_gen_table!inner (
+         id, url, country_code, is_on_monday, monday_board, monday_item_id, scrape_job_id
+       )`,
+    )
+    .not('s_tag', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(MAX_ROWS)
+  if (lookbackDays !== null) {
+    const since = new Date(Date.now() - lookbackDays * DAY_MS).toISOString()
+    tagQuery = tagQuery.gte('created_at', since)
+  }
+
   const [freshness, tagsResult] = await Promise.all([
     getMondayFreshness(),
-    svc
-      .from('s_tags_table')
-      .select(
-        `id, lead_id, s_tag, source_param, brand, is_existing_on_monday,
-         monday_match_kind, monday_match_item_id, created_at,
-         lead:google_lead_gen_table!inner (
-           id, url, country_code, is_on_monday, monday_board, monday_item_id, scrape_job_id
-         )`,
-      )
-      .gte('created_at', since)
-      .not('s_tag', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(MAX_ROWS),
+    tagQuery,
   ])
 
   type TagRow = {
