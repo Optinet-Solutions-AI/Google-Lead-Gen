@@ -19,7 +19,12 @@
 import { config } from 'dotenv'
 config({ path: '.env.local' })
 import { createClient } from '@supabase/supabase-js'
-import { findTrackingLinks, parseStagFromUrl, guessBrandFromUrl } from '@/lib/stag-extraction/extract'
+import {
+  findTrackingLinks,
+  parseStagFromUrl,
+  guessBrandFromUrl,
+  extractStagsFromHtml,
+} from '@/lib/stag-extraction/extract'
 import { extractFromHtml } from '@/lib/stag-extraction/html-deep-extract'
 
 const s = createClient(
@@ -154,9 +159,8 @@ const LIMIT = (() => {
       }
     }
 
-    // Step 3: tracking-link fanout. Look at outbound tracking anchors
-    // in the HTML and parse each one for an s-tag param (no redirect
-    // follow — that's expensive and requires network).
+    // Step 3: tracking-link fanout WITHOUT redirect follow (cheap:
+    // parses the anchor href's own query params only).
     if (!found) {
       const links = findTrackingLinks(html, row.url)
       for (const link of links) {
@@ -172,6 +176,30 @@ const LIMIT = (() => {
           extracted_via: 't1_tracking_link',
         }
         break
+      }
+    }
+
+    // Step 4: FULL tracking-link fanout WITH redirect follow. Expensive
+    // (each link is a real HTTP redirect chain), but this is where most
+    // affiliate IDs actually live — the anchor href is usually a short
+    // link like /go/casino-x that resolves to
+    // https://casino-x.com/?btag=xxx once redirects settle.
+    if (!found) {
+      const resolved = await extractStagsFromHtml(html, row.url, {
+        concurrency: 3,
+        maxLinks: 20,
+      })
+      if (resolved.length > 0) {
+        const winner = resolved[0]!
+        t1TrackingLink++
+        found = {
+          s_tag: winner.s_tag,
+          source_param: winner.source_param,
+          brand: winner.brand,
+          tracking_url: winner.tracking_url,
+          final_url: winner.final_url,
+          extracted_via: 't1_tracking_link_followed',
+        }
       }
     }
 
