@@ -43,10 +43,12 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu
 EnvironmentFile=/home/ubuntu/.env
-Environment=WORKER_ID=stag-render-vm1-%i
+# WORKER_ID carries the host so DB rows can tell VM1 renders apart
+# from VM2 renders. `hostname -s` returns e.g. 'ip-172-31-29-133'.
+Environment=WORKER_ID_PREFIX=stag-render
 Environment=GOLOGIN_PORT=%i
 Environment=DISPLAY=:1
-ExecStart=/usr/bin/python3 /home/ubuntu/stag_render_worker.py
+ExecStart=/bin/bash -c '/usr/bin/env WORKER_ID="${WORKER_ID_PREFIX}-$(hostname -s)-%i" /usr/bin/python3 /home/ubuntu/stag_render_worker.py'
 Restart=on-failure
 RestartSec=15
 # Per-instance RAM cap. Chromium + full-page render is heavier than
