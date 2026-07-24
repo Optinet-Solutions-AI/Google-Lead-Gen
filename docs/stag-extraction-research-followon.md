@@ -4,6 +4,37 @@
 **Date:** 2026-07-24 (afternoon session, after the morning memo shipped).
 **TL;DR:** The morning memo focused on WHICH tag we extract. Follow-on forensics on the failure domains reveals the primary problem is actually WHETHER WE GET ANY HTML AT ALL. The recommendation order below reflects that pivot.
 
+## Update (2026-07-24, evening) — v2 baseline corrects the picture
+
+Baseline audit v2 (`scripts/qa/_stag-extraction-audit-v2.ts`) joins `google_lead_gen_table` against `fetched_html_cache` to categorize the 1,386 non-successful leads by root cause. The morning claim "we never fetch HTML" was directionally right but the size was overstated: **enrichment_worker.py does use Selenium+Chromium** (`_navigate` line 667), and `fetched_html_cache` stores the results.
+
+The real breakdown is:
+
+| Bucket | Count | % of total | Which intervention fixes it |
+|---|---:|---:|---|
+| SUCCESS | 262 | 15.9% | ✓ |
+| NO_CACHE_ROW | 718 | 43.6% | mix of "cache row cleaned up historically" + "never enqueued for extraction" — not a code target, more of a data-hygiene item |
+| **FETCH_EMPTY** (html < 500 B) | **436** | **26.5%** | **Playwright / real Chromium render** — still the biggest single code lever |
+| **EXTRACTION_FAILED** (fetched OK, parser missed) | **222** | **13.5%** | **widen networks.ts into T1 + T2 cookies + T3 DOM parse** |
+| FETCH_ERROR | 7 | 0.4% | Cloudflare — barely matters |
+| FETCH_TINY | 3 | 0.2% | consent-gate auto-click |
+
+**Key correction to the ranking:**
+- **Playwright rendering** unblocks up to +26.5pp (FETCH_EMPTY bucket), not +20-30pp. Still #1 code lever.
+- **Widening the extractor** unblocks up to +13.5pp (EXTRACTION_FAILED bucket), matches earlier estimate.
+- **Both together** theoretically get us to ~56% — comfortably clears the 40% Sprint 2 target.
+- **Cloudflare handling** is essentially irrelevant (0.4%) — deprioritize.
+
+**Top domains per actionable bucket:**
+- FETCH_EMPTY (need JS): gameshub · cardplayer · casino.netbet.ie · lottoland.ie · june.o2online.ie · mafia-casino
+- EXTRACTION_FAILED (need extractor widening): qmra.eu (5) · admiralbet.de (4) · leovegas.com (4) · pokerfirma (2) · wette.de (2)
+
+Full domain-per-bucket lists in the v2 script output.
+
+**Sprint 2 sequencing stays the same** (JS render → widen T1 → T2 cookies → cache), but now every intervention has a hard measured ceiling and a re-runnable delta target (`scripts/qa/_stag-extraction-audit-v2.ts`).
+
+---
+
 ## The pivot
 
 Morning memo assumed the failure mode was "we fetched HTML but couldn't find the tag." The forensic dig (`scripts/qa/_stag-failure-forensics.ts` + `_check-html-tags-population.ts`) shows the actual failure mode is different:
