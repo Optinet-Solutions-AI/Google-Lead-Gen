@@ -977,6 +977,16 @@ def resolve_in_browser(driver: webdriver.Chrome, tracking_url: str
     own domain with no query params, so cookie extraction is the
     ONLY path to get the tag. Wipe the jar before nav so we only
     capture cookies from THIS click's chain.
+
+    IMPORTANT (2026-07-24 patch): the operator page at the END of the
+    redirect chain often 403s, throws a Cloudflare challenge, or just
+    loads a huge JS bundle that blows past our 20s page_load_timeout.
+    Chromium raises TimeoutException / WebDriverException — but by
+    that point the URL bar has already advanced through every
+    redirect. Reading driver.current_url AFTER the exception still
+    gives us the final affiliate URL (with stag/btag/cxd in the
+    query). That's what our extractor needs. Before this patch we
+    bailed out on the exception and lost 90%+ of redirect chains.
     """
     chain = [tracking_url]
     try:
@@ -987,16 +997,27 @@ def resolve_in_browser(driver: webdriver.Chrome, tracking_url: str
         driver.set_page_load_timeout(20)
     except Exception:  # noqa: BLE001
         pass
+    nav_exc: Exception | None = None
     try:
         driver.get(tracking_url)
     except Exception as exc:  # noqa: BLE001
-        log.debug("redirect-resolve nav failed: %s", exc)
-        return None, chain, None, []
+        nav_exc = exc
     time.sleep(2)
+    final_url: str | None = None
     try:
         final_url = driver.current_url
     except Exception:  # noqa: BLE001
-        return None, chain, None, []
+        pass
+    if nav_exc is not None:
+        # Only treat the nav exception as fatal if we didn't also
+        # advance the URL bar. In practice the URL has almost always
+        # advanced by the time the exception fires (redirects settle
+        # before the final page finishes loading), so the extraction
+        # is still perfectly valid.
+        if not final_url or final_url == tracking_url or final_url == "about:blank":
+            log.debug("redirect-resolve nav truly failed (no url advance): %s", nav_exc)
+            return None, chain, None, []
+        log.debug("redirect-resolve nav raised but current_url advanced to %s — using it", final_url[:120])
     if final_url and final_url != tracking_url:
         chain.append(final_url)
     # Best-effort cookie capture — post-redirect the browser holds
