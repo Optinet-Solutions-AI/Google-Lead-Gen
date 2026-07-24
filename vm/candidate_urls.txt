@@ -1,0 +1,61 @@
+◇ injected env (24) from .env.local // tip: ⌘ override existing { override: true }
+# S-tag cookie POC candidate URLs
+# generated 2026-07-24T02:44:43.327Z
+
+# === VALIDATION: leads with a known Monday-matched s_tag ===
+# expected s_tag = 131737  (param=mid, country=AT)
+https://k1ngmkr100.com/?mid=131737_2209265&fluid=e0e4b740-34cf-446b-bb7d-0c79ca1aa9cd&var1=40841c6f&var2=w1
+# expected s_tag = 131737  (param=mid, country=AT)
+https://casnva100.com/?mid=131737_2209263&fluid=e80a3f6c-4455-4cae-9a19-d926de9cbbf4&var1=40841c6f&var2=w1
+# expected s_tag = 131737  (param=mid, country=AT)
+https://77cleobtr.com/?mid=131737_2209261&fluid=5811a2cc-a518-4c76-b3c9-f916852a9745&var1=40841c6f&var2=w1
+# expected s_tag = 131737  (param=mid, country=AT)
+https://betrepubl1cu.com/?mid=131737_2209260&fluid=ec6e879d-85d8-406f-a0af-43b83e2f096d&var1=40841c6f&var2=w1
+# expected s_tag = 381092  (param=mid, country=AT)
+https://btwst--75st.com/?mid=381092_2212217&fluid=35bbb2a3-ca8d-4ea7-98b9-fca550425ee9&var1=40841c6f&var2=w1
+# (validation subtotal: 5)
+
+# === DISCOVERY: leads on domains where we currently EXTRACT NOTHING ===
+# unmapped (country=SE, domain=casinobeats.com)
+https://casinobeats.com/se/casinon-pa-natet/instant-banking/
+# unmapped (country=SE, domain=gameshub.com)
+https://www.gameshub.com/se/online-casino/betalningsmetoder/instant-banking/
+# unmapped (country=SE, domain=cardplayer.com)
+https://www.cardplayer.com/se/casino/trustly
+# unmapped (country=AT, domain=hochgepokert.com)
+https://www.hochgepokert.com/wettanbieter/wettanbieter-ohne-oasis/
+# unmapped (country=AT, domain=pokerfirma.com)
+https://www.pokerfirma.com/online-casinos-oesterreich
+# unmapped (country=AT, domain=casino.netbet.com)
+https://casino.netbet.com/de/
+# unmapped (country=AT, domain=freep.com)
+https://www.freep.com/story/sports/top-paypal-casinos/87271769007/#:~:text=U.S.%20casinos%20that%20accept%20PayPal,welcome%20bonuses%20to%20get%20started.
+# unmapped (country=CH, domain=superbonusschweiz.com)
+https://superbonusschweiz.com/casinos/n1bet
+# unmapped (country=CA, domain=gamingamerica.com)
+https://gamingamerica.com/ca/online-casinos/much-better
+# unmapped (country=CA, domain=sportsline.com)
+https://www.sportsline.com/casinos/our-picks-for-top-10-online-casinos-for-real-money-some-of-the-best-sites-to-join-right-now/
+# unmapped (country=DE, domain=automatenspielex.com)
+https://automatenspielex.com/online-casinos/neue
+# unmapped (country=NZ, domain=royalpanda.com)
+https://www.royalpanda.com/en-nz/promotions
+# unmapped (country=NZ, domain=bestnewzealandcasinos.com)
+https://bestnewzealandcasinos.com/deposit-options/paysafecard/
+# unmapped (country=IE, domain=betvictor.com)
+https://www.betvictor.com/en-ie/casino
+# unmapped (country=DE, domain=qmra.eu)
+https://qmra.eu/online-casinos-ohne-deutsche-lizenz/
+# unmapped (country=DE, domain=casino.netbet.de)
+https://casino.netbet.de/
+# unmapped (country=SE, domain=en.wikipedia.org)
+https://en.wikipedia.org/wiki/Main_Page
+# unmapped (country=DE, domain=casinofokus.com)
+https://casinofokus.com/de/online-casino-liste/casinos-ohne-deutsche-lizenz/
+# unmapped (country=NZ, domain=betbrain.com)
+https://www.betbrain.com/nz/bonus-codes
+# unmapped (country=NO, domain=vinn.com)
+https://www.vinn.com/nb
+# (discovery subtotal: 20)
+
+# TOTAL: 25 URLs
