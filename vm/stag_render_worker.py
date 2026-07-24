@@ -155,6 +155,7 @@ def open_chromium():
     caller can gl.stop() on shutdown."""
     from gologin import GoLogin
     from selenium import webdriver
+    from selenium.webdriver.chrome.service import Service
 
     profile_id = os.environ.get("DEFAULT_STAG_RENDER_PROFILE_ID") or os.environ.get(
         "DEFAULT_STAG_POC_PROFILE_ID"
@@ -175,7 +176,11 @@ def open_chromium():
 
     options = webdriver.ChromeOptions()
     options.add_experimental_option("debuggerAddress", debugger_address)
-    driver = webdriver.Chrome(options=options)
+    # Explicit chromedriver path — Selenium's auto-download (Selenium
+    # Manager) doesn't work on the VMs (no internet from that binary).
+    # Same path enrichment_worker.py uses.
+    service = Service("/usr/local/bin/chromedriver")
+    driver = webdriver.Chrome(service=service, options=options)
     driver.set_page_load_timeout(PAGE_TIMEOUT)
     return driver, gl
 
