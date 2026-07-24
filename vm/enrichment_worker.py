@@ -805,8 +805,36 @@ def guess_brand_from_url(url: str) -> str | None:
         return None
 
 
+_WAKE_DEFERRED_JS = """
+// Wake up WP Rocket / LiteSpeed Cache / WP Fastest Cache / Autoptimize
+// style "delay JavaScript execution until user interaction" gates.
+// Each of these optimizers hangs the *actual* content-loading scripts
+// off one of these event listeners so the initial page paints without
+// them. Without a real user event they never fire, and the affiliate
+// list / lazy widgets stay empty.
+try {
+  var events = ['mousemove','mousedown','mouseover','touchstart','touchmove','wheel','keydown','scroll','click'];
+  events.forEach(function(name){
+    try { document.dispatchEvent(new Event(name, {bubbles: true})); } catch(_) {}
+    try { window.dispatchEvent(new Event(name, {bubbles: true})); } catch(_) {}
+    try { document.body && document.body.dispatchEvent(new Event(name, {bubbles: true})); } catch(_) {}
+  });
+  // Nudge scroll — some optimizers gate on the scroll delta specifically.
+  try { window.scrollTo(0, 200); } catch(_) {}
+} catch(_) {}
+"""
+
+
 def _navigate(driver: webdriver.Chrome, url: str, settle_s: int = PAGE_SETTLE_S) -> str | None:
-    """Navigate + return page_source, or None on failure."""
+    """Navigate + return page_source, or None on failure.
+
+    Two-stage capture: after the initial settle we fire synthetic user
+    events (mousemove/scroll/keydown/touchstart/click) to trip WP Rocket
+    and its cousins' "delay JavaScript until user interaction" gates,
+    then wait a beat for the deferred scripts to fetch + inject content
+    into the DOM. Doubles our HTML yield on delay-JS review sites (which
+    is most of the German casino affiliate corpus).
+    """
     try:
         driver.get(url)
     except Exception as exc:  # noqa: BLE001
@@ -819,6 +847,14 @@ def _navigate(driver: webdriver.Chrome, url: str, settle_s: int = PAGE_SETTLE_S)
     except Exception:  # noqa: BLE001
         pass
     time.sleep(settle_s)
+    # Wake deferred JS then give it up to 3s to actually inject content.
+    # Failure is silent — we still fall through and capture whatever's
+    # in the DOM at that point.
+    try:
+        driver.execute_script(_WAKE_DEFERRED_JS)
+        time.sleep(3)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         return driver.page_source
     except Exception:  # noqa: BLE001
