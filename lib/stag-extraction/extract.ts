@@ -15,7 +15,9 @@ import { resolveFinalUrlSafe } from '@/lib/affiliate-detection/fetch'
 import { AFFILIATE_NETWORKS, networkForHost } from './networks'
 
 const HREF_RE = /href=["']([^"']+)["']/gi
-const TRACKING_PATH_RE = /\/(track|click|go|visit|out|redirect|creat|aff|ref|link|offer|bonus|promo)\//i
+const TRACKING_PATH_RE =
+  // English                                   German                                            Spanish/Italian                Nordic                   French/Dutch
+  /\/(track|click|go|visit|out|redirect|creat|aff|ref|link|offer|bonus|promo|besuche|besuchen|geh-zu|gehe-zu|zum-anbieter|zum-casino|jetzt-spielen|spielen|vaya|visitar|andare|visita|visitare|scommetti|besok|besoek|spela|kolla|aller|jouer|voir-plus|allez|ga-naar|bezoek|speel|naar)\//i
 const TRACKING_QUERY_RE = /[?&](ref|aff|affiliate|campaign|source|tracking|click)=/i
 
 const STAG_PARAM_ORDER = ['btag', 'stag', 'cxd', 'mid', 'affid'] as const

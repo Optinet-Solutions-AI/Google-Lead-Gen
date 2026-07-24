@@ -595,7 +595,13 @@ NEXT_DATA_KEYS = {
 }
 
 TRACKING_PATH_RE = re.compile(
-    r"/(track|click|go|visit|out|redirect|creat|aff|ref|link|offer|bonus|promo)/",
+    # English verbs                     German           Spanish/Italian    Nordic          French/Dutch
+    r"/(track|click|go|visit|out|redirect|creat|aff|ref|link|offer|bonus|promo"
+    r"|besuche|besuchen|geh-zu|gehe-zu|zum-anbieter|zum-casino|jetzt-spielen|spielen"
+    r"|vaya|visitar|andare|visita|visitare|scommetti"
+    r"|besok|besoek|spela|kolla"
+    r"|aller|jouer|voir-plus|allez"
+    r"|ga-naar|bezoek|speel|naar)/",
     re.IGNORECASE,
 )
 TRACKING_QUERY_RE = re.compile(
