@@ -45,6 +45,7 @@ export function PushDetailSheet({ range }: { range: string }) {
   const country = sp.get('push_country') ?? ''
   const pusher = sp.get('push_pusher') ?? ''
   const day = sp.get('push_day') ?? ''
+  const allTime = sp.get('push_all') === '1'
 
   const [rows, setRows] = useState<Row[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -52,7 +53,9 @@ export function PushDetailSheet({ range }: { range: string }) {
 
   const close = useCallback(() => {
     const params = new URLSearchParams(sp.toString())
-    for (const k of ['push_detail', 'push_country', 'push_pusher', 'push_day']) params.delete(k)
+    for (const k of ['push_detail', 'push_country', 'push_pusher', 'push_day', 'push_all']) {
+      params.delete(k)
+    }
     const qs = params.toString()
     router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
   }, [sp, pathname, router])
@@ -90,6 +93,7 @@ export function PushDetailSheet({ range }: { range: string }) {
     if (country) qs.set('country', country)
     if (pusher) qs.set('pusher', pusher)
     if (day) qs.set('day', day)
+    if (allTime) qs.set('all', '1')
     fetch(`/api/monday-dashboard/push-details?${qs.toString()}`, { signal: controller.signal })
       .then(async r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
@@ -101,17 +105,19 @@ export function PushDetailSheet({ range }: { range: string }) {
       })
       .finally(() => setLoading(false))
     return () => controller.abort()
-  }, [open, range, country, pusher, day])
+  }, [open, range, country, pusher, day, allTime])
 
   const exportUrl = useMemo(() => {
     const qs = new URLSearchParams({ range })
     if (country) qs.set('country', country)
     if (pusher) qs.set('pusher', pusher)
     if (day) qs.set('day', day)
+    if (allTime) qs.set('all', '1')
     return `/api/monday-dashboard/push-export?${qs.toString()}`
-  }, [range, country, pusher, day])
+  }, [range, country, pusher, day, allTime])
 
   const filterBadges = [
+    allTime && { label: 'Window', value: 'All time', param: 'push_all' },
     country && { label: 'Country', value: country, param: 'push_country' },
     pusher && { label: 'Pusher', value: pusher, param: 'push_pusher' },
     day && { label: 'Day', value: day, param: 'push_day' },

@@ -178,6 +178,11 @@ export type MondayPushDetailFilters = {
   pusher?: string
   /** YYYY-MM-DD (UTC) — narrows to pushed_to_monday_at within that day. */
   day?: string
+  /** true → ignore the range's since/until window and return every
+   *  push ever. Used when the operator clicks the "Pushed all time"
+   *  tile — the number on that tile is an all-time count so the sheet
+   *  needs to match. */
+  all?: boolean
 }
 
 export async function loadMondayPushDetails(
@@ -185,18 +190,6 @@ export async function loadMondayPushDetails(
   filters: MondayPushDetailFilters = {},
 ): Promise<MondayPushDetailRow[]> {
   const svc = createServiceClient()
-
-  // Day filter overrides the range's since/until when present so the
-  // side sheet can drill into a single chart bar.
-  let since = range.since
-  let until = range.until
-  if (filters.day && /^\d{4}-\d{2}-\d{2}$/.test(filters.day)) {
-    const [y, m, d] = filters.day.split('-').map(n => Number(n))
-    const start = new Date(Date.UTC(y!, m! - 1, d!))
-    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000)
-    since = start.toISOString()
-    until = end.toISOString()
-  }
 
   let q = svc
     .from('google_lead_gen_table')
@@ -206,10 +199,24 @@ export async function loadMondayPushDetails(
         'scrape_job_id, scrape_queue!scrape_job_id(created_by_username, created_by_display, created_by_email)',
     )
     .not('pushed_to_monday_at', 'is', null)
-    .gte('pushed_to_monday_at', since)
-    .lte('pushed_to_monday_at', until)
     .order('pushed_to_monday_at', { ascending: false })
     .limit(PUSH_DETAIL_ROW_CAP)
+
+  // Time window: three modes, in priority order:
+  //   1. filters.day  → single UTC day (drill from a chart bar)
+  //   2. filters.all  → no window at all (all-time; matches the
+  //                     "Pushed all time" tile's count)
+  //   3. default      → the DateRange from ?range= on the page
+  if (filters.day && /^\d{4}-\d{2}-\d{2}$/.test(filters.day)) {
+    const [y, m, d] = filters.day.split('-').map(n => Number(n))
+    const start = new Date(Date.UTC(y!, m! - 1, d!))
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000)
+    q = q.gte('pushed_to_monday_at', start.toISOString())
+    q = q.lte('pushed_to_monday_at', end.toISOString())
+  } else if (!filters.all) {
+    q = q.gte('pushed_to_monday_at', range.since)
+    q = q.lte('pushed_to_monday_at', range.until)
+  }
 
   if (filters.country) q = q.eq('country_code', filters.country)
   if (filters.pusher && filters.pusher !== '(unknown)') q = q.eq('monday_pushed_by', filters.pusher)

@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
   if (p) filters.pusher = p
   const d = sp.get('day')
   if (d) filters.day = d
+  if (sp.get('all') === '1') filters.all = true
 
   const rows = await loadMondayPushDetails(range, filters)
   return NextResponse.json({ range, filters, rows })

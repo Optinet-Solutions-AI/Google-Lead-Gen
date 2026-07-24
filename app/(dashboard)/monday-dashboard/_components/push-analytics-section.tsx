@@ -35,6 +35,7 @@ export function PushAnalyticsSection({ summary, rangeLabel, rangeKey }: Props) {
   }
 
   const openBase = openWith({})
+  const openAllTime = openWith({ push_all: '1' })
   const openTopExportUrl = (() => {
     const qs = new URLSearchParams()
     qs.set('range', rangeKey)
@@ -72,7 +73,7 @@ export function PushAnalyticsSection({ summary, rangeLabel, rangeKey }: Props) {
       {/* Summary tiles — all clickable */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <ClickableTile
-          href={openBase}
+          href={openAllTime}
           label="Pushed all time"
           value={summary.totalPushed}
           hint={`Across every lead we've ever pushed`}

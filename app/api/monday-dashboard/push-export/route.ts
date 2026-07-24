@@ -35,12 +35,14 @@ export async function GET(req: NextRequest) {
   if (p) filters.pusher = p
   const d = sp.get('day')
   if (d) filters.day = d
+  if (sp.get('all') === '1') filters.all = true
 
   const rows = await loadMondayPushDetails(range, filters)
 
   const csv = toCsv(rows)
   const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
-  const filenameBits = ['monday-pushes', range.key, filters.country, filters.pusher, filters.day, stamp]
+  const windowBit = filters.all ? 'all-time' : range.key
+  const filenameBits = ['monday-pushes', windowBit, filters.country, filters.pusher, filters.day, stamp]
     .filter(Boolean)
     .join('_')
     .replace(/[^\w.-]+/g, '-')
