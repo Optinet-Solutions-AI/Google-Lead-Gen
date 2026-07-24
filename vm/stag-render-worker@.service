@@ -1,0 +1,60 @@
+# ============================================================
+# Systemd template unit for the stag render worker.
+#
+# Install (as root):
+#   sudo cp stag-render-worker@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#
+# One instance per port. Start 3 workers on ports 9231 / 9232 / 9233:
+#   sudo systemctl enable --now stag-render-worker@9231
+#   sudo systemctl enable --now stag-render-worker@9232
+#   sudo systemctl enable --now stag-render-worker@9233
+#
+# These ports intentionally live above the scrape (9222-9227) and
+# enrichment (9228-9230) worker ranges so they don't collide.
+#
+# Logs:
+#   sudo journalctl -u stag-render-worker@9231 -f
+#
+# The `%i` placeholder is replaced with the number after `@`. Each
+# instance reads the SAME /home/ubuntu/.env but overrides WORKER_ID
+# + GOLOGIN_PORT so the three don't step on each other.
+#
+# Required env vars in /home/ubuntu/.env:
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  (already set)
+#   GOLOGIN_API_TOKEN                        (already set)
+#   DEFAULT_STAG_RENDER_PROFILE_ID           (any GoLogin profile;
+#                                             country doesn't matter
+#                                             for most extraction —
+#                                             pick e.g. the AU or DE
+#                                             one so the proxy still
+#                                             looks residential)
+#   STAG_RENDER_BATCH_SIZE   optional, default 8
+#   STAG_RENDER_SETTLE_S     optional, default 3
+#   STAG_RENDER_PAGE_TIMEOUT optional, default 15
+# ============================================================
+
+[Unit]
+Description=Stag Render Worker (JS-render for FETCH_EMPTY leads, port %i)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+EnvironmentFile=/home/ubuntu/.env
+Environment=WORKER_ID=stag-render-vm1-%i
+Environment=GOLOGIN_PORT=%i
+Environment=DISPLAY=:1
+ExecStart=/usr/bin/python3 /home/ubuntu/stag_render_worker.py
+Restart=on-failure
+RestartSec=15
+# Per-instance RAM cap. Chromium + full-page render is heavier than
+# plain scrape — 2 GB gives headroom for the tail-latency payloads.
+MemoryMax=2000M
+OOMPolicy=kill
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

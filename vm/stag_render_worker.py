@@ -93,11 +93,14 @@ def claim_batch(country_code: str | None = None) -> list[dict[str, Any]]:
 
 
 def _fallback_claim(country_code: str | None) -> list[dict[str, Any]]:
-    """Pre-RPC fallback: pull from fetched_html_cache directly. Used
-    ONLY during initial rollout; once the RPC ships we drop this."""
+    """Pre-RPC fallback for the initial deploy window BEFORE the
+    migration has been applied. Once claim_stag_render_batch is live
+    (migration 20260724060000_stag_render_worker.sql) this codepath
+    is unreachable — RPC 404 is the only trigger."""
     params = {
-        "select": "lead_id,url,html",
+        "select": "lead_id,url",
         "html": "not.is.null",
+        "or": "(source.is.null,source.neq.playwright_render)",
         "order": "fetched_at.desc",
         "limit": BATCH_SIZE,
     }
@@ -109,13 +112,13 @@ def _fallback_claim(country_code: str | None) -> list[dict[str, Any]]:
     )
     resp.raise_for_status()
     all_rows = resp.json() or []
-    # Filter to actually-empty ones client-side.
-    empty = [r for r in all_rows if not r.get("html") or len(r["html"]) < 500]
-    return [{"lead_id": r["lead_id"], "url": r["url"], "country_code": country_code} for r in empty]
+    return [{"lead_id": r["lead_id"], "url": r["url"], "country_code": country_code} for r in all_rows]
 
 
 def persist_html(lead_id: int, url: str, html: str, fetch_error: str | None = None) -> None:
-    """Upsert the rendered HTML back into fetched_html_cache."""
+    """Upsert the rendered HTML back into fetched_html_cache. Also
+    stamps render_completed_at so release_stale_render_claims doesn't
+    later clobber our claim before the row is fully written."""
     payload = {
         "lead_id": lead_id,
         "url": url,
@@ -123,6 +126,7 @@ def persist_html(lead_id: int, url: str, html: str, fetch_error: str | None = No
         "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "fetch_error": fetch_error,
         "source": "playwright_render",
+        "render_completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     headers = {**SUPABASE_HEADERS, "Prefer": "resolution=merge-duplicates"}
     resp = requests.post(
@@ -133,6 +137,14 @@ def persist_html(lead_id: int, url: str, html: str, fetch_error: str | None = No
     )
     if resp.status_code >= 300:
         log.warning("persist_html %s: %s %s", lead_id, resp.status_code, resp.text[:200])
+
+
+## Scoring is handled OUT of this process by
+## scripts/qa/_bulk-re-extract-cached-html.ts (Node/TS extractor). The
+## render worker only guarantees the HTML is rendered + persisted with
+## source='playwright_render'. Run the bulk re-extract on the Vercel
+## side (or from a laptop) to score whatever this worker has rendered
+## since the last pass — typically after every batch clears.
 
 
 # ---------------------------------------------------------------------------
