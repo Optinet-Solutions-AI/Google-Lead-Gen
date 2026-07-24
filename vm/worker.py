@@ -314,7 +314,11 @@ def captcha_terminal(job_id: str, error: str | None = None) -> None:
     /admin/interactive. Distinct from captcha_job (which auto-retries
     up to 10 times) — running auto-retry on Captcha-solver-parked jobs
     would just burn proxy quota cycling the same captcha 10x in 20 minutes."""
-    msg = (error or "Couldn't continue — a captcha appeared and the auto-solver couldn't clear it. To solve these live, turn on \"I'm available for CAPTCHA review\" in My Account, then re-queue; otherwise try again later when the proxy pool is cleaner.")[:2000]
+    # Post-LGP-054 (shared-reviewer-pool RPC): the operator no longer
+    # needs to toggle their own flag; any reviewer with "I'm available"
+    # on will surface the checkpoint. If no one is available, this
+    # terminal state is what's shown — plain language, clear action.
+    msg = (error or "The search page kept showing a captcha and no reviewer was available to solve it. Click Retry on this row to run it again — usually a fresh proxy clears through cleanly.")[:2000]
     _terminal_rpc(
         "mark_scrape_job_captcha_terminal", job_id,
         lambda: supabase.rpc("mark_scrape_job_captcha_terminal", {"p_job_id": job_id, "p_error": msg}).execute(),
@@ -350,7 +354,8 @@ _FAILURE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
     # ---- GoLogin profile transient (already auto-retried by scraper) ----
     (re.compile(r"BadZipFile|bad zip file", re.I),
-     "GoLogin profile download glitched — auto-retry usually fixes this."),
+     "The browser profile didn't download cleanly — hiccup on our end. "
+     "It retries automatically; if it keeps failing, hit Retry on the row."),
 
     # ---- Browser / Selenium crashes ----
     (re.compile(r"chrome not reachable|DevToolsActivePort|chrome failed to start"
@@ -362,9 +367,9 @@ _FAILURE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # ---- GoLogin API auth / profile issues ----
     (re.compile(r"GoLogin.*(401|403|forbidden|unauthorized)"
                 r"|gologin.*api.*token", re.I),
-     "GoLogin authentication failed — the API token may have expired."),
+     "The browser-profile service rejected our login — an admin needs to refresh the API key."),
     (re.compile(r"profile (id )?not found|profile_id.*does not exist", re.I),
-     "GoLogin profile is missing or was deleted — check the country config."),
+     "The browser profile for this country is missing. An admin needs to set one up in Country Profiles."),
 
     # ---- Proxy bandwidth / quota (Chris's '5 GB' scenario) ----
     (re.compile(r"(bandwidth|data|traffic|quota).*(exceeded|reached|out of|limit)"
@@ -2474,7 +2479,7 @@ def process_job(job: dict[str, Any]) -> None:
     except subprocess.TimeoutExpired:
         _kill_port()
         timeout_used = INTERACTIVE_TIMEOUT_S if CAPTCHA_SOLVER_MODE else SCRAPE_TIMEOUT_S
-        fail_job(job_id, f"Scrape took too long ({timeout_used // 60} min) and was stopped.")
+        fail_job(job_id, f"This scrape ran past its {timeout_used // 60}-minute limit and was stopped. Usually a slow page load or a stuck captcha — hit Retry to run it again with a fresh session.")
         return
     except Exception as exc:  # noqa: BLE001
         _kill_port()
