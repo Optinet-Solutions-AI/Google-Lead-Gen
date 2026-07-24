@@ -443,19 +443,18 @@ def process_stag_in_browser(
         log.info("stag: lead=%s no tracking links found in either pass", lead_id)
         return []
 
-    # No dedupe by tag value — if the affiliate page exposes 10
-    # outbound tracking links, we want 10 s_tag rows, even if some
-    # links collapse to the same short ID after truncation. This
-    # matches the operator's "10 links = 10 s-tags" expectation, so
-    # we cap at 10. Each link costs ~15-20s of browser
-    # navigation + redirect resolve + screenshot upload, so a cap
-    # of 30 (the previous value) blew per-lead runtime out to ~10
-    # minutes once the same-host fix started surfacing the full
-    # cloaked-link inventory — that's the "keep trying for so long"
-    # operator complaint. 10 keeps the worst case ~3 min while still
-    # covering every affiliate-review top-list we've seen.
+    # No dedupe by tag value — if the affiliate page exposes N
+    # outbound tracking links, we want N s_tag rows. Operator spec
+    # updated 2026-07-24: "not just top 10, all of them" — some
+    # German review sites list 20+ casinos in their top table (see
+    # lilipuz.de/online-casinos-ohne-limits.html which has 20).
+    # Each link costs ~15-20s of browser navigation + redirect
+    # resolve + optional screenshot upload, so cap of 30 keeps the
+    # worst case around ~10-12 min while covering every affiliate
+    # top-list we've seen. Higher caps risk lock-holding for too
+    # long and blocking the country queue.
     resolved: list[dict] = []
-    tracking_list = seen_tracking[:10]
+    tracking_list = seen_tracking[:30]
     for i, tracking_url in enumerate(tracking_list):
         # Cooperative cancellation: dashboard cancel sets cancel_requested=true
         # on this row; we bail out between redirects so partial results stick.
@@ -733,7 +732,12 @@ def extract_tracking_links(html: str, base_url: str) -> list[str]:
         except Exception:  # noqa: BLE001
             pass
 
-    return list(found)[:30]
+    # Extract cap raised 2026-07-24 30 → 60 so multi-page crawls
+    # (homepage + up to MAX_EXTRA_PAGES) can contribute their share
+    # without prematurely truncating pages that have long lists.
+    # The per-lead resolve cap in process_stag_in_browser (30) is
+    # the real limiter on runtime.
+    return list(found)[:60]
 
 
 def parse_stag_from_url(url: str) -> tuple[str, str] | None:
