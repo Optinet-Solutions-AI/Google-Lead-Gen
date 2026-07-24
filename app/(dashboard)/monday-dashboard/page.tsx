@@ -12,6 +12,9 @@ import {
   loadStagMatchStats,
   type BoardSnapshot,
 } from '../_lib/monday-dashboard-queries'
+import { loadMondayPushSummary } from '../_lib/monday-push-queries'
+import { PushAnalyticsSection } from './_components/push-analytics-section'
+import { PushDetailSheet } from './_components/push-detail-sheet'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,9 +36,10 @@ export default async function MondayDashboardPage({
 }) {
   const sp = await searchParams
   const range = parseDateRange(sp.range)
-  const [ana, matchStats] = await Promise.all([
+  const [ana, matchStats, pushSummary] = await Promise.all([
     loadMondayAnalyticsData(range),
     loadStagMatchStats(range),
+    loadMondayPushSummary(range),
   ])
 
   const totalItemsAllBoards = ana.boards.reduce((s, b) => s + b.totalItems, 0)
@@ -125,6 +129,17 @@ export default async function MondayDashboardPage({
       </DashboardSection>
 
       <DashboardSection
+        title={`Pushed to Monday · ${range.label}`}
+        hint="Leads sent from this tool via the Push to Monday button. Click any number to see the actual leads and export as CSV."
+      >
+        <PushAnalyticsSection
+          summary={pushSummary}
+          rangeLabel={range.label}
+          rangeKey={range.key}
+        />
+      </DashboardSection>
+
+      <DashboardSection
         title={`Sync trend · ${range.label}`}
         hint="Items whose synced_at falls in the bucket. Solid line = total across all boards."
       >
@@ -146,6 +161,8 @@ export default async function MondayDashboardPage({
           <MatchRatioPanel matchStats={matchStats} />
         </DashboardSection>
       </div>
+
+      <PushDetailSheet range={range.key} />
     </div>
   )
 }
