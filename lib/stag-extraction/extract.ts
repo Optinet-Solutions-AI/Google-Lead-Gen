@@ -12,6 +12,7 @@
  */
 
 import { resolveFinalUrlSafe } from '@/lib/affiliate-detection/fetch'
+import { AFFILIATE_NETWORKS, networkForHost } from './networks'
 
 const HREF_RE = /href=["']([^"']+)["']/gi
 const TRACKING_PATH_RE = /\/(track|click|go|visit|out|redirect|creat|aff|ref|link|offer|bonus|promo)\//i
@@ -111,12 +112,30 @@ export function parseStagFromUrl(rawUrl: string): { tag: string; param: string }
   } catch {
     return null
   }
+  // Legacy 5-param list — kept first so anything the historical pipeline
+  // handled still resolves to exactly the same source_param label.
   for (const key of STAG_PARAM_ORDER) {
-    // Trim before the emptiness check: a `?btag=%20%20%20` yields a
-    // whitespace-only value that would otherwise propagate to the s_tag
-    // column, the Monday push body, and the dedupe Set as a blank tag.
     const t = u.searchParams.get(key)?.trim()
     if (t) return { tag: t, param: key }
+  }
+  // Widened check via networks.ts. If a tracker host on the redirect
+  // chain matches a known network, prefer that network's URL-param
+  // order (so a Cellxpert URL resolves to `cxd` before generic `stag`).
+  // Otherwise, walk every network's params in registry order.
+  const hostNetwork = networkForHost(rawUrl)
+  const ordered = hostNetwork
+    ? [hostNetwork, ...AFFILIATE_NETWORKS.filter(n => n.key !== hostNetwork.key)]
+    : AFFILIATE_NETWORKS
+  for (const network of ordered) {
+    for (const key of network.urlParams) {
+      const v = u.searchParams.get(key)?.trim()
+      if (!v) continue
+      // Optional per-network shape validator — skip a `?aff=1` match on
+      // Cellxpert (which wants 6+ char alphanumerics) but keep a clean
+      // Impact `irclickid=xxxxxxxxxxxx` value.
+      if (network.valueShape && !network.valueShape.test(v)) continue
+      return { tag: v, param: key }
+    }
   }
   return null
 }
