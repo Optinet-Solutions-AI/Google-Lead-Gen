@@ -325,6 +325,36 @@ def _set_mobile_viewport(driver: webdriver.Chrome) -> bool:
         return False
 
 
+def _load_rooster_partner_brands() -> set[str]:
+    """Load the current active Rooster partner brand list once per job.
+
+    Returns a lowercase set of brand domains (e.g. {"betway", "casumo"}).
+    The stag stage uses this to short-circuit tag extraction on brands
+    we already partner with — per the 2026-07-24 spec, we still record
+    the brand row for reference, but don't spend redirect+cookie
+    resolution time on it.
+
+    Failure returns an empty set — worst case is we do the extra work,
+    never dropping the row entirely.
+    """
+    try:
+        res = (
+            supabase.table("rooster_brands")
+            .select("domain")
+            .eq("is_active", True)
+            .execute()
+        )
+        rows = res.data or []
+        return {
+            (row.get("domain") or "").strip().lower()
+            for row in rows
+            if row.get("domain")
+        }
+    except Exception as exc:  # noqa: BLE001
+        log.warning("rooster brand pre-load failed: %s", exc)
+        return set()
+
+
 def _crawl_for_tracking_links(
     driver: webdriver.Chrome,
     url: str,
@@ -390,6 +420,11 @@ def process_stag_in_browser(
     Heavy on browser navigations — count one per tracking link plus N+1
     page loads. Relies on the country lock to stay single-occupant.
     """
+    # Rooster-partner pre-check: load once so the per-brand skip in the
+    # resolve loop below is O(1). Empty set on failure — falls through
+    # to normal extraction, so a transient DB blip never drops rows.
+    rooster_partner_brands = _load_rooster_partner_brands()
+
     # Desktop pass.
     seen_tracking = _crawl_for_tracking_links(driver, url, lead_id, label="desktop")
     extracted_via = "desktop"
@@ -430,27 +465,58 @@ def process_stag_in_browser(
                 lead_id, job_id, i, len(tracking_list),
             )
             break
-        final_url, chain, screenshot = resolve_in_browser(driver, tracking_url)
+        final_url, chain, screenshot, cookies = resolve_in_browser(driver, tracking_url)
         if not final_url:
             continue
-        parsed = parse_stag_from_url(final_url)
-        if not parsed:
-            continue
-        tag_value, source_param = parsed
+        brand = guess_brand_from_url(final_url)
+
+        # Monday / Rooster-partner pre-check: brand already registered
+        # as a Rooster partner? Skip the tag extraction work and just
+        # record the brand row for reference. Per operator's 2026-07-24
+        # spec: "we dont need to get the stags of links or websites
+        # that's already in the monday data". Downstream rows still
+        # flow through the RPC's is_rooster_brand flag so the UI can
+        # highlight them as "already partnered — skipped".
+        tag_value: str | None = None
+        source_param: str | None = None
+        extracted_via_row = extracted_via
+        brand_key = (brand or "").strip().lower()
+        if brand_key and brand_key in rooster_partner_brands:
+            extracted_via_row = f"{extracted_via}_skipped_partner"
+        else:
+            # Tag extraction: URL params first (cheap), cookies second.
+            # Cookies added 2026-07-24 to catch networks that drop the
+            # affiliate ID as a cookie mid-redirect and land the browser
+            # on a param-less operator URL.
+            parsed_url = parse_stag_from_url(final_url)
+            if parsed_url:
+                tag_value, source_param = parsed_url
+            else:
+                parsed_cookie = parse_stag_from_cookies(cookies)
+                if parsed_cookie:
+                    tag_value, source_param = parsed_cookie
+                    extracted_via_row = f"{extracted_via}_cookie"
+
         screenshot_path: str | None = None
         if screenshot:
             screenshot_path = upload_screenshot(
                 lead_id, screenshot, suffix=f"stag_{i}_{int(time.time() * 1000)}",
             )
+
+        # Always record ONE row per outbound brand link, even when
+        # neither URL params nor cookies gave us the tag. Downstream
+        # (10-rows-per-lead invariant): the operator gets to see the
+        # affiliate promotes this brand even when the tag itself is
+        # cloaked. Empty s_tag is a signal, not a failure.
         resolved.append({
-            "s_tag": tag_value,
+            "s_tag": tag_value or "",
             "source_param": source_param,
-            "brand": guess_brand_from_url(final_url),
+            "brand": brand,
             "tracking_url": tracking_url,
             "final_url": final_url,
             "redirect_chain": chain,
             "screenshot_path": screenshot_path,
-            "extracted_via": extracted_via,
+            "extracted_via": extracted_via_row,
         })
 
     return resolved
@@ -544,6 +610,41 @@ EXCLUDED_HOSTS = {
 }
 
 STAG_PARAM_ORDER = ("btag", "stag", "cxd", "mid", "affid")
+
+# --- 2026-07-24: widened extractor + cookie support ------------------
+# Legacy STAG_PARAM_ORDER above kept for backwards compatibility on the
+# rare paths that still walk it directly. New code paths use the
+# NETWORKS registry below which covers 13 known affiliate networks
+# instead of the original 5-param set. Mirrors lib/stag-extraction/
+# networks.ts on the TS side.
+NETWORKS: tuple[dict, ...] = (
+    dict(key="cellxpert",          url_params=("cxd", "clickid"),
+         cookies=("cxd", "cxd_offer_id", "cxd_click_id", "cellxpert_click", "affid")),
+    dict(key="income_access",      url_params=("iaid", "aff", "sub_aff", "ia_partner"),
+         cookies=("ias_partner", "ias_part", "iaid", "iaclickid")),
+    dict(key="myaffiliates",       url_params=("btag", "bta", "affiliate_id"),
+         cookies=("ma_click_id", "ma_visit", "bta", "btag_cookie")),
+    dict(key="netrefer",           url_params=("btag", "nrid", "affid"),
+         cookies=("nrclickid", "nr_pid", "nr_bta")),
+    dict(key="post_affiliate_pro", url_params=("a_aid", "affiliateid", "a_bid"),
+         cookies=("papvisitorid", "papcookie_visit", "a_aid")),
+    dict(key="hasoffers",          url_params=("offer_id", "aff_id", "transaction_id", "aff_sub"),
+         cookies=("aff_sub_id", "hasoffers_aff", "transaction_id")),
+    dict(key="everflow",           url_params=("ef_id", "offer_id", "transaction_id", "oid"),
+         cookies=("ef_click", "_ef_click", "ef_transaction_id")),
+    dict(key="impact",             url_params=("irclickid", "clickid", "sharedid"),
+         cookies=("iradmc", "_impact_id", "ir_click_id")),
+    dict(key="commissionjunction", url_params=("pid", "aid", "sid"),
+         cookies=("cje", "cj_user", "cjevent")),
+    dict(key="rakuten",            url_params=("ranmid", "raneaid", "ransiteid"),
+         cookies=("ranmid", "r_ranpid", "ransiteid")),
+    dict(key="kwanko",             url_params=("ns_source", "ns_campaign", "noc_aff"),
+         cookies=("kwanko_click", "ktag")),
+    dict(key="admitad",            url_params=("admitad_uid", "ad_id"),
+         cookies=("aduid", "_asc")),
+    dict(key="generic",            url_params=("stag", "affid", "mid", "aff", "ref", "affiliate_id"),
+         cookies=("stag", "affid", "aff_id", "affiliate_id")),
+)
 
 
 def _is_tracking_link(url: str) -> bool:
@@ -643,6 +744,8 @@ def parse_stag_from_url(url: str) -> tuple[str, str] | None:
         return None
     # parse_qs is case-sensitive on keys; build a case-insensitive view.
     lower_qs = {k.lower(): v for k, v in qs.items()}
+    # Legacy 5-param check first so anything the historical pipeline
+    # accepted still resolves to the same source_param label.
     for key in STAG_PARAM_ORDER:
         v = lower_qs.get(key)
         if v and v[0]:
@@ -650,6 +753,44 @@ def parse_stag_from_url(url: str) -> tuple[str, str] | None:
             if not short:
                 continue
             return short, key
+    # Widened check via NETWORKS. Walk every network's URL params in
+    # registry order; first hit wins.
+    for network in NETWORKS:
+        for key in network["url_params"]:
+            v = lower_qs.get(key.lower())
+            if v and v[0]:
+                short = v[0].split("_", 1)[0]
+                if not short:
+                    continue
+                return short, key
+    return None
+
+
+def parse_stag_from_cookies(cookies: list[dict]) -> tuple[str, str] | None:
+    """Given driver.get_cookies() output, walk each cookie and check if
+    its name matches a known affiliate-tracking cookie from NETWORKS.
+    Returns (tag_value, cookie_name) for the first match, None
+    otherwise. Uses the same 'split on first underscore' shortening
+    the URL-param path uses so DB values stay comparable.
+    """
+    if not cookies:
+        return None
+    by_name = {}
+    for c in cookies:
+        name = (c.get("name") or "").lower()
+        val = (c.get("value") or "").strip()
+        if not name or not val:
+            continue
+        by_name[name] = val
+    for network in NETWORKS:
+        for name in network["cookies"]:
+            v = by_name.get(name.lower())
+            if not v:
+                continue
+            short = v.split("_", 1)[0]
+            if not short:
+                continue
+            return short, name
     return None
 
 
@@ -782,13 +923,24 @@ def _full_page_screenshot(driver: webdriver.Chrome) -> bytes | None:
 
 
 def resolve_in_browser(driver: webdriver.Chrome, tracking_url: str
-                       ) -> tuple[str | None, list[str], bytes | None]:
+                       ) -> tuple[str | None, list[str], bytes | None, list[dict]]:
     """
     Open a tracking URL in the GoLogin browser, follow all redirects,
-    return (final_url, chain_steps, screenshot_bytes_of_final_page).
+    return (final_url, chain_steps, screenshot_bytes, cookies).
     Same country profile = correct geo-routed redirect.
+
+    Cookies added 2026-07-24: some affiliate networks (Cellxpert /
+    MyAffiliates / Post Affiliate Pro) drop the tag as a cookie
+    during the redirect chain — the URL ends up on the operator's
+    own domain with no query params, so cookie extraction is the
+    ONLY path to get the tag. Wipe the jar before nav so we only
+    capture cookies from THIS click's chain.
     """
     chain = [tracking_url]
+    try:
+        driver.delete_all_cookies()
+    except Exception:  # noqa: BLE001
+        pass
     try:
         driver.set_page_load_timeout(20)
     except Exception:  # noqa: BLE001
@@ -797,21 +949,28 @@ def resolve_in_browser(driver: webdriver.Chrome, tracking_url: str
         driver.get(tracking_url)
     except Exception as exc:  # noqa: BLE001
         log.debug("redirect-resolve nav failed: %s", exc)
-        return None, chain, None
+        return None, chain, None, []
     time.sleep(2)
     try:
         final_url = driver.current_url
     except Exception:  # noqa: BLE001
-        return None, chain, None
+        return None, chain, None, []
     if final_url and final_url != tracking_url:
         chain.append(final_url)
+    # Best-effort cookie capture — post-redirect the browser holds
+    # everything the affiliate handshake dropped.
+    cookies: list[dict] = []
+    try:
+        cookies = driver.get_cookies() or []
+    except Exception:  # noqa: BLE001
+        pass
     # Best-effort screenshot for audit trail
     screenshot: bytes | None = None
     try:
         screenshot = driver.get_screenshot_as_png()
     except Exception:  # noqa: BLE001
         pass
-    return final_url, chain, screenshot
+    return final_url, chain, screenshot, cookies
 
 
 def fetch_with_browser(
@@ -1084,7 +1243,7 @@ def run_rooster_deep_session(
         log.info("rooster_deep: lead=%s resolving %d tracking links",
                  lead_id, len(seen))
         for tracking_url in list(seen)[:30]:
-            final_url, _chain, _screenshot = resolve_in_browser(driver, tracking_url)
+            final_url, _chain, _screenshot, _cookies = resolve_in_browser(driver, tracking_url)
             if final_url:
                 resolved.append(final_url)
         # Dedup while preserving order
