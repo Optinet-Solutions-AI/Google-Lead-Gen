@@ -34,7 +34,7 @@ from typing import Any
 
 import json as _json
 import re
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import requests
 from dotenv import load_dotenv
@@ -740,13 +740,36 @@ def extract_tracking_links(html: str, base_url: str) -> list[str]:
     return list(found)[:60]
 
 
+def _shorten_to_numeric_id(raw: str) -> str | None:
+    """Underscore-split raw and return the FIRST all-digit segment
+    (3-9 digits — matches the shape of every Monday affiliate_id
+    we've catalogued). Falls back to None if no segment qualifies.
+
+    Handles:
+      "5517_6a631a79..."          → "5517"
+      "cx_35342_362381"           → "35342"    (Cellxpert prefix skipped)
+      "cx_35064_639195_lilipuz"   → "35064"
+      "362100_2087338"            → "362100"
+      "eyJfcmFpbHMi..."           → None       (not a plain composite id)
+    """
+    if not raw:
+        return None
+    for seg in raw.split("_"):
+        seg = seg.strip()
+        if seg.isdigit() and 3 <= len(seg) <= 9:
+            return seg
+    return None
+
+
 def parse_stag_from_url(url: str) -> tuple[str, str] | None:
     """Return (tag_value, source_param) for the FIRST matching key, in priority order.
 
-    Truncates the value at the first underscore so values like
-    "54354_53463gdfbdy3534gdfv4" collapse to just "54354" — that's the
-    short ID the affiliate-management workflow keys off; the suffix
-    after the underscore is per-click tracking noise.
+    Extracts the affiliate ID by walking underscore-split segments and
+    picking the first 3-9-digit numeric one — matches the ID shape
+    stored on Monday (e.g. 165093, 174280, 362100). This handles both
+    plain "5517_..." values AND Cellxpert-style "cx_35342_..." values
+    without the old split-at-first-underscore bug that produced "cx"
+    instead of the real ID.
     """
     try:
         qs = parse_qs(urlparse(url).query, keep_blank_values=False)
@@ -759,7 +782,7 @@ def parse_stag_from_url(url: str) -> tuple[str, str] | None:
     for key in STAG_PARAM_ORDER:
         v = lower_qs.get(key)
         if v and v[0]:
-            short = v[0].split("_", 1)[0]
+            short = _shorten_to_numeric_id(v[0])
             if not short:
                 continue
             return short, key
@@ -769,19 +792,61 @@ def parse_stag_from_url(url: str) -> tuple[str, str] | None:
         for key in network["url_params"]:
             v = lower_qs.get(key.lower())
             if v and v[0]:
-                short = v[0].split("_", 1)[0]
+                short = _shorten_to_numeric_id(v[0])
                 if not short:
                     continue
                 return short, key
     return None
 
 
+def _decode_rails_signed_cookie(raw: str) -> str | None:
+    """Cellxpert operator sites drop the affiliate ID as a Rails
+    signed cookie: `<base64>--<hmac>` where the base64 decodes to
+    `{"_rails":{"message":"<base64>","exp":"...","pur":null}}` and
+    the inner base64 decodes to `"<affiliate_id>_<click_id>"`.
+    Returns the numeric affiliate ID if decoding succeeds, else None.
+
+    Failure modes handled quietly:
+      - value isn't a Rails cookie (returns None, extractor falls back)
+      - base64 padding / JSON parse errors
+      - message doesn't contain a digit-only segment
+    """
+    if not raw or len(raw) < 40:
+        return None
+    try:
+        outer_b64 = unquote(raw).split("--", 1)[0]
+        # Add missing padding — Rails encodes without trailing '='.
+        pad = -len(outer_b64) % 4
+        outer_json = base64.b64decode(outer_b64 + ("=" * pad)).decode("utf-8", errors="replace")
+        parsed = _json.loads(outer_json)
+        message = (parsed or {}).get("_rails", {}).get("message")
+        if not isinstance(message, str):
+            return None
+        pad = -len(message) % 4
+        inner = base64.b64decode(message + ("=" * pad)).decode("utf-8", errors="replace")
+        # Rails wraps the payload in JSON-encoded double-quotes.
+        inner_stripped = inner.strip('"')
+        return _shorten_to_numeric_id(inner_stripped)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def parse_stag_from_cookies(cookies: list[dict]) -> tuple[str, str] | None:
     """Given driver.get_cookies() output, walk each cookie and check if
     its name matches a known affiliate-tracking cookie from NETWORKS.
     Returns (tag_value, cookie_name) for the first match, None
-    otherwise. Uses the same 'split on first underscore' shortening
-    the URL-param path uses so DB values stay comparable.
+    otherwise.
+
+    Two extraction paths, tried in order per cookie:
+      1. Plain composite value: "5517_6a63..." or "cx_35342_..." —
+         picks the first 3-9-digit numeric segment (same as URL param
+         extraction). Handles the majority.
+      2. Rails signed cookie: "eyJfcmFpbHMi...--<hmac>" — Cellxpert's
+         operator-side format when the URL landed on /welcome-page with
+         no query params. Double-base64 + JSON decode.
+
+    On failure both fall through — the extractor's brand-only row
+    invariant kicks in and we still record the brand for reference.
     """
     if not cookies:
         return None
@@ -797,10 +862,14 @@ def parse_stag_from_cookies(cookies: list[dict]) -> tuple[str, str] | None:
             v = by_name.get(name.lower())
             if not v:
                 continue
-            short = v.split("_", 1)[0]
-            if not short:
-                continue
-            return short, name
+            # Path 1: plain composite.
+            short = _shorten_to_numeric_id(v)
+            if short:
+                return short, name
+            # Path 2: Rails-signed cookie.
+            rails = _decode_rails_signed_cookie(v)
+            if rails:
+                return rails, name
     return None
 
 
