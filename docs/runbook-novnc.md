@@ -148,6 +148,32 @@ Each instance listens on:
 | :2 (worker 9223) | 5902 | 6082 |
 | :3 (worker 9224) | 5903 | 6083 |
 
+### 2026-07-27 — extending to workers 9225–9227
+
+The fleet grew to 6 workers/VM. First decide the display topology —
+run on the VM:
+
+```bash
+ls /tmp/.X*-lock                         # how many Xvfb displays exist?
+systemctl list-units 'websockify@*' --no-legend
+ss -tlnp | grep -E '608[0-9]'            # which WSS ports are live?
+grep DISPLAY /etc/systemd/system/scrape-worker@.service
+```
+
+- **If every worker shares `DISPLAY=:1`** (what the unit files currently
+  say): do nothing here — the nginx `map` `default` already routes
+  9225–9227 to websockify@1 (6081). Just widening the two nginx regexes
+  (above) fixes the 404.
+- **If you want a separate display per worker** (cleaner — the operator
+  sees only that worker's browser): create displays :4/:5/:6 and their
+  websockify instances, then keep the explicit 9225–9227 map entries:
+
+```bash
+sudo systemctl enable --now xvnc@4 xvnc@5 xvnc@6
+sudo systemctl enable --now websockify@4 websockify@5 websockify@6
+# :4→5904/6084, :5→5905/6085, :6→5906/6086
+```
+
 ## Step 3 — noVNC static assets
 
 ```bash
@@ -175,6 +201,15 @@ map $vnc_port $vnc_upstream {
     "9222"  "127.0.0.1:6081";
     "9223"  "127.0.0.1:6082";
     "9224"  "127.0.0.1:6083";
+    # 2026-07-27: workers 9225–9227 added. Point them at the matching
+    # websockify instance IF each worker has its own Xvnc display
+    # (websockify@4/5/6 → 6084/6085/6086, displays :4/:5/:6). If the
+    # fleet instead shares a single display :1 (check the worker unit
+    # files — they set DISPLAY=:1), leave these three OFF and the
+    # `default` above routes them to 6081 so noVNC still connects.
+    "9225"  "127.0.0.1:6084";
+    "9226"  "127.0.0.1:6085";
+    "9227"  "127.0.0.1:6086";
 }
 
 server {
@@ -186,7 +221,13 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/vnc.<YOUR-DOMAIN>/privkey.pem;
 
     # Static noVNC HTML/JS files.
-    location ~ ^/vnc/(?<vnc_port>922[2-4])/$ {
+    #
+    # 2026-07-27: widened 922[2-4] → 922[2-7]. The fleet grew from 3 to
+    # 6 workers per VM (ports 9222–9227), but this regex still only
+    # matched 9222–9224 — so ~46% of captcha checkpoints (every one on
+    # 9225/9226/9227) returned 404 when the operator clicked "Open VNC".
+    # See scripts/qa/_check-checkpoint-ports.ts for the audit.
+    location ~ ^/vnc/(?<vnc_port>922[2-7])/$ {
         alias /opt/novnc/;
         try_files vnc_lite.html =404;
     }
@@ -209,7 +250,7 @@ server {
 
     # The actual WebSocket endpoint. websockify expects the request
     # at the root path, so we rewrite /vnc/<port>/websockify → /.
-    location ~ ^/vnc/(?<vnc_port>922[2-4])/websockify$ {
+    location ~ ^/vnc/(?<vnc_port>922[2-7])/websockify$ {
         auth_request /_auth?token=$arg_token&port=$vnc_port;
 
         proxy_pass http://$vnc_upstream/;
