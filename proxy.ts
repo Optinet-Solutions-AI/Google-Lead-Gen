@@ -4,6 +4,9 @@ import { updateSession } from '@/lib/supabase/middleware'
 /**
  * Protects every route except:
  *   /login                  — the sign-in page itself
+ *   /auth/portal-callback   — cross-dashboard SSO landing; authenticates via a
+ *                             portal-signed JWT and CREATES the session, so it
+ *                             necessarily arrives without one
  *   /api/monday/webhook     — Monday authenticates via HS256 JWT, not Supabase
  *   /api/monday/sync        — Vercel cron authenticates via Bearer CRON_SECRET
  *   /api/scheduler/tick     — Vercel cron authenticates via Bearer CRON_SECRET
@@ -18,8 +21,11 @@ export async function proxy(request: NextRequest) {
 
   // Never gate the webhook, the scheduler cron, the Monday nightly re-sync
   // cron, the internal enrichment endpoint (auth'd via INTERNAL_API_TOKEN),
-  // or the login page itself.
+  // the SSO callback (verifies a portal-signed JWT and mints the session
+  // itself — gating it would redirect the token away before it's read), or
+  // the login page itself.
   if (
+    pathname.startsWith('/auth/portal-callback') ||
     pathname.startsWith('/api/monday/webhook') ||
     pathname.startsWith('/api/monday/sync') ||
     pathname.startsWith('/api/scheduler/tick') ||
