@@ -3,7 +3,9 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { loadUtilizationData } from './_lib/queries'
 import type { UtilizationData } from './_lib/queries'
+import { loadUserComparison } from './_lib/compare-queries'
 import { AutoRefresh } from './_components/auto-refresh'
+import { UserCompareSection } from './_components/user-compare'
 import { resolveDashboardRange, type DateRangeKey } from '../../_lib/date-range'
 import { DateRangeToggle } from '../../_components/dashboards/date-range-toggle'
 import { CustomRangePicker } from '../../_components/dashboards/custom-range-picker'
@@ -33,7 +35,16 @@ export default async function UtilizationPage({
   // drive it via the URL. resolveDashboardRange honours ?from=&to=
   // over the ?range= preset.
   const range = resolveDashboardRange({ range: sp.range ?? '7d', from: sp.from, to: sp.to })
-  const data = await loadUtilizationData({ since: range.since, until: range.until, label: range.label })
+  // Users to compare come from ?users=a@x,b@y. Empty = show the picker
+  // populated from the window's roster, nothing selected yet.
+  const selectedUsers = (typeof sp.users === 'string' ? sp.users : '')
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean)
+  const [data, comparison] = await Promise.all([
+    loadUtilizationData({ since: range.since, until: range.until, label: range.label }),
+    loadUserComparison(range, selectedUsers),
+  ])
 
   return (
     <div className="flex min-w-0 flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
@@ -56,6 +67,7 @@ export default async function UtilizationPage({
       <DailyVolumeSection data={data} />
       <CountryMixSection data={data} />
       <UserCapSection data={data} activeRangeKey={range.key} />
+      <UserCompareSection comparison={comparison} />
     </div>
   )
 }
