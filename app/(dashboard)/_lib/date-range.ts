@@ -16,7 +16,7 @@ import 'server-only'
  *   now Manila time. Add a per-viewer TZ later if operators complain.
  */
 
-export type DateRangeKey = 'today' | 'yesterday' | '7d' | '30d' | '90d'
+export type DateRangeKey = 'today' | 'yesterday' | '7d' | '30d' | '90d' | 'custom'
 
 export type DateRange = {
   key: DateRangeKey
@@ -103,3 +103,41 @@ export const DATE_RANGE_OPTIONS: ReadonlyArray<{ key: DateRangeKey; label: strin
   { key: '30d', label: 'Last 30d' },
   { key: '90d', label: 'Last 90d' },
 ]
+
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * Resolve a dashboard window from raw search params, honouring an
+ * explicit custom range (`?from=YYYY-MM-DD&to=YYYY-MM-DD`, inclusive of
+ * both endpoint days in UTC) before falling back to the preset `?range=`
+ * key. Used by dashboards that expose a custom from/to picker on top of
+ * the preset chips (per-user cap, Monday push analytics). `from`/`to`
+ * are treated as UTC calendar days: `from` starts at 00:00:00Z, `to`
+ * ends at 23:59:59.999Z so the whole "to" day is included.
+ *
+ * Invalid or partial custom input (missing one side, bad format, from >
+ * to) is ignored and we fall through to the preset — never throw on a
+ * hand-edited URL.
+ */
+export function resolveDashboardRange(sp: {
+  range?: string | string[] | undefined
+  from?: string | string[] | undefined
+  to?: string | string[] | undefined
+}): DateRange {
+  const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v)
+  const from = first(sp.from)
+  const to = first(sp.to)
+  if (from && to && YMD_RE.test(from) && YMD_RE.test(to)) {
+    const [fy, fm, fd] = from.split('-').map(Number)
+    const [ty, tm, td] = to.split('-').map(Number)
+    const start = new Date(Date.UTC(fy!, fm! - 1, fd!, 0, 0, 0, 0))
+    const end = new Date(Date.UTC(ty!, tm! - 1, td!, 23, 59, 59, 999))
+    if (start.getTime() <= end.getTime()) {
+      const label = from === to
+        ? `${from}`
+        : `${from} → ${to}`
+      return { key: 'custom', label, since: start.toISOString(), until: end.toISOString() }
+    }
+  }
+  return parseDateRange(first(sp.range))
+}

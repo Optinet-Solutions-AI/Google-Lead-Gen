@@ -75,16 +75,37 @@ export type UtilizationData = {
   }
   users: {
     dailyCap: number | null
+    /** Human label for the per-user window ("last 7 days", "last 30
+     *  days", "1 Jun – 30 Jun 2026"). */
+    windowLabel: string
+    /** Number of day columns in each rollup row. */
+    windowDayCount: number
+    // Kept the field name `rollup7d` for call-site stability; it now
+    // holds the rollup for whatever window was requested (default 7d).
     rollup7d: UserRollup[]
   }
 }
 
-export async function loadUtilizationData(): Promise<UtilizationData> {
+/** Optional explicit per-user window. Omit for the default last-7-days. */
+export type UserWindow = { since: string; until: string; label: string }
+
+/** Hard cap on day columns so a hand-edited from/to can't generate a
+ *  thousand-column table. Totals stay correct; only the per-day
+ *  breakdown is capped to the most recent N days of the window. */
+const MAX_USER_DAY_COLUMNS = 62
+
+export async function loadUtilizationData(userWindow?: UserWindow): Promise<UtilizationData> {
   const svc = createServiceClient()
   const now = Date.now()
   const since24h = new Date(now - DAY_MS).toISOString()
   const since14 = new Date(now - 14 * DAY_MS).toISOString()
   const since7 = new Date(now - 7 * DAY_MS).toISOString()
+
+  // Per-user window: default last 7 days, or the explicit range passed
+  // from the page's ?range= / ?from=&to=. Bounded day list built below.
+  const userSince = userWindow ? userWindow.since : since7
+  const userUntil = userWindow ? userWindow.until : new Date(now).toISOString()
+  const userLabel = userWindow ? userWindow.label : 'last 7 days'
 
   const nowIso = new Date(now).toISOString()
 
@@ -190,18 +211,62 @@ export async function loadUtilizationData(): Promise<UtilizationData> {
     }))
     .sort((a, b) => b.count - a.count)
 
-  // ------ Per-user, last 7d
+  // ------ Per-user rollup over the requested window (default 7d)
   type ProfileRow = { email: string | null; is_admin: boolean | null; bypass_scrape_cap: boolean | null }
   const profByEmail = new Map<string, { isAdmin: boolean; bypass: boolean }>()
   for (const p of (profiles as ProfileRow[] | null) ?? []) {
     const e = (p.email ?? '').toLowerCase()
     if (e) profByEmail.set(e, { isAdmin: p.is_admin === true, bypass: p.bypass_scrape_cap === true })
   }
-  const rows7 = rows.filter(r => r.created_at >= since7)
+
+  // Build the ordered list of UTC day-ISOs the rollup columns span.
+  // Default (no explicit window) preserves the original "today and the
+  // previous 6 days" 7-column layout exactly. A custom window spans
+  // every UTC calendar day in [since, until], capped to the most-recent
+  // MAX_USER_DAY_COLUMNS so a huge hand-edited range can't explode the
+  // table.
+  let windowDayIsos: string[]
+  if (!userWindow) {
+    windowDayIsos = []
+    for (let i = 6; i >= 0; i--) {
+      windowDayIsos.push(new Date(now - i * DAY_MS).toISOString().slice(0, 10))
+    }
+  } else {
+    const startDay = new Date(userSince.slice(0, 10) + 'T00:00:00.000Z').getTime()
+    const endDay = new Date(userUntil.slice(0, 10) + 'T00:00:00.000Z').getTime()
+    const allDays: string[] = []
+    for (let t = startDay; t <= endDay; t += DAY_MS) {
+      allDays.push(new Date(t).toISOString().slice(0, 10))
+    }
+    windowDayIsos = allDays.length > MAX_USER_DAY_COLUMNS
+      ? allDays.slice(allDays.length - MAX_USER_DAY_COLUMNS)
+      : allDays
+  }
+
+  // Rows for the window. For the default 7d window we can reuse the
+  // already-fetched 14d set; a custom window (which may exceed 14d, e.g.
+  // a full calendar month) gets its own fetch bounded to [since, until].
+  type QueueUserRow = { created_at: string; created_by_email: string | null }
+  let windowRows: QueueUserRow[]
+  if (!userWindow) {
+    windowRows = rows.filter(r => r.created_at >= since7)
+  } else {
+    const { data: fetched } = await svc
+      .from('scrape_queue')
+      .select('created_at, created_by_email')
+      .gte('created_at', userSince)
+      .lte('created_at', userUntil)
+      .order('created_at', { ascending: false })
+      .limit(20_000)
+    windowRows = (fetched as QueueUserRow[] | null) ?? []
+  }
+
+  const windowDaySet = new Set(windowDayIsos)
   const perUser = new Map<string, Map<string, number>>()
-  for (const r of rows7) {
-    const u = (r.created_by_email ?? 'unknown').toLowerCase()
+  for (const r of windowRows) {
     const d = r.created_at.slice(0, 10)
+    if (!windowDaySet.has(d)) continue
+    const u = (r.created_by_email ?? 'unknown').toLowerCase()
     if (!perUser.has(u)) perUser.set(u, new Map())
     const inner = perUser.get(u)!
     inner.set(d, (inner.get(d) ?? 0) + 1)
@@ -213,8 +278,7 @@ export async function loadUtilizationData(): Promise<UtilizationData> {
     let peak = 0
     let hitCap = false
     let total = 0
-    for (let i = 6; i >= 0; i--) {
-      const iso = new Date(now - i * DAY_MS).toISOString().slice(0, 10)
+    for (const iso of windowDayIsos) {
       const count = days.get(iso) ?? 0
       const overCap = dailyCap !== null && !info.bypass && count >= dailyCap
       if (overCap) hitCap = true
@@ -267,6 +331,8 @@ export async function loadUtilizationData(): Promise<UtilizationData> {
     },
     users: {
       dailyCap,
+      windowLabel: userLabel,
+      windowDayCount: windowDayIsos.length,
       rollup7d,
     },
   }

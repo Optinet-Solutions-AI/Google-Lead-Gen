@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { parseDateRange } from '@/app/(dashboard)/_lib/date-range'
+import { resolveDashboardRange } from '@/app/(dashboard)/_lib/date-range'
 import {
   loadMondayPushDetails,
   type MondayPushDetailFilters,
@@ -22,7 +22,11 @@ export async function GET(req: NextRequest) {
   }
 
   const sp = req.nextUrl.searchParams
-  const range = parseDateRange(sp.get('range') ?? undefined)
+  const range = resolveDashboardRange({
+    range: sp.get('range') ?? undefined,
+    from: sp.get('from') ?? undefined,
+    to: sp.get('to') ?? undefined,
+  })
   const filters: MondayPushDetailFilters = {}
   const c = sp.get('country')
   if (c) filters.country = c

@@ -1,6 +1,7 @@
 import Link from 'next/link'
-import { parseDateRange } from '../_lib/date-range'
+import { resolveDashboardRange } from '../_lib/date-range'
 import { DateRangeToggle } from '../_components/dashboards/date-range-toggle'
+import { CustomRangePicker } from '../_components/dashboards/custom-range-picker'
 import { DashboardSection } from '../_components/dashboards/dashboard-section'
 import { StatCard } from '../_components/dashboards/stat-card'
 import { TrendChart } from '../_components/dashboards/trend-chart'
@@ -35,7 +36,11 @@ export default async function MondayDashboardPage({
   searchParams: Promise<SearchParams>
 }) {
   const sp = await searchParams
-  const range = parseDateRange(sp.range)
+  const range = resolveDashboardRange(sp)
+  // Raw custom-range params threaded to the push section + sheet so
+  // their fetch/export URLs carry the exact window the operator picked.
+  const customFrom = typeof sp.from === 'string' ? sp.from : ''
+  const customTo = typeof sp.to === 'string' ? sp.to : ''
   const [ana, matchStats, pushSummary] = await Promise.all([
     loadMondayAnalyticsData(range),
     loadStagMatchStats(range),
@@ -83,7 +88,10 @@ export default async function MondayDashboardPage({
             .
           </p>
         </div>
-        <DateRangeToggle basePath="/monday-dashboard" active={range.key} />
+        <div className="flex flex-wrap items-center gap-2">
+          <DateRangeToggle basePath="/monday-dashboard" active={range.key} />
+          <CustomRangePicker basePath="/monday-dashboard" />
+        </div>
       </header>
 
       <DashboardSection
@@ -136,6 +144,8 @@ export default async function MondayDashboardPage({
           summary={pushSummary}
           rangeLabel={range.label}
           rangeKey={range.key}
+          customFrom={customFrom}
+          customTo={customTo}
         />
       </DashboardSection>
 
@@ -162,7 +172,7 @@ export default async function MondayDashboardPage({
         </DashboardSection>
       </div>
 
-      <PushDetailSheet range={range.key} />
+      <PushDetailSheet range={range.key} customFrom={customFrom} customTo={customTo} />
     </div>
   )
 }

@@ -36,7 +36,15 @@ type Row = {
   monday_pushed_item_id: string | null
 }
 
-export function PushDetailSheet({ range }: { range: string }) {
+export function PushDetailSheet({
+  range,
+  customFrom,
+  customTo,
+}: {
+  range: string
+  customFrom?: string
+  customTo?: string
+}) {
   const router = useRouter()
   const pathname = usePathname()
   const sp = useSearchParams()
@@ -90,6 +98,10 @@ export function PushDetailSheet({ range }: { range: string }) {
      
     setError(null)
     const qs = new URLSearchParams({ range })
+    if (customFrom && customTo) {
+      qs.set('from', customFrom)
+      qs.set('to', customTo)
+    }
     if (country) qs.set('country', country)
     if (pusher) qs.set('pusher', pusher)
     if (day) qs.set('day', day)
@@ -105,16 +117,20 @@ export function PushDetailSheet({ range }: { range: string }) {
       })
       .finally(() => setLoading(false))
     return () => controller.abort()
-  }, [open, range, country, pusher, day, allTime])
+  }, [open, range, country, pusher, day, allTime, customFrom, customTo])
 
   const exportUrl = useMemo(() => {
     const qs = new URLSearchParams({ range })
+    if (customFrom && customTo) {
+      qs.set('from', customFrom)
+      qs.set('to', customTo)
+    }
     if (country) qs.set('country', country)
     if (pusher) qs.set('pusher', pusher)
     if (day) qs.set('day', day)
     if (allTime) qs.set('all', '1')
     return `/api/monday-dashboard/push-export?${qs.toString()}`
-  }, [range, country, pusher, day, allTime])
+  }, [range, country, pusher, day, allTime, customFrom, customTo])
 
   const filterBadges = [
     allTime && { label: 'Window', value: 'All time', param: 'push_all' },

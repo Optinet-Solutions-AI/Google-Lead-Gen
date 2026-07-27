@@ -21,9 +21,11 @@ type Props = {
   summary: MondayPushSummary
   rangeLabel: string
   rangeKey: string
+  customFrom?: string
+  customTo?: string
 }
 
-export function PushAnalyticsSection({ summary, rangeLabel, rangeKey }: Props) {
+export function PushAnalyticsSection({ summary, rangeLabel, rangeKey, customFrom, customTo }: Props) {
   const pathname = usePathname()
   const sp = useSearchParams()
 
@@ -39,6 +41,12 @@ export function PushAnalyticsSection({ summary, rangeLabel, rangeKey }: Props) {
   const openTopExportUrl = (() => {
     const qs = new URLSearchParams()
     qs.set('range', rangeKey)
+    // Custom windows resolve on from/to (rangeKey is just 'custom'),
+    // so carry them or the export silently falls back to a preset.
+    if (customFrom && customTo) {
+      qs.set('from', customFrom)
+      qs.set('to', customTo)
+    }
     return `/api/monday-dashboard/push-export?${qs.toString()}`
   })()
 

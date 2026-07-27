@@ -4,10 +4,19 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { loadUtilizationData } from './_lib/queries'
 import type { UtilizationData } from './_lib/queries'
 import { AutoRefresh } from './_components/auto-refresh'
+import { resolveDashboardRange, type DateRangeKey } from '../../_lib/date-range'
+import { DateRangeToggle } from '../../_components/dashboards/date-range-toggle'
+import { CustomRangePicker } from '../../_components/dashboards/custom-range-picker'
 
 export const dynamic = 'force-dynamic'
 
-export default async function UtilizationPage() {
+type SearchParams = Record<string, string | string[] | undefined>
+
+export default async function UtilizationPage({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>
+}) {
   const supabase = await createServerClient()
   const {
     data: { user },
@@ -18,7 +27,13 @@ export default async function UtilizationPage() {
   const { data: isAdmin } = await svc.rpc('is_admin', { p_user_id: user.id })
   if (!isAdmin) redirect('/')
 
-  const data = await loadUtilizationData()
+  const sp = await searchParams
+  // Per-user cap window. Default to a rolling 7 days; the toggle
+  // (7d/30d/90d/today/yesterday) and the custom from/to picker both
+  // drive it via the URL. resolveDashboardRange honours ?from=&to=
+  // over the ?range= preset.
+  const range = resolveDashboardRange({ range: sp.range ?? '7d', from: sp.from, to: sp.to })
+  const data = await loadUtilizationData({ since: range.since, until: range.until, label: range.label })
 
   return (
     <div className="flex min-w-0 flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
@@ -40,7 +55,7 @@ export default async function UtilizationPage() {
       <FleetCapacitySection data={data} />
       <DailyVolumeSection data={data} />
       <CountryMixSection data={data} />
-      <UserCapSection data={data} />
+      <UserCapSection data={data} activeRangeKey={range.key} />
     </div>
   )
 }
@@ -266,26 +281,38 @@ function CountryMixSection({ data }: { data: UtilizationData }) {
 /*  Section: Per-user cap adherence                                  */
 /* ================================================================= */
 
-function UserCapSection({ data }: { data: UtilizationData }) {
+function UserCapSection({
+  data,
+  activeRangeKey,
+}: {
+  data: UtilizationData
+  activeRangeKey: DateRangeKey
+}) {
   const { users } = data
   const cap = users.dailyCap
 
   return (
     <section className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-4">
-      <header className="mb-3">
-        <h2 className="text-[13px] font-semibold text-[color:var(--color-text-primary)]">
-          Per-user cap adherence (last 7 days)
-        </h2>
-        <p className="mt-1 max-w-3xl text-[11px] text-[color:var(--color-text-secondary)]">
-          Cap is currently <strong>{cap === null ? 'disabled' : `${cap} scrapes / UTC day`}</strong>.
-          One &quot;scrape&quot; = one <code>scrape_queue</code> row (one keyword × engine).
-          &quot;BYPASS&quot; users are exempt via <code>user_profiles.bypass_scrape_cap</code>.
-        </p>
+      <header className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-[13px] font-semibold text-[color:var(--color-text-primary)]">
+            Per-user cap adherence · {users.windowLabel}
+          </h2>
+          <p className="mt-1 max-w-3xl text-[11px] text-[color:var(--color-text-secondary)]">
+            Cap is currently <strong>{cap === null ? 'disabled' : `${cap} scrapes / UTC day`}</strong>.
+            One &quot;scrape&quot; = one <code>scrape_queue</code> row (one keyword × engine).
+            &quot;BYPASS&quot; users are exempt via <code>user_profiles.bypass_scrape_cap</code>.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <DateRangeToggle basePath="/admin/utilization" active={activeRangeKey} />
+          <CustomRangePicker basePath="/admin/utilization" />
+        </div>
       </header>
 
       {users.rollup7d.length === 0 ? (
         <p className="text-[12px] text-[color:var(--color-text-secondary)]">
-          No scrapes submitted by any user in the last 7 days.
+          No scrapes submitted by any user in {users.windowLabel}.
         </p>
       ) : (
         <div className="overflow-x-auto">
@@ -293,7 +320,7 @@ function UserCapSection({ data }: { data: UtilizationData }) {
             <thead className="bg-[color:var(--color-bg-secondary)] text-left text-[10px] uppercase tracking-wide text-[color:var(--color-text-secondary)]">
               <tr>
                 <th className="px-3 py-1.5">User</th>
-                <th className="px-3 py-1.5 text-right">Total 7d</th>
+                <th className="px-3 py-1.5 text-right">Total</th>
                 <th className="px-3 py-1.5 text-right">Peak day</th>
                 {(users.rollup7d[0]?.byDay ?? []).map(d => (
                   <th key={d.dateIso} className="px-2 py-1.5 text-right font-mono text-[9px] uppercase">
