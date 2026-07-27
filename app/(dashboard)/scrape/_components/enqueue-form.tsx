@@ -109,6 +109,11 @@ export function EnqueueForm({
   const [state, formAction, pending] = useActionState(enqueueScrape, initial)
   const formRef = useRef<HTMLFormElement>(null)
   const router = useRouter()
+  // When the server bounces a duplicate_warning, this hidden input is
+  // flipped to '1' so the very next submit of the SAME form overrides
+  // the guard. Reset to '' on any keyword edit so an unrelated later
+  // submit doesn't silently inherit the override.
+  const overrideRef = useRef<HTMLInputElement>(null)
 
   const [keywordsText, setKeywordsText] = useState('')
   const [selectedCountry, setSelectedCountry] = useState('')
@@ -270,7 +275,12 @@ export function EnqueueForm({
             required
             rows={4}
             value={keywordsText}
-            onChange={e => setKeywordsText(e.target.value)}
+            onChange={e => {
+              setKeywordsText(e.target.value)
+              // Editing keywords invalidates a pending override so it
+              // can't leak onto a different batch.
+              if (overrideRef.current) overrideRef.current.value = ''
+            }}
             placeholder={'best online casinos\ntop 10 casinos 2026\nneue online casinos'}
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] text-[color:var(--color-text-primary)] placeholder:text-[color:var(--color-text-secondary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
           />
@@ -471,6 +481,10 @@ export function EnqueueForm({
         </label>
       </div>
 
+      {/* Duplicate-guard override. Defaults off; only the "Run anyway"
+       *  button flips it to '1' immediately before submitting. */}
+      <input ref={overrideRef} type="hidden" name="duplicate_override" defaultValue="" />
+
       <div className="mt-3 flex items-center justify-between gap-3">
         <p className="text-[11px] text-[color:var(--color-text-secondary)]">
           Each keyword runs as a separate scrape. One per line.
@@ -506,9 +520,101 @@ export function EnqueueForm({
               {state.error}
             </p>
           )}
+          {state?.status === 'duplicate_warning' && (
+            <DuplicateWarning
+              duplicates={state.duplicates}
+              freshCount={state.freshCount}
+              pending={pending}
+              onRunAnyway={() => {
+                if (overrideRef.current) overrideRef.current.value = '1'
+                formRef.current?.requestSubmit()
+              }}
+            />
+          )}
         </form>
       )}
     </section>
+  )
+}
+
+/** Panel shown when the enqueue was blocked because one or more
+ *  keywords already completed before. Lists each with its last run
+ *  date + who, and lets the operator override and run anyway. */
+function DuplicateWarning({
+  duplicates,
+  freshCount,
+  pending,
+  onRunAnyway,
+}: {
+  duplicates: Array<{
+    keyword: string
+    country_code: string
+    search_engine: string
+    lastCompletedAt: string
+    lastBy: string | null
+    completedCount: number
+  }>
+  freshCount: number
+  pending: boolean
+  onRunAnyway: () => void
+}) {
+  const fmt = (iso: string) => {
+    if (!iso) return 'unknown date'
+    const d = new Date(iso)
+    if (!Number.isFinite(d.getTime())) return iso
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  }
+  return (
+    <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-[12px] text-amber-900">
+      <p className="font-semibold">
+        {duplicates.length} of these {duplicates.length === 1 ? 'keyword has' : 'keywords have'} already
+        been scraped before — nothing was queued.
+      </p>
+      <p className="mt-0.5 text-[11px] text-amber-800">
+        Re-running produces duplicate work (this is the fix for the repeated-scrape problem). Check the
+        last run date below and only run again if you actually need fresh SERP data.
+      </p>
+      <ul className="mt-2 flex flex-col gap-1">
+        {duplicates.slice(0, 12).map((d, i) => (
+          <li key={i} className="flex flex-wrap items-baseline justify-between gap-x-3 rounded-sm bg-white/60 px-2 py-1">
+            <span className="min-w-0 truncate font-medium">
+              &ldquo;{d.keyword}&rdquo;
+              <span className="ml-1 font-normal text-amber-700">
+                {d.country_code} · {d.search_engine}
+              </span>
+            </span>
+            <span className="text-[11px] text-amber-800">
+              last completed {fmt(d.lastCompletedAt)}
+              {d.lastBy ? ` by ${d.lastBy}` : ''}
+              {d.completedCount > 1 ? ` · ${d.completedCount}× total` : ''}
+            </span>
+          </li>
+        ))}
+        {duplicates.length > 12 && (
+          <li className="px-2 text-[11px] text-amber-700">…and {duplicates.length - 12} more</li>
+        )}
+      </ul>
+      <div className="mt-2.5 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onRunAnyway}
+          disabled={pending}
+          className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-[12px] font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50"
+        >
+          {pending
+            ? 'Running…'
+            : freshCount > 0
+              ? `Run anyway (all ${duplicates.length + freshCount})`
+              : `Run anyway (${duplicates.length})`}
+        </button>
+        {freshCount > 0 && (
+          <span className="text-[11px] text-amber-800">
+            {freshCount} new keyword{freshCount === 1 ? '' : 's'} in this batch {freshCount === 1 ? 'is' : 'are'} not
+            a duplicate and will run too.
+          </span>
+        )}
+      </div>
+    </div>
   )
 }
 

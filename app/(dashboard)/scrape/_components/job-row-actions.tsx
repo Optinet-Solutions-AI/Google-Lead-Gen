@@ -304,7 +304,11 @@ function RerunSection({ job }: { job: ScrapeJob }) {
             state.status === 'ok' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
           ].join(' ')}
         >
-          {state.status === 'ok' ? state.message : state.error}
+          {state.status === 'ok'
+            ? state.message
+            : state.status === 'error'
+              ? state.error
+              : 'This keyword already completed before — re-run it from the Queue scrapes form if you need fresh data.'}
         </p>
       )}
     </Section>
@@ -350,7 +354,11 @@ function PushToMondaySection({ job }: { job: ScrapeJob }) {
             state.status === 'ok' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800',
           ].join(' ')}
         >
-          {state.status === 'ok' ? state.message : state.error}
+          {state.status === 'ok'
+            ? state.message
+            : state.status === 'error'
+              ? state.error
+              : 'This keyword already completed before — re-run it from the Queue scrapes form if you need fresh data.'}
         </p>
       )}
     </Section>

@@ -31,6 +31,7 @@ import { decodeAdUrl } from '@/lib/decode-ad-url'
 import { logActivity } from '@/lib/activity-log'
 import { checkQuota } from '@/lib/scrape-quota'
 import { filterOutInFlight } from '@/lib/scrape/filter-in-flight'
+import { findCompletedSiblings, siblingRowKey } from '@/lib/scrape/find-completed-siblings'
 import { getFleetQueueSnapshot } from './_lib/queries'
 import { pushJobToMonday as pushJobToMondayLib } from '@/lib/monday/push-job'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
@@ -45,9 +46,25 @@ function safeError(err: unknown, fallback: string): string {
   return fallback
 }
 
+/** One already-completed keyword surfaced by the duplicate guard. */
+export type DuplicateHit = {
+  keyword: string
+  country_code: string
+  search_engine: string
+  lastCompletedAt: string
+  lastBy: string | null
+  completedCount: number
+}
+
 export type EnqueueState =
   | { status: 'ok'; message: string }
   | { status: 'error'; error: string }
+  // Duplicate guard tripped: one or more keywords already completed
+  // before. Nothing was inserted. The form lists these with their last
+  // run date + who, and offers a "Run anyway" that resubmits with
+  // duplicate_override=1. (2026-07-27: warn + allow override, window =
+  // ever, scheduled NOT exempt.)
+  | { status: 'duplicate_warning'; duplicates: DuplicateHit[]; freshCount: number }
   | null
 
 export type CheckMondayState =
@@ -308,6 +325,42 @@ export async function enqueueScrape(
       created_by_is_shadow: createdByIsShadow,
     })),
   )
+
+  // Duplicate-work guard (2026-07-27). Before spending quota or worker
+  // time, check whether any of these keyword×country×engine triples
+  // already COMPLETED at some point. If so — and the operator hasn't
+  // ticked "run anyway" — bounce back a duplicate_warning listing each
+  // one with its last run date + who, so they can decide per the
+  // operator rule ("ever, but show the date"). Scheduled runs are NOT
+  // exempt. The override arrives as duplicate_override=1 on resubmit.
+  const duplicateOverride = String(formData.get('duplicate_override') ?? '') === '1'
+  if (!duplicateOverride) {
+    const completed = await findCompletedSiblings(svc, rows)
+    if (completed.size > 0) {
+      // Dedupe hits by triple (rows has one entry per keyword×engine
+      // already, but a keyword can map to two engines under "both").
+      const seen = new Set<string>()
+      const duplicates: DuplicateHit[] = []
+      for (const r of rows) {
+        const key = siblingRowKey(r)
+        const hit = completed.get(key)
+        if (!hit || seen.has(key)) continue
+        seen.add(key)
+        duplicates.push({
+          keyword: r.keyword,
+          country_code: r.country_code,
+          search_engine: r.search_engine ?? 'google',
+          lastCompletedAt: hit.latestCompletedAt,
+          lastBy: hit.latestBy,
+          completedCount: hit.completedCount,
+        })
+      }
+      if (duplicates.length > 0) {
+        const freshCount = rows.length - duplicates.length
+        return { status: 'duplicate_warning', duplicates, freshCount }
+      }
+    }
+  }
 
   // Daily-quota gate. Admins are exempt; everyone else gets up to
   // system_settings.daily_scrape_cap_per_user rows per UTC day. The
