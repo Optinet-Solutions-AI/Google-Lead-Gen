@@ -1,5 +1,7 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 import { Cpu, Loader2 } from 'lucide-react'
+import { requireAdmin } from '@/lib/auth/require-admin'
 import { AutoRefresh } from '../scrape/_components/auto-refresh'
 import {
   loadDashboardData,
@@ -29,6 +31,10 @@ export default async function OperationsPage({
 }: {
   searchParams: Promise<SearchParams>
 }) {
+  // Admin-only dashboard (2026-07-27): non-admins only get Overview.
+  const admin = await requireAdmin()
+  if (!admin.ok) redirect('/')
+
   const sp = await searchParams
   const range = parseDateRange(sp.range)
   const [data, ops] = await Promise.all([

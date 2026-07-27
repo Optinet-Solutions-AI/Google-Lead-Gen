@@ -40,6 +40,12 @@ type NavItem = {
   icon: typeof LayoutDashboard
   match: (p: string) => boolean
   badge?: 'openFeedback'
+  /** Hidden from non-admins (2026-07-27). Used to keep the analytical
+   *  dashboards (Operations / S-tag Mapping / Monday Analytics)
+   *  admin-only while Overview stays visible to everyone. Route-level
+   *  guards on those pages back this up (nav-hiding alone isn't
+   *  security). */
+  adminOnly?: boolean
 }
 
 type NavGroup = {
@@ -69,18 +75,21 @@ const NAV_GROUPS: NavGroup[] = [
         href: '/operations',
         icon: Cpu,
         match: (p: string) => p.startsWith('/operations'),
+        adminOnly: true,
       },
       {
         label: 'S-tag Mapping',
         href: '/stag-mapping',
         icon: Fingerprint,
         match: (p: string) => p.startsWith('/stag-mapping'),
+        adminOnly: true,
       },
       {
         label: 'Monday Analytics',
         href: '/monday-dashboard',
         icon: LineChart,
         match: (p: string) => p.startsWith('/monday-dashboard'),
+        adminOnly: true,
       },
     ],
   },
@@ -316,7 +325,15 @@ export function DashboardShell({
           {[
             ...NAV_GROUPS,
             ...(isAdmin ? [{ label: 'Admin', items: [...ADMIN_NAV_ITEMS] }] : []),
-          ].map((group, gi) => (
+          ]
+            // Drop admin-only items for non-admins, then drop any group
+            // left with no visible items (so no empty "Dashboards" header).
+            .map(group => ({
+              ...group,
+              items: group.items.filter(item => isAdmin || !item.adminOnly),
+            }))
+            .filter(group => group.items.length > 0)
+            .map((group, gi) => (
             <div key={group.label} className={gi === 0 ? '' : 'mt-2'}>
               {showLabels ? (
                 <div className="mb-1 px-2 pt-1 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-text-secondary)]/70">

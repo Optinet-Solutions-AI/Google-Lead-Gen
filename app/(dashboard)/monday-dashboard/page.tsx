@@ -1,4 +1,6 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
+import { requireAdmin } from '@/lib/auth/require-admin'
 import { resolveDashboardRange } from '../_lib/date-range'
 import { DateRangeToggle } from '../_components/dashboards/date-range-toggle'
 import { CustomRangePicker } from '../_components/dashboards/custom-range-picker'
@@ -35,6 +37,10 @@ export default async function MondayDashboardPage({
 }: {
   searchParams: Promise<SearchParams>
 }) {
+  // Admin-only dashboard (2026-07-27): non-admins only get Overview.
+  const admin = await requireAdmin()
+  if (!admin.ok) redirect('/')
+
   const sp = await searchParams
   const range = resolveDashboardRange(sp)
   // Raw custom-range params threaded to the push section + sheet so

@@ -40,6 +40,8 @@ export default async function StagMappingPage({
 
   const svc = createServiceClient()
   const { data: isAdmin } = await svc.rpc('is_admin', { p_user_id: user.id })
+  // Admin-only dashboard (2026-07-27): non-admins only get Overview.
+  if (!isAdmin) redirect('/')
 
   const sp = await searchParams
   const lookbackDays = parseLookback(sp.days, 90)
