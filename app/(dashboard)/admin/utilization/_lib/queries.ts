@@ -243,23 +243,24 @@ export async function loadUtilizationData(userWindow?: UserWindow): Promise<Util
       : allDays
   }
 
-  // Rows for the window. For the default 7d window we can reuse the
-  // already-fetched 14d set; a custom window (which may exceed 14d, e.g.
-  // a full calendar month) gets its own fetch bounded to [since, until].
+  // Rows for the window — PHASE-1 ONLY (parent_scrape_job_id is null),
+  // matching the authoritative daily-quota RPC count_user_scrapes_today
+  // (20260622000000_daily_scrape_quota.sql), which filters the same
+  // way, AND the Compare-users tool. Social-engine phase-2 fan-out
+  // children (per-profile TikTok/Kick rows) are NOT scrapes the user
+  // submitted, so counting them here over-stated totals and could show
+  // a user falsely "over cap". Dedicated fetch (not the 14d reuse) so
+  // the parent filter applies and the number is identical everywhere.
   type QueueUserRow = { created_at: string; created_by_email: string | null }
-  let windowRows: QueueUserRow[]
-  if (!userWindow) {
-    windowRows = rows.filter(r => r.created_at >= since7)
-  } else {
-    const { data: fetched } = await svc
-      .from('scrape_queue')
-      .select('created_at, created_by_email')
-      .gte('created_at', userSince)
-      .lte('created_at', userUntil)
-      .order('created_at', { ascending: false })
-      .limit(20_000)
-    windowRows = (fetched as QueueUserRow[] | null) ?? []
-  }
+  const { data: fetched } = await svc
+    .from('scrape_queue')
+    .select('created_at, created_by_email')
+    .gte('created_at', userSince)
+    .lte('created_at', userUntil)
+    .is('parent_scrape_job_id', null)
+    .order('created_at', { ascending: false })
+    .limit(20_000)
+  const windowRows: QueueUserRow[] = (fetched as QueueUserRow[] | null) ?? []
 
   const windowDaySet = new Set(windowDayIsos)
   const perUser = new Map<string, Map<string, number>>()
