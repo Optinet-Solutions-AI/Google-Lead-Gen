@@ -50,6 +50,21 @@ export async function POST(request: NextRequest) {
     console.error('[scheduler/tick] orphan-checkpoint sweep threw', e)
   }
 
+  // Housekeeping: cancel in-flight scrapes that duplicate an
+  // already-completed keyword×country×engine (pending/captcha/
+  // needs_human, >15 min old so intentional "run anyway" overrides get
+  // a grace period). Stops the "already resolved but keeps reappearing"
+  // churn at the source. Also try/catch-guarded. See migration
+  // 20260729120000.
+  let dupesCancelled = 0
+  try {
+    const { data: n, error } = await svc.rpc('cancel_inflight_duplicate_scrapes')
+    if (error) console.error('[scheduler/tick] inflight-dedupe sweep failed', error)
+    else dupesCancelled = typeof n === 'number' ? n : 0
+  } catch (e) {
+    console.error('[scheduler/tick] inflight-dedupe sweep threw', e)
+  }
+
   // Atomically claim due sets. An UPDATE-with-RETURNING uses row-level
   // locks: two concurrent ticks serialize, and the loser sees its WHERE
   // clause fail the EPQ re-check (because last_run_at has just been
@@ -249,5 +264,6 @@ export async function POST(request: NextRequest) {
     enrichment_advances: advances,
     ppc_screenshot_enqueued: ppcEnqueued,
     orphan_checkpoints_cancelled: orphansCancelled,
+    duplicate_scrapes_cancelled: dupesCancelled,
   })
 }
