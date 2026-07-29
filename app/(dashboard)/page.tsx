@@ -26,7 +26,9 @@ import {
   type ActivityRow,
 } from './_lib/dashboard-queries'
 import { parseDateRange } from './_lib/date-range'
+import { loadDailyReport, type DailyReport } from './_lib/daily-report-queries'
 import { DateRangeToggle } from './_components/dashboards/date-range-toggle'
+import { DayToggle } from './_components/dashboards/day-toggle'
 import { DashboardSection } from './_components/dashboards/dashboard-section'
 import { StatCard } from './_components/dashboards/stat-card'
 import { TrendChart } from './_components/dashboards/trend-chart'
@@ -55,9 +57,11 @@ export default async function DashboardPage({
 }) {
   const sp = await searchParams
   const range = parseDateRange(sp.range)
-  const [data, sys] = await Promise.all([
+  const reportDay: 'today' | 'yesterday' = sp.day === 'yesterday' ? 'yesterday' : 'today'
+  const [data, sys, dailyReport] = await Promise.all([
     loadDashboardData(),
     loadSystemDashboardData(range),
+    loadDailyReport(reportDay),
   ])
 
   // Trend x-axis: hourly for "Today", daily for everything else.
@@ -101,6 +105,8 @@ export default async function DashboardPage({
       {data.proxyBandwidth?.isLow && !data.proxyBandwidth.stale && (
         <ProxyBandwidthLowBanner bw={data.proxyBandwidth} />
       )}
+
+      <DailyReportSection report={dailyReport} />
 
       <KpiStrip data={data} />
       <ProxyBandwidthCard bw={data.proxyBandwidth} />
@@ -156,6 +162,49 @@ export default async function DashboardPage({
 
 // Worker cards + per-slot rendering moved to app/(dashboard)/operations/page.tsx
 // as part of the dashboards refactor.
+
+// ---------------------------------------------------------------------------
+// Daily report — Today / Yesterday snapshot of the key pipeline counts.
+// ---------------------------------------------------------------------------
+
+function DailyReportSection({ report }: { report: DailyReport }) {
+  const tiles: Array<{ label: string; value: number; hint: string; icon: React.ReactNode }> = [
+    { label: 'Synced from Monday', value: report.syncedFromMonday, hint: 'items mirrored from the boards', icon: <Database className="h-3.5 w-3.5" /> },
+    { label: 'Batches scraped', value: report.batchesScraped, hint: 'distinct scrape batches', icon: <Search className="h-3.5 w-3.5" /> },
+    { label: 'Scrapes completed', value: report.scrapesCompleted, hint: 'keyword×engine jobs finished', icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
+    { label: 'Leads found', value: report.leadsFound, hint: 'new leads discovered', icon: <ListChecks className="h-3.5 w-3.5" /> },
+    { label: 'Pushed to Monday', value: report.pushedToMonday, hint: 'leads sent to Monday', icon: <ArrowUpRight className="h-3.5 w-3.5" /> },
+  ]
+  return (
+    <section className="flex flex-col gap-3 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-bg-primary)] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-[13px] font-semibold text-[color:var(--color-text-primary)]">
+            Daily report · {report.label}
+          </h2>
+          <p className="mt-0.5 text-[11px] text-[color:var(--color-text-secondary)]">
+            Monday sync, scraping, and push activity for the selected UTC day.
+          </p>
+        </div>
+        <DayToggle active={report.day} />
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        {tiles.map(t => (
+          <div key={t.label} className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2.5">
+            <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+              <span>{t.label}</span>
+              <span>{t.icon}</span>
+            </div>
+            <div className="mt-1 text-[22px] font-semibold tabular-nums text-[color:var(--color-text-primary)]">
+              {t.value.toLocaleString()}
+            </div>
+            <div className="mt-0.5 text-[10px] text-[color:var(--color-text-secondary)]">{t.hint}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Today's Performance — the 4-stat header on System Overview.
