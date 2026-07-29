@@ -34,6 +34,22 @@ export async function POST(request: NextRequest) {
   const svc = createServiceClient()
   const now = new Date()
 
+  // Housekeeping: cancel orphaned interactive checkpoints — ones left
+  // status='waiting' after their scrape job already finished
+  // (completed/failed/cancelled). Without this they linger in the
+  // /admin/interactive queue and read to operators as captchas that
+  // "keep coming back" (solving does nothing — no live scrape behind
+  // them). Runs every minute here; wrapped so a failure never blocks
+  // the scheduled-scrape logic below. See migration 20260728120000.
+  let orphansCancelled = 0
+  try {
+    const { data: n, error } = await svc.rpc('cancel_orphaned_interactive_checkpoints')
+    if (error) console.error('[scheduler/tick] orphan-checkpoint sweep failed', error)
+    else orphansCancelled = typeof n === 'number' ? n : 0
+  } catch (e) {
+    console.error('[scheduler/tick] orphan-checkpoint sweep threw', e)
+  }
+
   // Atomically claim due sets. An UPDATE-with-RETURNING uses row-level
   // locks: two concurrent ticks serialize, and the loser sees its WHERE
   // clause fail the EPQ re-check (because last_run_at has just been
@@ -232,5 +248,6 @@ export async function POST(request: NextRequest) {
     runs,
     enrichment_advances: advances,
     ppc_screenshot_enqueued: ppcEnqueued,
+    orphan_checkpoints_cancelled: orphansCancelled,
   })
 }
