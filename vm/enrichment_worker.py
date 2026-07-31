@@ -556,10 +556,41 @@ def connect_chrome(debugger_address: str) -> webdriver.Chrome:
 
 
 CONTACT_LINK_RE = re.compile(
-    r'href=["\']([^"\']*\b(?:contact|kontakt|about|impressum)\b[^"\']*)["\']',
+    r'href=["\']([^"\']*\b(?:contact|contact-us|kontakt|about|about-us|impressum|imprint'
+    r'|get-in-touch|reach-us|support|help|legal|mentions-legales|colophon)\b[^"\']*)["\']',
     re.IGNORECASE,
 )
-CONTACT_PATH_FALLBACKS = ("/contact", "/contact-us", "/about", "/about-us", "/impressum")
+CONTACT_PATH_FALLBACKS = ("/contact", "/contact-us", "/impressum", "/about", "/about-us")
+
+# Contact stage now follows up to 5 contact-shaped pages (was 3) and visits
+# them best-first: impressum/imprint (legally must carry email+phone+address
+# on EU sites) and dedicated contact pages before soft "about" pages.
+MAX_CONTACT_PAGES = 5
+_CONTACT_KEYWORD_WEIGHTS = (
+    ("impressum", 6),
+    ("imprint", 6),
+    ("mentions-legales", 6),
+    ("kontakt", 5),
+    ("contact-us", 5),
+    ("get-in-touch", 5),
+    ("reach-us", 5),
+    ("contact", 4),
+    ("support", 3),
+    ("help", 2),
+    ("legal", 2),
+    ("about-us", 1),
+    ("about", 1),
+    ("colophon", 1),
+)
+
+
+def _rank_contact_link(url: str) -> int:
+    """Higher = more likely to carry real business contact details."""
+    low = url.lower()
+    for keyword, weight in _CONTACT_KEYWORD_WEIGHTS:
+        if keyword in low:
+            return weight
+    return 0
 
 # S-tag stage looks for casino-listing pages where tracking links live
 STAG_LIST_LINK_RE = re.compile(
@@ -984,7 +1015,13 @@ def _pick_pages(
 
 
 def _pick_contact_pages(html: str, base_url: str) -> list[str]:
-    return _pick_pages(html, base_url, CONTACT_LINK_RE, CONTACT_PATH_FALLBACKS, 3)
+    # Gather more candidates than we'll visit, then rank best-first
+    # (impressum/contact before about) so a raised cap spends its budget
+    # on the highest-yield pages. Falls back to known contact paths when
+    # the homepage exposes no contact-shaped links at all.
+    raw = _pick_pages(html, base_url, CONTACT_LINK_RE, CONTACT_PATH_FALLBACKS, MAX_CONTACT_PAGES * 4)
+    ranked = sorted(raw, key=_rank_contact_link, reverse=True)
+    return ranked[:MAX_CONTACT_PAGES]
 
 
 def _pick_stag_pages(html: str, base_url: str) -> list[str]:
