@@ -7,9 +7,24 @@
  * numbers like "(0)20 7946 0958" can be resolved to a global format.
  */
 import {
-  parsePhoneNumberFromString,
+  parsePhoneNumberFromString as parseWithMeta,
   type CountryCode,
-} from 'libphonenumber-js'
+  type MetadataJson,
+} from 'libphonenumber-js/core'
+import rawPhoneMetadata from 'libphonenumber-js/metadata.min.json'
+
+// Same interop hardening as extract.ts: libphonenumber-js's default entry
+// loads metadata via an internal require that some ESM/CJS loaders (tsx,
+// certain bundler configs) return double-wrapped as `{ default }`, making
+// every parse throw. That throw is swallowed by the try/catch below, which
+// would silently drop EVERY phone. Passing metadata.min.json ourselves
+// (normalising the possible default-wrap) keeps validation deterministic
+// across Next.js server, scripts, and tests.
+const PHONE_METADATA = (
+  (rawPhoneMetadata as unknown as { countries?: unknown }).countries
+    ? rawPhoneMetadata
+    : (rawPhoneMetadata as unknown as { default: unknown }).default
+) as MetadataJson
 
 const COUNTRY_RE = /^[A-Z]{2}$/
 
@@ -44,7 +59,9 @@ export function validatePhones(
       candidate = '+' + digits
     }
     try {
-      const parsed = parsePhoneNumberFromString(candidate, country)
+      const parsed = country
+        ? parseWithMeta(candidate, country, PHONE_METADATA)
+        : parseWithMeta(candidate, PHONE_METADATA)
       if (parsed && parsed.isValid()) {
         valid.add(parsed.formatInternational())
       }
