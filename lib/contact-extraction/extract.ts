@@ -23,7 +23,26 @@
  * (pages separated by `<!-- PAGE: <url> -->`) so each item's sourceUrl
  * is the actual page it was found on, not just the homepage.
  */
-import { isValidPhoneNumber, parsePhoneNumberFromString } from 'libphonenumber-js'
+import {
+  isValidPhoneNumber as isValidWithMeta,
+  parsePhoneNumberFromString as parseWithMeta,
+  type MetadataJson,
+} from 'libphonenumber-js/core'
+import rawPhoneMetadata from 'libphonenumber-js/metadata.min.json'
+
+// libphonenumber-js's default entry loads its own metadata internally, but
+// under some ESM/CJS loaders (tsx, and depending on bundler interop) that
+// internal require comes back double-wrapped as `{ default: … }`, which
+// makes every isValidPhoneNumber() call throw. toE164()'s catch would
+// swallow that and silently extract ZERO phones. Importing the /core API
+// and handing it the metadata ourselves — normalising the possible
+// default-wrap — makes phone validation deterministic in every runtime
+// (Next.js server, the backfill script, and the test harness alike).
+const PHONE_METADATA = (
+  (rawPhoneMetadata as unknown as { countries?: unknown }).countries
+    ? rawPhoneMetadata
+    : (rawPhoneMetadata as unknown as { default: unknown }).default
+) as MetadataJson
 
 const EMAIL_RE = /[A-Z0-9_%+][A-Z0-9._%+-]{0,63}@[A-Z0-9.-]+\.[A-Z][A-Z0-9-]{1,62}/gi
 const MAILTO_RE = /href=["']mailto:([^"'?]+)/gi
@@ -117,6 +136,14 @@ function deobfuscate(html: string): string {
   s = s.replace(
     /\b([A-Za-z0-9._-]+)\s+at\s+([A-Za-z0-9-]+(?:\s+dot\s+[A-Za-z0-9-]+)+)\b/gi,
     (_, user, rest) => `${user}@${rest.replace(/\s+dot\s+/gi, '.')}`,
+  )
+  // Mixed form: the "at" was bracketed/entity-decoded above (so it's now a
+  // literal @), but the "dot" was left spelled out — e.g. "user@acme dot
+  // com". Only fires immediately after an @, so ordinary prose like "best
+  // dot com sites" is never rewritten.
+  s = s.replace(
+    /@([A-Za-z0-9-]+(?:\s+dot\s+[A-Za-z0-9-]+)+)/gi,
+    (_, rest) => `@${rest.replace(/\s+dot\s+/gi, '.')}`,
   )
   return s
 }
@@ -315,8 +342,8 @@ function toE164(raw: string): string | null {
   if (digits.length < 8 || digits.length > 15) return null
   try {
     const withPlus = cleaned.startsWith('+') ? cleaned : `+${digits}`
-    if (isValidPhoneNumber(withPlus)) {
-      const p = parsePhoneNumberFromString(withPlus)
+    if (isValidWithMeta(withPlus, PHONE_METADATA)) {
+      const p = parseWithMeta(withPlus, PHONE_METADATA)
       if (p && p.isValid()) return p.number
     }
   } catch { /* not a phone */ }
