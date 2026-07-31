@@ -65,6 +65,33 @@ function methodsFor(r: ContactResult, kind: string, value: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// 2b. Decimal / coordinate / chart data must NOT become phones
+// ---------------------------------------------------------------------------
+{
+  const html = `
+    <html><body>
+      <p>RTP 96.5% · variance 88.0665779 · edge 0.01462213</p>
+      <table><tr><td>21.295 135.849</td><td>22.450 134.148</td><td>218.463 134</td></tr></table>
+      <p>Bare ref numbers: 1737638219 71144736 15480098</p>
+      <p>Call us: +44 20 7946 0958</p>
+    </body></html>`
+  const r = extractContacts(html, BASE)
+  check('decimal/coordinate/id flood rejected — only the real phone survives', r.phones.length === 1 && r.phones[0] === '+442079460958', JSON.stringify(r.phones))
+}
+
+// ---------------------------------------------------------------------------
+// 2c. Bare intl run accepted when the page shows international formatting
+// ---------------------------------------------------------------------------
+{
+  const html = `<html><body>
+     <a href="tel:+493012345678">DE line</a>
+     <p>Alt: 447700900123 (no plus, but page uses +intl elsewhere)</p>
+  </body></html>`
+  const r = extractContacts(html, BASE)
+  check('tel intl phone captured', r.phones.some(p => p.startsWith('+49')), JSON.stringify(r.phones))
+}
+
+// ---------------------------------------------------------------------------
 // 3. Obfuscated email (at/dot + HTML entities) — decoded + tagged
 // ---------------------------------------------------------------------------
 {

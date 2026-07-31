@@ -217,9 +217,19 @@ export function extractContacts(html: string, baseUrl: string): ContactResult {
       const e164 = toE164(m[1])
       if (e164) items.push({ kind: 'phone', value: e164, method: 'tel', sourceUrl: src, confidence: 0.9 })
     }
-    // --- Phones: text (PRECISION — only libphonenumber-valid ones) ---
+    // --- Phones: text (PRECISION) ---
+    // libphonenumber alone is NOT enough here: stripping punctuation from
+    // decimals / coordinates / chart data (e.g. "88.0665779", "21.295
+    // 135.849", "218.463 134") yields digit runs that validate as SOME
+    // country's number (218 → Libya, etc.), which flooded the table with
+    // ~6.7 junk phones/row. isPhoneLikeText() gates the loose text path
+    // BEFORE libphonenumber: reject decimal-dot tokens and bare
+    // undelimited runs that carry no phone context. tel:/JSON-LD phones
+    // come from structured attributes and skip this gate.
+    const pageSawIntl = /\+\d[\d\s().-]{7,}/.test(stripped)
     for (const cand of stripped.match(PHONE_RE) ?? []) {
       phoneCandidates++
+      if (!isPhoneLikeText(cand, pageSawIntl)) continue
       const e164 = toE164(cand)
       if (e164) items.push({ kind: 'phone', value: e164, method: 'text-phone', sourceUrl: src, confidence: 0.65 })
     }
@@ -336,6 +346,31 @@ function isPlausibleEmail(e: string): boolean {
  * stops bonus amounts / IDs / dates from being stored as phones. Tries
  * as-is (needs a country code / +) and is deliberately strict.
  */
+/**
+ * Precision gate for the LOOSE text-phone path (not tel:/JSON-LD). Rejects
+ * the two false-positive families that libphonenumber can't catch once the
+ * punctuation is stripped:
+ *   1. Decimal / coordinate / chart data — any token carrying a '.' that
+ *      isn't a leading-'+' international number. Real phone corpora here use
+ *      spaces/hyphens/parens, not dot-decimals; "88.0665779", "21.295
+ *      135.849", "0.01462213" are data, not numbers.
+ *   2. Bare undelimited digit runs ("1737638219", "71144736") with no '+'
+ *      and no grouping — almost always IDs/amounts. Allowed only when the
+ *      page uses international formatting elsewhere AND the run is long
+ *      enough (>=11 digits) to already carry a country code.
+ */
+function isPhoneLikeText(raw: string, pageSawIntl: boolean): boolean {
+  const t = raw.trim()
+  const intl = t.startsWith('+')
+  if (t.includes('.') && !intl) return false
+  const grouped = /[()\s-]/.test(t)
+  if (!intl && !grouped) {
+    const digits = t.replace(/\D/g, '')
+    if (!pageSawIntl || digits.length < 11) return false
+  }
+  return true
+}
+
 function toE164(raw: string): string | null {
   const cleaned = raw.replace(/[^\d+]/g, ' ').replace(/\s+/g, ' ').trim()
   const digits = cleaned.replace(/\D/g, '')
