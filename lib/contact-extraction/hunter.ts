@@ -11,7 +11,8 @@
 
 export type HunterResult = {
   emails: string[]
-  raw: { domain: string; total: number; organization: string | null }
+  confidenceByEmail: Record<string, number>
+  raw: { domain: string; total: number; organization: string | null; confidence_by_email?: Record<string, number> }
 }
 
 const HUNTER_URL = 'https://api.hunter.io/v2/domain-search'
@@ -59,16 +60,25 @@ export async function findContactsWithHunter(domain: string): Promise<HunterResu
     }
 
     const raw = json.data?.emails ?? []
-    const emails = raw
-      .filter(e => typeof e?.value === 'string' && e.value.includes('@'))
-      .map(e => (e.value as string).toLowerCase())
+    const valid = raw.filter(e => typeof e?.value === 'string' && e.value.includes('@'))
+    const emails = valid.map(e => (e.value as string).toLowerCase())
+    // LGP-202: surface the per-email confidence Hunter returns (it was
+    // fetched then discarded). Keyed by email so the caller can attach
+    // it as per-item provenance instead of a blind guess.
+    const confidenceByEmail: Record<string, number> = {}
+    for (const e of valid) {
+      const em = (e.value as string).toLowerCase()
+      if (typeof e.confidence === 'number') confidenceByEmail[em] = e.confidence
+    }
 
     return {
       emails: Array.from(new Set(emails)),
+      confidenceByEmail,
       raw: {
         domain: json.data?.domain ?? domain,
         total: emails.length,
         organization: json.data?.organization ?? null,
+        confidence_by_email: confidenceByEmail,
       },
     }
   } catch (err) {

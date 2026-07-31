@@ -54,7 +54,9 @@ export async function findContactsWithOpenAI(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o',
+        // LGP-200: model is env-configurable (default keeps prior
+        // behaviour) so it can be bumped without a code change.
+        model: process.env.CONTACT_LLM_MODEL || 'gpt-4o',
         instructions: SYSTEM_PROMPT,
         input: `Find business contact info for: ${domain || url}\nMain URL: ${url}`,
         tools: [{ type: 'web_search_preview' }],

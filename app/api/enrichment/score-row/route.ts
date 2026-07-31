@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { requireBearer } from '@/lib/auth/bearer'
 import { scoreAffiliate, shouldSkipDomain } from '@/lib/affiliate-detection/scorer'
 import { findRoosterBrandLinks } from '@/lib/affiliate-detection/rooster'
-import { extractContacts } from '@/lib/contact-extraction/extract'
+import { extractContacts, type ContactItem } from '@/lib/contact-extraction/extract'
 import { findContactsWithOpenAI } from '@/lib/contact-extraction/llm-fallback'
 import { findContactsWithHunter } from '@/lib/contact-extraction/hunter'
 import { validatePhones } from '@/lib/contact-extraction/phone-validate'
@@ -470,19 +470,27 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: true, status: 'skipped' })
     }
 
-    // Tier 1 — regex on the multi-page HTML
+    // Tier 1 — v2 extractor on the multi-page HTML (per-item provenance,
+    // ranked links, forms, socials, JSON-LD, address).
     const regex = extractContacts(html, url)
     let emails = regex.emails
     let phones = regex.phones
     let contactPageUrl = regex.contactPageUrl
+    // Each contact carries its own method now; `source` stays as the
+    // coarse primary tier for back-compat + the audit rollups.
     let source: 'regex' | 'multi_page' | 'openai' | 'hunter' = 'regex'
     let raw: Record<string, unknown> = { regex: regex.raw }
-    // The HTML blob from the worker has page-break markers when multi_page
-    // was on. Detect that and tag the source accordingly so the audit trail
-    // shows whether we read more than just the homepage.
+    const items: ContactItem[] = [...regex.items]
+    const socials = regex.socials
+    const address = regex.address
+    const contactForms = regex.contactForms
     if (html.includes('<!-- PAGE: ')) source = 'multi_page'
 
-    const tier1Productive = emails.length > 0 || phones.length > 0 || contactPageUrl !== null
+    // Productive now counts ANY reachable channel — a social handle or a
+    // contact form is a valid outreach path even with no scrapable email.
+    const tier1Productive =
+      emails.length > 0 || phones.length > 0 || contactPageUrl !== null ||
+      socials.length > 0 || contactForms.length > 0
 
     if (!tier1Productive) {
       // Tier 2 — OpenAI + web_search
@@ -493,6 +501,9 @@ export async function POST(req: Request): Promise<Response> {
         contactPageUrl = llm.contactPageUrl ?? contactPageUrl
         source = 'openai'
         raw = { ...raw, openai: { reasoning: llm.reasoning } }
+        const via = llm.contactPageUrl ?? url
+        for (const e of llm.emails) items.push({ kind: 'email', value: e, method: 'openai', sourceUrl: via, confidence: 0.5 })
+        for (const p of llm.phones) items.push({ kind: 'phone', value: p, method: 'openai', sourceUrl: via, confidence: 0.5 })
       }
 
       // Tier 3 — Hunter.io (only if LLM still produced no emails)
@@ -502,20 +513,29 @@ export async function POST(req: Request): Promise<Response> {
           emails = hunter.emails
           source = 'hunter'
           raw = { ...raw, hunter: hunter.raw }
+          for (const e of hunter.emails) {
+            const conf = hunter.confidenceByEmail?.[e]
+            items.push({ kind: 'email', value: e, method: 'hunter', sourceUrl: `https://${domain ?? ''}`, confidence: typeof conf === 'number' ? conf / 100 : 0.4, label: 'hunter.io' })
+          }
         }
       }
     }
 
-    // Tier 4 — phone validation (drops false positives, normalises format)
+    // Tier 4 — phone validation (regex phones are already E.164; this
+    // catches LLM/Hunter-supplied numbers + normalises format).
     phones = validatePhones(phones, countryCode)
 
-    await svc.rpc('upsert_contact_for_lead', {
+    await svc.rpc('upsert_contact_for_lead_v2', {
       p_lead_id: leadId,
       p_emails: emails,
       p_phones: phones,
       p_contact_page_url: contactPageUrl,
       p_source: source,
       p_raw: raw,
+      p_items: items,
+      p_socials: socials,
+      p_address: address,
+      p_contact_forms: contactForms,
     })
 
     return NextResponse.json({
@@ -523,6 +543,8 @@ export async function POST(req: Request): Promise<Response> {
       source,
       emails: emails.length,
       phones: phones.length,
+      socials: socials.length,
+      contact_forms: contactForms.length,
       contact_page: contactPageUrl !== null,
     })
 
@@ -532,6 +554,7 @@ export async function POST(req: Request): Promise<Response> {
       let contactPageUrl: string | null = null
       let source: 'openai' | 'hunter' | 'regex' = 'regex'
       const raw: Record<string, unknown> = { fetch_error: fetchError }
+      const items: ContactItem[] = []
 
       const llm = await findContactsWithOpenAI(domain ?? '', url)
       if (llm) {
@@ -540,6 +563,9 @@ export async function POST(req: Request): Promise<Response> {
         contactPageUrl = llm.contactPageUrl
         source = 'openai'
         raw.openai = { reasoning: llm.reasoning }
+        const via = llm.contactPageUrl ?? `https://${domain ?? ''}`
+        for (const e of llm.emails) items.push({ kind: 'email', value: e, method: 'openai', sourceUrl: via, confidence: 0.5 })
+        for (const p of llm.phones) items.push({ kind: 'phone', value: p, method: 'openai', sourceUrl: via, confidence: 0.5 })
       }
       if (emails.length === 0) {
         const hunter = await findContactsWithHunter(domain ?? '')
@@ -547,6 +573,10 @@ export async function POST(req: Request): Promise<Response> {
           emails = hunter.emails
           source = 'hunter'
           raw.hunter = hunter.raw
+          for (const e of hunter.emails) {
+            const conf = hunter.confidenceByEmail?.[e]
+            items.push({ kind: 'email', value: e, method: 'hunter', sourceUrl: `https://${domain ?? ''}`, confidence: typeof conf === 'number' ? conf / 100 : 0.4, label: 'hunter.io' })
+          }
         }
       }
       return {
@@ -556,6 +586,7 @@ export async function POST(req: Request): Promise<Response> {
         contactPageUrl,
         source,
         raw,
+        items,
       }
     }
 
@@ -565,14 +596,19 @@ export async function POST(req: Request): Promise<Response> {
       contactPageUrl: string | null
       source: 'openai' | 'hunter' | 'regex' | 'multi_page'
       raw: Record<string, unknown>
+      items: ContactItem[]
     }) {
-      await svc.rpc('upsert_contact_for_lead', {
+      await svc.rpc('upsert_contact_for_lead_v2', {
         p_lead_id: leadId,
         p_emails: tier.emails,
         p_phones: tier.phones,
         p_contact_page_url: tier.contactPageUrl,
         p_source: tier.source,
         p_raw: tier.raw,
+        p_items: tier.items,
+        p_socials: [],
+        p_address: null,
+        p_contact_forms: [],
       })
     }
   }
