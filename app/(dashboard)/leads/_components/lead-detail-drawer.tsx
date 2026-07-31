@@ -4,9 +4,11 @@ import { useActionState, useEffect, useState, useTransition } from 'react'
 import Link from 'next/link'
 import {
   Brain,
+  Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Copy,
   EyeOff,
   ExternalLink,
   FileText,
@@ -911,7 +913,12 @@ function ContactsBody({ contact }: { contact: LeadDetail['contact'] }) {
 
   return (
     <>
-      <KV label="Source" value={contact.source} />
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <KV label="Source" value={contact.source} />
+        </div>
+        {!nothing && <CopyContactsButton text={buildContactText(contact)} />}
+      </div>
 
       {/* ---- Emails ---- */}
       {emailItems.length > 0 && (
@@ -1063,6 +1070,51 @@ function ContactRow({
         </a>
       )}
     </li>
+  )
+}
+
+/** Flatten a contact record into a plain-text block operators can paste
+ *  into Monday / a CRM / an email. Prefers the v2 items[] and annotates
+ *  each line with the tool that found it; falls back to the flat arrays. */
+function buildContactText(contact: NonNullable<LeadDetail['contact']>): string {
+  const lines: string[] = []
+  const items = Array.isArray(contact.items) ? (contact.items as ContactItemDetail[]) : []
+  if (items.length > 0) {
+    for (const it of items) {
+      const via = ` [${toolLabel(it.method)}]`
+      const where = it.sourceUrl ? ` — ${it.sourceUrl}` : ''
+      lines.push(`${it.label ? it.label + ': ' : ''}${it.value}${via}${where}`)
+    }
+  } else {
+    for (const e of contact.emails ?? []) lines.push(e)
+    for (const p of contact.phones ?? []) lines.push(p)
+    if (contact.contact_page_url) lines.push(contact.contact_page_url)
+  }
+  for (const s of contact.socials ?? []) lines.push(`${s.platform}: ${s.url}`)
+  if (contact.address) lines.push(`Address: ${contact.address}`)
+  return lines.join('\n')
+}
+
+function CopyContactsButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        navigator.clipboard
+          .writeText(text)
+          .then(() => {
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1500)
+          })
+          .catch(() => {})
+      }}
+      className="inline-flex shrink-0 items-center gap-1 rounded border border-[color:var(--color-border)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] transition-colors hover:bg-[color:var(--color-bg-secondary)]"
+      title="Copy all contacts (with tool + source) to clipboard"
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
   )
 }
 
