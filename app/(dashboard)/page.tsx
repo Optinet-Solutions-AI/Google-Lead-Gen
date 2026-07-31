@@ -111,6 +111,7 @@ export default async function DashboardPage({
       <KpiStrip data={data} />
       <ProxyBandwidthCard bw={data.proxyBandwidth} />
       <PipelineHealth data={data} />
+      <ContactCoverageSection coverage={data.contactCoverage} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <RecentBatches batches={data.recentBatches} />
@@ -519,6 +520,47 @@ function PipelineHealth({ data }: { data: DashboardData }) {
       <ScrapeQueueRow stats={data.scrape} />
       <EnrichmentQueueRow stats={data.enrich} />
     </section>
+  )
+}
+
+function ContactCoverageSection({ coverage }: { coverage: DashboardData['contactCoverage'] }) {
+  const { affiliatesTotal, affiliatesChecked, affiliatesWithContact, leadsWithContact } = coverage
+  const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0)
+  const coveragePct = pct(affiliatesWithContact, affiliatesTotal)
+  const checkedPct = pct(affiliatesChecked, affiliatesTotal)
+  const missing = Math.max(0, affiliatesTotal - affiliatesWithContact)
+  return (
+    <DashboardSection
+      title="Contact coverage"
+      hint="Reachable = has an email, phone, contact page, social handle, or contact form."
+    >
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="Affiliates reachable"
+          value={`${coveragePct}%`}
+          hint={`${affiliatesWithContact.toLocaleString()} of ${affiliatesTotal.toLocaleString()}`}
+          tone={coveragePct >= 60 ? 'ok' : coveragePct >= 30 ? 'plain' : 'warn'}
+        />
+        <StatCard
+          label="Affiliates checked"
+          value={`${checkedPct}%`}
+          hint={`${affiliatesChecked.toLocaleString()} run through extraction`}
+          tone={checkedPct >= 60 ? 'ok' : checkedPct >= 30 ? 'plain' : 'warn'}
+        />
+        <StatCard
+          label="Affiliates missing contact"
+          value={missing}
+          hint="reachable channel still to find"
+          tone={missing > 0 ? 'emphasis' : 'ok'}
+        />
+        <StatCard
+          label="All leads reachable"
+          value={leadsWithContact}
+          hint="across the whole base"
+          tone="plain"
+        />
+      </div>
+    </DashboardSection>
   )
 }
 

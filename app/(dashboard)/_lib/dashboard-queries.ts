@@ -54,6 +54,16 @@ export type EnrichStats = {
   failed_24h: number
 }
 
+/** Contact-extraction coverage (LGP-209). All head-counts off
+ *  google_lead_gen_table — has_contact_details is the v2 RPC's single
+ *  "reachable by any channel" flag (email/phone/contact-page/social/form). */
+export type ContactCoverage = {
+  affiliatesTotal: number
+  affiliatesChecked: number
+  affiliatesWithContact: number
+  leadsWithContact: number
+}
+
 export type ProfileWarning = {
   country_code: string
   country_name: string
@@ -158,6 +168,7 @@ export type DashboardData = {
   kpiRooster: Kpi
   scrape: ScrapeStats
   enrich: EnrichStats
+  contactCoverage: ContactCoverage
   profileWarnings: ProfileWarning[]
   recentBatches: RecentBatch[]
   recentActivity: ActivityRow[]
@@ -388,6 +399,49 @@ export async function loadDashboardData(): Promise<DashboardData> {
     ),
   ])
 
+  // ----- Contact coverage (LGP-209) -----
+  // Cheap head-counts off google_lead_gen_table. has_contact_details is
+  // the v2 RPC's rollup flag (email OR phone OR contact page OR social OR
+  // form). Shadow-filtered like everything else on this dashboard.
+  const [affiliatesTotal, affiliatesChecked, affiliatesWithContact, leadsWithContact] =
+    await Promise.all([
+      safe(
+        shadowFilter(
+          svc.from('google_lead_gen_table').select('*', headOpts).eq('is_affiliate', true),
+          shadowCtx,
+        ),
+      ),
+      safe(
+        shadowFilter(
+          svc
+            .from('google_lead_gen_table')
+            .select('*', headOpts)
+            .eq('is_affiliate', true)
+            .not('contact_checked_at', 'is', null),
+          shadowCtx,
+        ),
+      ),
+      safe(
+        shadowFilter(
+          svc
+            .from('google_lead_gen_table')
+            .select('*', headOpts)
+            .eq('is_affiliate', true)
+            .eq('has_contact_details', true),
+          shadowCtx,
+        ),
+      ),
+      safe(
+        shadowFilter(
+          svc
+            .from('google_lead_gen_table')
+            .select('*', headOpts)
+            .eq('has_contact_details', true),
+          shadowCtx,
+        ),
+      ),
+    ])
+
   // ----- Profile warnings -----
   const { data: warnRows } = await svc
     .from('gologin_profiles')
@@ -529,6 +583,12 @@ export async function loadDashboardData(): Promise<DashboardData> {
       pending: enrichPending,
       running: enrichRunning,
       failed_24h: enrichFailed24,
+    },
+    contactCoverage: {
+      affiliatesTotal,
+      affiliatesChecked,
+      affiliatesWithContact,
+      leadsWithContact,
     },
     profileWarnings: (warnRows ?? []) as ProfileWarning[],
     recentBatches: (batchRows ?? []) as unknown as RecentBatch[],
