@@ -371,6 +371,22 @@ function isPhoneLikeText(raw: string, pageSawIntl: boolean): boolean {
   return true
 }
 
+/**
+ * Public helper for cleaning ALREADY-STORED phone strings (e.g. a data
+ * backfill over contact_table rows whose HTML is no longer cached, so the
+ * page can't be re-extracted). Applies the same text-phone precision gate
+ * + libphonenumber normalisation and returns E.164 or null. `pageSawIntl`
+ * lets a caller allow bare intl runs when it knows the row had +intl
+ * numbers; default false is the strict choice.
+ */
+export function sanitizeStoredPhone(raw: string, pageSawIntl = false): string | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null
+  const t = raw.trim()
+  // Values already in clean E.164 ("+441234…") are trusted — normalise only.
+  if (!t.startsWith('+') && !isPhoneLikeText(t, pageSawIntl)) return null
+  return toE164(t)
+}
+
 function toE164(raw: string): string | null {
   const cleaned = raw.replace(/[^\d+]/g, ' ').replace(/\s+/g, ' ').trim()
   const digits = cleaned.replace(/\D/g, '')
