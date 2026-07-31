@@ -2,12 +2,25 @@ import 'server-only'
 import { getShadowContext } from '@/lib/shadow-filter'
 import { createServiceClient } from '@/lib/supabase/service'
 
+export type ContactItemDetail = {
+  kind: string
+  value: string
+  method: string
+  sourceUrl: string
+  confidence: number
+  label?: string
+}
 export type ContactDetail = {
   emails: string[] | null
   phones: string[] | null
   contact_page_url: string | null
   source: string
   raw: unknown
+  // v2: per-item provenance + extra channels.
+  items: ContactItemDetail[] | null
+  socials: Array<{ platform: string; url: string }> | null
+  address: string | null
+  contact_forms: string[] | null
 }
 
 export type StagDetail = {
@@ -156,7 +169,7 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
       .maybeSingle(),
     svc
       .from('contact_table')
-      .select('emails, phones, contact_page_url, source, raw')
+      .select('emails, phones, contact_page_url, source, raw, items, socials, address, contact_forms')
       .eq('lead_id', leadId)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -265,7 +278,7 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
       !contact
         ? svc
             .from('contact_table')
-            .select('emails, phones, contact_page_url, source, raw')
+            .select('emails, phones, contact_page_url, source, raw, items, socials, address, contact_forms')
             .eq('lead_id', ancestorId)
             .order('created_at', { ascending: false })
             .limit(1)

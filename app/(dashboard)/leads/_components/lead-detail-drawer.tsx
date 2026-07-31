@@ -9,8 +9,12 @@ import {
   ChevronRight,
   EyeOff,
   ExternalLink,
+  FileText,
+  Globe,
+  Link2,
   Loader2,
   Mail,
+  MapPin,
   Phone,
   RotateCcw,
   Send,
@@ -20,7 +24,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import type { LeadDetail } from '../_lib/detail-query'
+import type { LeadDetail, ContactItemDetail } from '../_lib/detail-query'
 import {
   getCachedLeadDetail,
   invalidateLeadDetailCache,
@@ -518,55 +522,7 @@ function DetailBody({
         {!detail.contact ? (
           <p className="text-[color:var(--color-text-secondary)]">Not yet extracted.</p>
         ) : (
-          <>
-            <KV label="Source" value={detail.contact.source} />
-            {detail.contact.emails && detail.contact.emails.length > 0 && (
-              <div>
-                <p className="mt-1 text-[color:var(--color-text-secondary)]">Emails</p>
-                <ul className="space-y-0.5">
-                  {detail.contact.emails.map((e, i) => (
-                    <li key={i} className="flex items-center gap-1.5 text-[11px]">
-                      <Mail className="h-3 w-3 text-[color:var(--color-text-secondary)]" />
-                      <a href={`mailto:${e}`} className="underline underline-offset-2">{e}</a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {detail.contact.phones && detail.contact.phones.length > 0 && (
-              <div>
-                <p className="mt-1 text-[color:var(--color-text-secondary)]">Phones</p>
-                <ul className="space-y-0.5">
-                  {detail.contact.phones.map((p, i) => (
-                    <li key={i} className="flex items-center gap-1.5 text-[11px]">
-                      <Phone className="h-3 w-3 text-[color:var(--color-text-secondary)]" />
-                      {p}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {detail.contact.contact_page_url && (
-              <KV
-                label="Contact page"
-                value={
-                  <a
-                    href={detail.contact.contact_page_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="break-all underline underline-offset-2"
-                  >
-                    {detail.contact.contact_page_url}
-                  </a>
-                }
-              />
-            )}
-            {(!detail.contact.emails || detail.contact.emails.length === 0) &&
-              (!detail.contact.phones || detail.contact.phones.length === 0) &&
-              !detail.contact.contact_page_url && (
-                <p className="text-[color:var(--color-text-secondary)]">No contacts found.</p>
-              )}
-          </>
+          <ContactsBody contact={detail.contact} />
         )}
       </Section>
 
@@ -891,6 +847,222 @@ function KV({ label, value }: { label: string; value: React.ReactNode }) {
       <dt className="shrink-0 text-[11px] text-[color:var(--color-text-secondary)]">{label}:</dt>
       <dd className="min-w-0 flex-1 text-[11px] text-[color:var(--color-text-primary)]">{value}</dd>
     </div>
+  )
+}
+
+// v2 provenance: map each extraction method to the human-readable tool
+// that produced it, so operators can see WHICH tool found each contact.
+const METHOD_TOOL: Record<string, string> = {
+  mailto: 'Page HTML',
+  'text-email': 'Page HTML',
+  'obfuscated-email': 'Page HTML (deobfuscated)',
+  'json-ld': 'Schema.org (JSON-LD)',
+  tel: 'Page HTML',
+  'text-phone': 'Page HTML',
+  'social-anchor': 'Page link',
+  'contact-link': 'Link crawl',
+  'contact-form': 'Form detect',
+  'address-json-ld': 'Schema.org (JSON-LD)',
+  openai: 'OpenAI web search',
+  hunter: 'Hunter.io',
+  manual: 'Manual entry',
+}
+
+function toolLabel(method: string): string {
+  return METHOD_TOOL[method] ?? method
+}
+
+function ToolBadge({ method, confidence }: { method: string; confidence: number }) {
+  const pct = Math.round((confidence ?? 0) * 100)
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-1.5 py-px text-[10px] leading-tight text-[color:var(--color-text-secondary)]">
+      {toolLabel(method)}
+      {Number.isFinite(pct) && pct > 0 && (
+        <span className="tabular-nums text-[color:var(--color-text-secondary)]">· {pct}%</span>
+      )}
+    </span>
+  )
+}
+
+/** Contacts drawer body. Prefers the v2 per-item provenance view (which
+ *  tool found each contact + where) and falls back to the flat
+ *  emails/phones arrays for legacy rows that predate the items column. */
+function ContactsBody({ contact }: { contact: LeadDetail['contact'] }) {
+  if (!contact) return null
+  const items = Array.isArray(contact.items) ? (contact.items as ContactItemDetail[]) : []
+  const emailItems = items.filter(i => i.kind === 'email')
+  const phoneItems = items.filter(i => i.kind === 'phone')
+  const linkItems = items.filter(i => i.kind === 'contact_link')
+  const formItems = items.filter(i => i.kind === 'contact_form')
+  const socials = Array.isArray(contact.socials) ? contact.socials : []
+
+  // Legacy fallback: no per-item rows captured (pre-v2 extraction).
+  const useLegacy = items.length === 0
+  const legacyEmails = contact.emails ?? []
+  const legacyPhones = contact.phones ?? []
+
+  const nothing =
+    useLegacy &&
+    legacyEmails.length === 0 &&
+    legacyPhones.length === 0 &&
+    !contact.contact_page_url &&
+    socials.length === 0 &&
+    !contact.address
+
+  return (
+    <>
+      <KV label="Source" value={contact.source} />
+
+      {/* ---- Emails ---- */}
+      {emailItems.length > 0 && (
+        <ContactGroup label="Emails">
+          {emailItems.map((it, i) => (
+            <ContactRow key={i} icon={<Mail className="h-3 w-3 shrink-0 text-[color:var(--color-text-secondary)]" />} method={it.method} confidence={it.confidence} sourceUrl={it.sourceUrl}>
+              <a href={`mailto:${it.value}`} className="break-all underline underline-offset-2">{it.value}</a>
+            </ContactRow>
+          ))}
+        </ContactGroup>
+      )}
+      {useLegacy && legacyEmails.length > 0 && (
+        <ContactGroup label="Emails">
+          {legacyEmails.map((e, i) => (
+            <li key={i} className="flex items-center gap-1.5 text-[11px]">
+              <Mail className="h-3 w-3 text-[color:var(--color-text-secondary)]" />
+              <a href={`mailto:${e}`} className="break-all underline underline-offset-2">{e}</a>
+            </li>
+          ))}
+        </ContactGroup>
+      )}
+
+      {/* ---- Phones ---- */}
+      {phoneItems.length > 0 && (
+        <ContactGroup label="Phones">
+          {phoneItems.map((it, i) => (
+            <ContactRow key={i} icon={<Phone className="h-3 w-3 shrink-0 text-[color:var(--color-text-secondary)]" />} method={it.method} confidence={it.confidence} sourceUrl={it.sourceUrl}>
+              <a href={`tel:${it.value}`} className="underline underline-offset-2">{it.value}</a>
+            </ContactRow>
+          ))}
+        </ContactGroup>
+      )}
+      {useLegacy && legacyPhones.length > 0 && (
+        <ContactGroup label="Phones">
+          {legacyPhones.map((p, i) => (
+            <li key={i} className="flex items-center gap-1.5 text-[11px]">
+              <Phone className="h-3 w-3 text-[color:var(--color-text-secondary)]" />
+              {p}
+            </li>
+          ))}
+        </ContactGroup>
+      )}
+
+      {/* ---- Socials ---- */}
+      {socials.length > 0 && (
+        <ContactGroup label="Social / messaging">
+          {socials.map((s, i) => (
+            <li key={i} className="flex items-center gap-1.5 text-[11px]">
+              <Globe className="h-3 w-3 shrink-0 text-[color:var(--color-text-secondary)]" />
+              <a href={s.url} target="_blank" rel="noopener noreferrer" className="break-all underline underline-offset-2">
+                {s.url}
+              </a>
+              <span className="rounded-full border border-[color:var(--color-border)] px-1.5 py-px text-[10px] capitalize text-[color:var(--color-text-secondary)]">
+                {s.platform}
+              </span>
+            </li>
+          ))}
+        </ContactGroup>
+      )}
+
+      {/* ---- Contact links ---- */}
+      {linkItems.length > 0 ? (
+        <ContactGroup label="Contact pages">
+          {linkItems.map((it, i) => (
+            <ContactRow key={i} icon={<Link2 className="h-3 w-3 shrink-0 text-[color:var(--color-text-secondary)]" />} method={it.method} confidence={it.confidence}>
+              <a href={it.value} target="_blank" rel="noopener noreferrer" className="break-all underline underline-offset-2">
+                {it.label || it.value}
+              </a>
+            </ContactRow>
+          ))}
+        </ContactGroup>
+      ) : (
+        contact.contact_page_url && (
+          <KV
+            label="Contact page"
+            value={
+              <a href={contact.contact_page_url} target="_blank" rel="noopener noreferrer" className="break-all underline underline-offset-2">
+                {contact.contact_page_url}
+              </a>
+            }
+          />
+        )
+      )}
+
+      {/* ---- Contact forms ---- */}
+      {formItems.length > 0 && (
+        <ContactGroup label="Contact forms">
+          {formItems.map((it, i) => (
+            <ContactRow key={i} icon={<FileText className="h-3 w-3 shrink-0 text-[color:var(--color-text-secondary)]" />} method={it.method} confidence={it.confidence}>
+              <a href={it.value} target="_blank" rel="noopener noreferrer" className="break-all underline underline-offset-2">
+                {it.label || it.value}
+              </a>
+            </ContactRow>
+          ))}
+        </ContactGroup>
+      )}
+
+      {/* ---- Address ---- */}
+      {contact.address && (
+        <div className="flex items-start gap-1.5 text-[11px]">
+          <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-[color:var(--color-text-secondary)]" />
+          <span className="text-[color:var(--color-text-primary)]">{contact.address}</span>
+        </div>
+      )}
+
+      {nothing && <p className="text-[color:var(--color-text-secondary)]">No contacts found.</p>}
+    </>
+  )
+}
+
+function ContactGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="mt-1 text-[color:var(--color-text-secondary)]">{label}</p>
+      <ul className="space-y-1">{children}</ul>
+    </div>
+  )
+}
+
+function ContactRow({
+  icon,
+  method,
+  confidence,
+  sourceUrl,
+  children,
+}: {
+  icon: React.ReactNode
+  method: string
+  confidence: number
+  sourceUrl?: string
+  children: React.ReactNode
+}) {
+  return (
+    <li className="text-[11px]">
+      <div className="flex items-center gap-1.5">
+        {icon}
+        <span className="min-w-0 flex-1 break-all text-[color:var(--color-text-primary)]">{children}</span>
+        <ToolBadge method={method} confidence={confidence} />
+      </div>
+      {sourceUrl && (
+        <a
+          href={sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-[18px] block truncate text-[10px] text-[color:var(--color-text-secondary)] underline underline-offset-2"
+          title={sourceUrl}
+        >
+          found on {sourceUrl}
+        </a>
+      )}
+    </li>
   )
 }
 
