@@ -7,19 +7,19 @@
     },
     {
       "path": "/api/monday/sync?board=leads",
-      "schedule": "0 23 * * *"
+      "schedule": "0 */4 * * *"
     },
     {
       "path": "/api/monday/sync?board=affiliates",
-      "schedule": "10 23 * * *"
+      "schedule": "10 */4 * * *"
     },
     {
       "path": "/api/monday/sync?board=not_relevant_leads",
-      "schedule": "20 23 * * *"
+      "schedule": "20 */4 * * *"
     },
     {
       "path": "/api/monday/sync?board=email_undelivered_leads",
-      "schedule": "30 23 * * *"
+      "schedule": "30 */4 * * *"
     },
     {
       "path": "/api/monday/sync?board=leads&full=1",
