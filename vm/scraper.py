@@ -598,6 +598,49 @@ def _fetch_captcha_auto_solve_enabled() -> bool:
         return False
 
 
+# 2Captcha API key resolution. The key used to live ONLY in the VM's
+# ~/.env (TWOCAPTCHA_API_KEY); that file gets reset on a redeploy, which
+# silently wiped the key on 2026-07-30 and stopped every auto-solve. Now
+# the env still wins when present, but we fall back to the
+# `twocaptcha_api_key` system_setting so the key survives redeploys and
+# can be rotated centrally (same pattern as the captcha_auto_solve flag).
+# Cached after the first successful DB read so we don't hit the RPC on
+# every wall.
+_TWOCAPTCHA_KEY_CACHE = None  # None = not fetched yet; "" = fetched, empty
+
+
+def _fetch_twocaptcha_api_key_from_db() -> str:
+    """Live read of the `twocaptcha_api_key` system_setting. Empty on any
+    error (fail closed — no key means the solver stays disabled)."""
+    try:
+        resp = _supabase_request(
+            "POST",
+            "/rest/v1/rpc/get_system_setting",
+            json_body={"p_key": "twocaptcha_api_key"},
+        )
+        if resp.status_code != 200:
+            return ""
+        val = resp.json()
+        return val.strip() if isinstance(val, str) else ""
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] twocaptcha_api_key lookup failed: {exc}", file=sys.stderr)
+        return ""
+
+
+def _resolve_twocaptcha_key() -> str:
+    """Env var first (fast, no DB); otherwise the cached DB setting."""
+    global _TWOCAPTCHA_KEY_CACHE
+    env_key = os.environ.get("TWOCAPTCHA_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    if _TWOCAPTCHA_KEY_CACHE is None:
+        _TWOCAPTCHA_KEY_CACHE = _fetch_twocaptcha_api_key_from_db()
+        if _TWOCAPTCHA_KEY_CACHE:
+            print("[INFO] 2captcha: using API key from system_settings "
+                  "(TWOCAPTCHA_API_KEY not set in env)", file=sys.stderr)
+    return _TWOCAPTCHA_KEY_CACHE or ""
+
+
 def _fetch_captcha_review_available_for_job(job_id: str | None) -> bool:
     """Live read of the per-user 'available for CAPTCHA review' flag.
 
@@ -1687,7 +1730,9 @@ def ensure_google_login_if_required(driver):
 # Paid external service (https://2captcha.com) that solves reCAPTCHA v2
 # (Google /sorry/) and Cloudflare Turnstile (Bing) by returning a token
 # we inject into the page. Gated by BOTH:
-#   1. TWOCAPTCHA_API_KEY present in the VM's ~/.env, AND
+#   1. an API key from _resolve_twocaptcha_key() — the env var
+#      TWOCAPTCHA_API_KEY if set, else the DB-backed `twocaptcha_api_key`
+#      system_setting (survives redeploys), AND
 #   2. the live system_settings flag `captcha_auto_solve` == true
 # so we never spend credits unless an operator explicitly enabled it.
 #
@@ -1890,7 +1935,7 @@ def _extract_captcha_challenge(driver) -> dict | None:
 
 def _2captcha_submit(challenge: dict, page_url: str) -> str | None:
     """POST the challenge to 2Captcha's in.php. Returns the request id."""
-    params = {"key": TWOCAPTCHA_API_KEY, "json": 1, "pageurl": page_url}
+    params = {"key": _resolve_twocaptcha_key(), "json": 1, "pageurl": page_url}
     if challenge["kind"] == "recaptcha":
         params["method"] = "userrecaptcha"
         params["googlekey"] = challenge["sitekey"]
@@ -1930,7 +1975,7 @@ def _2captcha_poll(request_id: str) -> str | None:
         try:
             resp = requests.get(
                 TWOCAPTCHA_RES_URL,
-                params={"key": TWOCAPTCHA_API_KEY, "action": "get",
+                params={"key": _resolve_twocaptcha_key(), "action": "get",
                         "id": request_id, "json": 1},
                 timeout=30,
             )
@@ -2033,7 +2078,7 @@ def attempt_auto_captcha_solve(driver) -> bool:
     up after injection — the caller then falls through to its existing
     manual-checkpoint / fail path.
     """
-    if not TWOCAPTCHA_API_KEY:
+    if not _resolve_twocaptcha_key():
         return False
     if not _fetch_captcha_auto_solve_enabled():
         return False
