@@ -18,6 +18,7 @@
     "monday:unregister-webhooks": "tsx scripts/monday/unregister-webhooks.ts",
     "qa:test-push": "tsx --conditions=react-server scripts/qa/test-push-payload.ts",
     "qa:test-contacts": "tsx scripts/qa/_contact-extract-test.ts",
+    "qa:test-monday-inherit": "tsx scripts/qa/_monday-inherit-test.ts",
     "auth:seed-admin": "tsx scripts/auth/seed-admin.ts",
     "auth:seed-shadow-user": "tsx scripts/auth/seed-shadow-user.ts",
     "auth:reset-password": "tsx scripts/auth/reset-password.ts",

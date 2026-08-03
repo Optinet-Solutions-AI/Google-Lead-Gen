@@ -82,6 +82,8 @@ export type ContactMethod =
   | 'address-json-ld'
   // Cascade tiers (set by the score-row route, not the regex extractor).
   | 'openai' | 'hunter' | 'manual'
+  // Inherited from a matched Monday.com item (not extracted by us).
+  | 'monday'
 
 export type ContactKind = 'email' | 'phone' | 'social' | 'contact_link' | 'contact_form' | 'address'
 
