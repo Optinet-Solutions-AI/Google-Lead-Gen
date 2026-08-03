@@ -62,6 +62,10 @@ export type ContactCoverage = {
   affiliatesChecked: number
   affiliatesWithContact: number
   leadsWithContact: number
+  /** v3: how much of the coverage came from inheriting matched Monday
+   *  items vs. our own extraction. */
+  inheritedFromMonday: number
+  affiliatesViaMonday: number
 }
 
 export type ProfileWarning = {
@@ -403,8 +407,14 @@ export async function loadDashboardData(): Promise<DashboardData> {
   // Cheap head-counts off google_lead_gen_table. has_contact_details is
   // the v2 RPC's rollup flag (email OR phone OR contact page OR social OR
   // form). Shadow-filtered like everything else on this dashboard.
-  const [affiliatesTotal, affiliatesChecked, affiliatesWithContact, leadsWithContact] =
-    await Promise.all([
+  const [
+    affiliatesTotal,
+    affiliatesChecked,
+    affiliatesWithContact,
+    leadsWithContact,
+    inheritedFromMonday,
+    affiliatesViaMonday,
+  ] = await Promise.all([
       safe(
         shadowFilter(
           svc.from('google_lead_gen_table').select('*', headOpts).eq('is_affiliate', true),
@@ -437,6 +447,26 @@ export async function loadDashboardData(): Promise<DashboardData> {
             .from('google_lead_gen_table')
             .select('*', headOpts)
             .eq('has_contact_details', true),
+          shadowCtx,
+        ),
+      ),
+      // v3: leads whose data was inherited from a matched Monday item.
+      safe(
+        shadowFilter(
+          svc
+            .from('google_lead_gen_table')
+            .select('*', headOpts)
+            .not('monday_inherited_at', 'is', null),
+          shadowCtx,
+        ),
+      ),
+      safe(
+        shadowFilter(
+          svc
+            .from('google_lead_gen_table')
+            .select('*', headOpts)
+            .eq('is_affiliate', true)
+            .eq('affiliate_source', 'monday'),
           shadowCtx,
         ),
       ),
@@ -589,6 +619,8 @@ export async function loadDashboardData(): Promise<DashboardData> {
       affiliatesChecked,
       affiliatesWithContact,
       leadsWithContact,
+      inheritedFromMonday,
+      affiliatesViaMonday,
     },
     profileWarnings: (warnRows ?? []) as ProfileWarning[],
     recentBatches: (batchRows ?? []) as unknown as RecentBatch[],

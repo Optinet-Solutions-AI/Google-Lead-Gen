@@ -524,7 +524,7 @@ function PipelineHealth({ data }: { data: DashboardData }) {
 }
 
 function ContactCoverageSection({ coverage }: { coverage: DashboardData['contactCoverage'] }) {
-  const { affiliatesTotal, affiliatesChecked, affiliatesWithContact, leadsWithContact } = coverage
+  const { affiliatesTotal, affiliatesChecked, affiliatesWithContact, leadsWithContact, inheritedFromMonday, affiliatesViaMonday } = coverage
   const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0)
   const coveragePct = pct(affiliatesWithContact, affiliatesTotal)
   const checkedPct = pct(affiliatesChecked, affiliatesTotal)
@@ -557,6 +557,20 @@ function ContactCoverageSection({ coverage }: { coverage: DashboardData['contact
           label="All leads reachable"
           value={leadsWithContact}
           hint="across the whole base"
+          tone="plain"
+        />
+      </div>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <StatCard
+          label="Inherited from Monday.com"
+          value={inheritedFromMonday}
+          hint="leads populated from a matched item (no scrape)"
+          tone="plain"
+        />
+        <StatCard
+          label="Affiliates identified via Monday"
+          value={affiliatesViaMonday}
+          hint="classified from Monday, not our enrichment"
           tone="plain"
         />
       </div>

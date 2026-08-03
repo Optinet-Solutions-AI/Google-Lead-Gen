@@ -39,6 +39,8 @@ export type StagDetail = {
   is_rooster_brand: boolean | null
   /** 'desktop' | 'mobile' — which extraction pass produced this tag. */
   extracted_via: string | null
+  /** 'system' (our extraction) | 'monday' (inherited from a matched item). */
+  origin: string | null
 }
 
 /** One sibling lead that shares at least one s-tag value with the
@@ -91,6 +93,10 @@ export type LeadDetail = {
     affiliate_indicators: string[] | null
     is_rooster_partner: boolean | null
     brand: string | null
+    /** 'system' | 'monday' — who set is_affiliate / is_rooster_partner. */
+    affiliate_source: string | null
+    rooster_source: string | null
+    monday_inherited_at: string | null
     rooster_brands: Array<{ domain: string; brand_name: string | null; monday_item_id: string | null }> | null
     has_contact_details: boolean | null
     has_s_tags: boolean | null
@@ -150,6 +156,7 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
           'is_affiliate, affiliate_score, affiliate_casino_score, affiliate_confidence',
           'affiliate_external_links, affiliate_indicators',
           'is_rooster_partner, brand, rooster_brands',
+          'affiliate_source, rooster_source, monday_inherited_at',
           'has_contact_details, has_s_tags, s_tags_checked_at',
           'screenshot_content_link, serp_screenshot_path',
           'pushed_to_monday_at, monday_pushed_item_id, monday_pushed_by',
@@ -181,7 +188,7 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
           's_tag, source_param, brand',
           'tracking_url, final_url',
           'is_existing_on_monday, monday_match_kind, monday_match_item_id',
-          'redirect_chain, screenshot_path, is_rooster_brand, extracted_via',
+          'redirect_chain, screenshot_path, is_rooster_brand, extracted_via, origin',
         ].join(', '),
       )
       .eq('lead_id', leadId)
@@ -269,7 +276,7 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
                 's_tag, source_param, brand',
                 'tracking_url, final_url',
                 'is_existing_on_monday, monday_match_kind, monday_match_item_id',
-                'redirect_chain, screenshot_path, is_rooster_brand, extracted_via',
+                'redirect_chain, screenshot_path, is_rooster_brand, extracted_via, origin',
               ].join(', '),
             )
             .eq('lead_id', ancestorId)

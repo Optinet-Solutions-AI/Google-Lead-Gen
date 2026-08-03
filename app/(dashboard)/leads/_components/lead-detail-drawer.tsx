@@ -485,9 +485,14 @@ function DetailBody({
         <KV
           label="Is affiliate?"
           value={
-            lead.is_affiliate === null
-              ? '—'
-              : `${lead.is_affiliate ? 'Yes' : 'No'}${lead.affiliate_confidence ? ` · ${lead.affiliate_confidence}` : ''}`
+            lead.is_affiliate === null ? (
+              '—'
+            ) : (
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                {`${lead.is_affiliate ? 'Yes' : 'No'}${lead.affiliate_confidence ? ` · ${lead.affiliate_confidence}` : ''}`}
+                {lead.affiliate_source === 'monday' && <MondayBadge title="Affiliate status identified from the matched Monday.com item, not our enrichment." />}
+              </span>
+            )
           }
         />
         {lead.affiliate_score != null && (
@@ -506,7 +511,16 @@ function DetailBody({
       <Section title="Rooster brand check">
         <KV
           label="Rooster partner?"
-          value={lead.is_rooster_partner === null ? '—' : lead.is_rooster_partner ? (lead.brand ?? 'Yes') : 'No'}
+          value={
+            lead.is_rooster_partner === null ? (
+              '—'
+            ) : (
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                {lead.is_rooster_partner ? (lead.brand ?? 'Yes') : 'No'}
+                {lead.rooster_source === 'monday' && <MondayBadge title="Rooster-partner status identified from the matched Monday.com item, not our enrichment." />}
+              </span>
+            )
+          }
         />
         {lead.rooster_brands && lead.rooster_brands.length > 0 && (
           <ul className="mt-1 space-y-0.5 text-[11px]">
@@ -544,6 +558,7 @@ function DetailBody({
                         Rooster brand
                       </span>
                     )}
+                    {t.origin === 'monday' && <MondayBadge title="Tracking id inherited from the matched Monday.com item." />}
                     {t.is_existing_on_monday === true && (
                       <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] text-sky-800">
                         on Monday
@@ -852,6 +867,19 @@ function KV({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
+/** Badge marking data inherited from a matched Monday.com item (v3),
+ *  distinct from our own extraction/tool badges. */
+function MondayBadge({ title }: { title?: string }) {
+  return (
+    <span
+      className="inline-flex items-center rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-800"
+      title={title ?? 'Inherited from the matched Monday.com item — not extracted by our system.'}
+    >
+      Monday.com
+    </span>
+  )
+}
+
 // v2 provenance: map each extraction method to the human-readable tool
 // that produced it, so operators can see WHICH tool found each contact.
 const METHOD_TOOL: Record<string, string> = {
@@ -868,6 +896,7 @@ const METHOD_TOOL: Record<string, string> = {
   openai: 'OpenAI web search',
   hunter: 'Hunter.io',
   manual: 'Manual entry',
+  monday: 'Monday.com',
 }
 
 function toolLabel(method: string): string {
