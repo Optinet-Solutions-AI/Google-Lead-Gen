@@ -14,10 +14,18 @@ browser work it doesn't need.
   - `s_tags_table.origin = 'monday'`
   - `google_lead_gen_table.affiliate_source / rooster_source = 'monday'`,
     plus `monday_inherited_at`
-- **Source of truth (current default).** Monday wins: if the matched item has a
-  datum, we inherit it labeled `monday`. Our own extraction still fills gaps
-  Monday doesn't cover. (The finer skip-policy + conflict rules are LGP-224/226,
-  left open pending a product decision.)
+- **Per-stage skip (LGP-224).** On-Monday leads now flow through enrichment,
+  but each stage is skipped per-lead only when Monday satisfied it (its
+  `*_checked_at` is stamped by inheritance). The stages Monday couldn't fill —
+  e.g. a leads-board item's affiliate check, an item with no email's contact
+  extraction, an affiliate with no brand columns' s-tags — run normally. This
+  fills the gaps while still skipping everything Monday already knew.
+- **Source of truth (LGP-226).** Monday wins: if the matched item has a datum,
+  we inherit it labeled `monday` and skip that stage. To replace Monday-sourced
+  data with a fresh system extraction, the operator **force-enriches**
+  (regenerate is an explicit user action) — that clears the `*_checked_at`
+  stamps and re-runs the stages, overwriting the `monday` labels with system
+  ones.
 - **What comes from where** (Affiliates board):
   - `email` → email contact; `website` → contact link
   - brand tracking-id columns `l7_sj_rs_lv_ro` (Lucky7Even/SpinJo/RocketSpin/
@@ -72,8 +80,13 @@ select * from cron.job where jobname = 'inherit-monday-data';
 - `20260803120000_monday_source_labeling.sql` — labels + `get_monday_item_for_lead`
 - `20260803130000_monday_inheritance_rpc.sql` — `inherit_monday_data_for_lead` / `_batch`
 - `20260803140000_monday_inherit_cron.sql` — the 5-minute tick
+- `20260803150000_monday_perstage_skip.sql` — per-stage skip (LGP-224): inherit
+  stamps `affiliate_checked_at`/`rooster_checked_at`; the chain lets inherited
+  leads through so only Monday's gap-stages enqueue.
 
-## Open (pending product decision)
-- **LGP-224** — per-stage skip: enrich only the stages Monday couldn't fill.
-- **LGP-226** — source-of-truth conflict handling when both Monday and system
-  have data (default today: Monday wins, system fills gaps).
+## Note on existing gaps
+The per-stage gap-filling applies to scrape jobs going forward. Leads already
+inherited whose jobs are `complete` (with an affiliate/contact/s-tag gap Monday
+couldn't fill — ~5.2k / 2.2k / 1.9k respectively) won't retroactively re-enrich;
+force-enrich them to fill the gaps on demand (kept manual on purpose while
+2captcha/enrichment throughput is constrained).
