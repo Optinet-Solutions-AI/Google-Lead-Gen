@@ -478,6 +478,27 @@ export function EnqueueForm({
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-1.5 text-[12px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none"
           />
           <input type="hidden" name="scheduled_at" value={scheduledAtIso} />
+          {scheduledAtLocal &&
+            (() => {
+              const d = new Date(scheduledAtLocal)
+              if (!Number.isFinite(d.getTime())) {
+                return (
+                  <span className="text-[10px] text-amber-600">
+                    Pick both a date and a time, or it will run now.
+                  </span>
+                )
+              }
+              const past = d.getTime() <= Date.now()
+              return past ? (
+                <span className="text-[10px] text-red-600">
+                  ⚠ That time is in the past — this will run now. Choose a later date/time.
+                </span>
+              ) : (
+                <span className="text-[10px] text-emerald-700">
+                  → Will run {d.toLocaleString()} (your local time)
+                </span>
+              )
+            })()}
         </label>
       </div>
 
