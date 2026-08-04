@@ -59,6 +59,12 @@ const STICKY_SUFFIX_TEMPLATE =
   process.env.ENIGMA_STICKY_SUFFIX_TEMPLATE ?? '_session-sticky{country}'
 
 const APPLY = process.argv.includes('--apply')
+// By default only Google-login countries (DE/GB/NO) are targeted. Captchas,
+// though, hit ALL scrape countries (IT/SI/… on rotating Enigma exits get a
+// fresh /sorry/ wall each session). Pass --all-countries to make every
+// Enigma-backed profile sticky. The per-profile guards below still protect
+// non-Enigma / already-sticky / unexpected-password profiles.
+const ALL_COUNTRIES = process.argv.includes('--all-countries')
 
 type ProfileRow = {
   country_code: string
@@ -122,13 +128,18 @@ async function main() {
     auth: { autoRefreshToken: false, persistSession: false },
   })
 
-  console.log('Loading Google-login countries from Supabase…')
-  const { data, error } = await supabase
+  console.log(
+    ALL_COUNTRIES
+      ? 'Loading ALL scrape countries with a GoLogin profile from Supabase…'
+      : 'Loading Google-login countries from Supabase…',
+  )
+  let query = supabase
     .from('gologin_profiles')
     .select('country_code, country_name, gologin_profile_id')
-    .eq('requires_google_login', true)
     .not('gologin_profile_id', 'is', null)
     .order('country_code')
+  if (!ALL_COUNTRIES) query = query.eq('requires_google_login', true)
+  const { data, error } = await query
   if (error) throw error
 
   const rows = (data ?? []) as ProfileRow[]
