@@ -65,6 +65,16 @@ const APPLY = process.argv.includes('--apply')
 // Enigma-backed profile sticky. The per-profile guards below still protect
 // non-Enigma / already-sticky / unexpected-password profiles.
 const ALL_COUNTRIES = process.argv.includes('--all-countries')
+// Target a specific set, e.g. --countries=CA,IT,AU (a measured canary rather
+// than every country). Takes precedence over --all-countries.
+const countriesArg = process.argv.find(a => a.startsWith('--countries='))
+const TARGET_COUNTRIES = countriesArg
+  ? countriesArg
+      .slice('--countries='.length)
+      .split(',')
+      .map(c => c.trim().toUpperCase())
+      .filter(Boolean)
+  : null
 
 type ProfileRow = {
   country_code: string
@@ -129,16 +139,19 @@ async function main() {
   })
 
   console.log(
-    ALL_COUNTRIES
-      ? 'Loading ALL scrape countries with a GoLogin profile from Supabase…'
-      : 'Loading Google-login countries from Supabase…',
+    TARGET_COUNTRIES
+      ? `Loading targeted countries [${TARGET_COUNTRIES.join(', ')}] from Supabase…`
+      : ALL_COUNTRIES
+        ? 'Loading ALL scrape countries with a GoLogin profile from Supabase…'
+        : 'Loading Google-login countries from Supabase…',
   )
   let query = supabase
     .from('gologin_profiles')
     .select('country_code, country_name, gologin_profile_id')
     .not('gologin_profile_id', 'is', null)
     .order('country_code')
-  if (!ALL_COUNTRIES) query = query.eq('requires_google_login', true)
+  if (TARGET_COUNTRIES) query = query.in('country_code', TARGET_COUNTRIES)
+  else if (!ALL_COUNTRIES) query = query.eq('requires_google_login', true)
   const { data, error } = await query
   if (error) throw error
 
