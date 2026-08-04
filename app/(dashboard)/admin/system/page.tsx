@@ -107,9 +107,11 @@ export default async function AdminSystemPage() {
             automatically — no operator action needed. A successful solve
             resumes the scrape; a failed solve falls through to the manual
             Captcha solver above (if ON) or fails the job for auto-retry.
-            Requires <code>TWOCAPTCHA_API_KEY</code> in each VM&apos;s{' '}
-            <code>~/.env</code>. <strong>Each solve costs credits</strong>, so
-            leave this OFF until the key is deployed on all workers.
+            Requires a 2Captcha API key — read from the{' '}
+            <code>twocaptcha_api_key</code> system setting (DB-backed, survives
+            VM redeploys), or the <code>TWOCAPTCHA_API_KEY</code> env var on a
+            VM if set. <strong>Each solve costs credits</strong>, so leave this
+            OFF until a key is configured.
           </p>
         </header>
 
