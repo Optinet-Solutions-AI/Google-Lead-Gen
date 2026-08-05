@@ -29,6 +29,13 @@ const num = (flag: string, def: number) => {
 const WAVE = num('wave', 6)
 const EVERY_MIN = num('every', 20)
 const DAYS = num('days', 8)
+// Which terminal statuses to treat as "to re-run". Default just 'failed';
+// pass --statuses=failed,captcha to ALSO re-run the captcha-stuck backlog
+// (jobs that gave up after max captcha retries).
+const statusArg = process.argv.find(a => a.startsWith('--statuses='))
+const SOURCE_STATUSES = statusArg
+  ? statusArg.slice('--statuses='.length).split(',').map(x => x.trim()).filter(Boolean)
+  : ['failed']
 const nowMs = Date.now()
 const sinceIso = new Date(nowMs - DAYS * 86400_000).toISOString()
 
@@ -58,10 +65,14 @@ async function pageAll(status: string, since?: string): Promise<Job[]> {
 }
 
 async function main() {
-  console.log(`[gradual-rerun] mode=${APPLY ? 'APPLY' : 'DRY-RUN'} wave=${WAVE}/${EVERY_MIN}min lookback=${DAYS}d`)
-  const failed = (await pageAll('failed', sinceIso)).filter(j => j.parent_scrape_job_id === null)
+  console.log(`[gradual-rerun] mode=${APPLY ? 'APPLY' : 'DRY-RUN'} sources=[${SOURCE_STATUSES.join(',')}] wave=${WAVE}/${EVERY_MIN}min lookback=${DAYS}d`)
+  const failed: Job[] = []
+  for (const st of SOURCE_STATUSES) failed.push(...(await pageAll(st, sinceIso)).filter(j => j.parent_scrape_job_id === null))
+  // In-flight = actively queued/working (never re-queue these). NOTE: 'captcha'
+  // is a TERMINAL give-up state, not in-flight — so it's re-runnable, not a skip.
   const inflight = new Set<string>()
-  for (const st of ['pending', 'running', 'captcha', 'needs_human']) for (const j of await pageAll(st)) inflight.add(key(j))
+  for (const st of ['pending', 'running', 'needs_human', 'paused']) for (const j of await pageAll(st)) inflight.add(key(j))
+  // Already resolved — skip so a solved keyword never re-runs / re-appears.
   const completed = new Set<string>((await pageAll('completed', sinceIso)).map(key))
 
   const byKey = new Map<string, Job>()
