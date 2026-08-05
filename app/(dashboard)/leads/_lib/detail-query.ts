@@ -321,7 +321,32 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
     if (cohortErr) {
       console.error(`[loadLeadDetail/cohort/${leadId}]`, cohortErr)
     } else {
-      cohort = (cohortRows ?? []) as CohortSibling[]
+      // Collapse duplicate websites: the same site scraped in multiple
+      // countries comes back as separate sibling rows. Operators want each
+      // distinct website ONCE — country doesn't matter here. Dedup by host
+      // (domain, falling back to the url's host), keeping the strongest match
+      // (highest shared_count) as the representative and OR-ing the Rooster
+      // flag so a site flagged in any country still shows the badge.
+      const hostKey = (sib: CohortSibling) => {
+        const raw = (sib.domain || sib.url || '').trim().toLowerCase()
+        return raw
+          ? raw
+              .replace(/^https?:\/\//, '')
+              .replace(/^www\./, '')
+              .replace(/[/?#].*$/, '')
+              .replace(/\.+$/, '')
+          : `#${sib.lead_id}`
+      }
+      const byHost = new Map<string, CohortSibling>()
+      for (const sib of ((cohortRows ?? []) as CohortSibling[])
+        .slice()
+        .sort((a, b) => (b.shared_count ?? 0) - (a.shared_count ?? 0))) {
+        const key = hostKey(sib)
+        const kept = byHost.get(key)
+        if (!kept) byHost.set(key, { ...sib })
+        else if (sib.is_rooster_partner && !kept.is_rooster_partner) kept.is_rooster_partner = true
+      }
+      cohort = Array.from(byHost.values())
     }
   }
 
