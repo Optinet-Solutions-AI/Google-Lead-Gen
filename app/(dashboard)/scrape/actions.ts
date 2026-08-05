@@ -3588,11 +3588,10 @@ export async function rerunScrapeFiltered(
     }
   }
 
-  // Re-run = one new scrape_queue row → counts against the daily cap
-  // just like a fresh enqueue. Admins are exempt inside checkQuota.
-  const quota = await checkQuota(1)
-  if (!quota.ok) return { status: 'error', error: quota.error }
-
+  // Re-run recovers a scrape that already failed/finished — it does NOT
+  // spend fresh daily allocation. Marked is_rerun=true so it's excluded
+  // from count_user_scrapes_today, and we don't gate it on the cap (a user
+  // at 20/20 must still be able to re-run their failed work).
   const { error: insertError } = await svc.from('scrape_queue').insert({
     keyword: j.keyword,
     country_code: j.country_code,
@@ -3603,6 +3602,7 @@ export async function rerunScrapeFiltered(
     search_engine: j.search_engine ?? 'google',
     view_mode: j.view_mode ?? 'both',
     result_type_filter: filterValue,
+    is_rerun: true,
     created_by_email: j.created_by_email,
     created_by_username: j.created_by_username,
     created_by_display: j.created_by_display,
@@ -3695,6 +3695,7 @@ export async function rerunMobileOnly(
       search_engine: j.search_engine ?? 'google',
       view_mode: 'mobile',
       result_type_filter: j.result_type_filter,
+      is_rerun: true,
       created_by_email: j.created_by_email,
       created_by_username: j.created_by_username,
       created_by_display: j.created_by_display,

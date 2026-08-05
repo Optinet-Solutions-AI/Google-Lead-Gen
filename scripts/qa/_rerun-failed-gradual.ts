@@ -112,6 +112,9 @@ async function main() {
       with_enrichment: j.with_enrichment, language: j.language ?? 'en', search_engine: j.search_engine ?? 'google',
       view_mode: j.view_mode ?? 'both', result_type_filter: j.result_type_filter ?? null,
       scheduled_at: scheduledAt,
+      // Re-runs recover failed work — they must NOT consume the owner's daily
+      // scrape quota (excluded from count_user_scrapes_today via is_rerun).
+      is_rerun: true,
       created_by_email: j.created_by_email, created_by_username: j.created_by_username,
       created_by_display: j.created_by_display, created_by_is_shadow: j.created_by_is_shadow ?? false,
     })
