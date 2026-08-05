@@ -1,0 +1,36 @@
+[Unit]
+Description=Isolated X display + VNC for scrape worker — display :%i
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+# Start Xvfb AND x11vnc, and make the unit EXIT (→ restart) the moment
+# EITHER one dies.
+#
+# The previous version backgrounded Xvfb and `exec`'d x11vnc, so systemd
+# only watched x11vnc. When Xvfb crashed (it does over multi-day uptime),
+# x11vnc kept running with no display to serve — a BLACK noVNC screen that
+# systemd never noticed because the unit still looked "active", so
+# Restart=on-failure never fired. Operators got handed dead sessions.
+#
+# `wait -n` returns as soon as the first child exits; we then kill the
+# survivor and exit non-zero so Restart=always rebuilds the whole display
+# cleanly. This self-heals a wedged display within RestartSec.
+ExecStart=/bin/bash -c '\
+  Xvfb :%i -screen 0 1280x1024x24 -nolisten tcp & \
+  XVFB_PID=$!; \
+  sleep 1; \
+  x11vnc -display :%i -rfbport 591%i -localhost -nopw -forever -shared -quiet & \
+  X11VNC_PID=$!; \
+  wait -n; \
+  kill $XVFB_PID $X11VNC_PID 2>/dev/null; \
+  exit 1'
+# Belt-and-suspenders: also tear down any orphaned Xvfb for this display
+# on stop/restart so a stale server can never linger and wedge the next start.
+ExecStopPost=/bin/bash -c 'pkill -f "Xvfb :%i " 2>/dev/null; pkill -f "x11vnc -display :%i " 2>/dev/null; true'
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
