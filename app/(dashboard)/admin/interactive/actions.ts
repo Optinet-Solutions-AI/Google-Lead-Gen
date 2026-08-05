@@ -124,7 +124,7 @@ export type OpenVncResult =
     }
   | {
       ok: false
-      reason: 'claimed_by_other' | 'not_waiting' | 'not_found' | 'no_vnc_config' | 'forbidden' | 'unknown'
+      reason: 'claimed_by_other' | 'not_waiting' | 'not_found' | 'no_vnc_config' | 'forbidden' | 'unknown' | 'stale'
       error?: string
       claimed_by_display?: string | null
       claim_expires_at?: string
@@ -141,6 +141,45 @@ export async function openVncAction(
   }
 
   const svc = createServiceClient()
+
+  // Click-time race guard. The noVNC URL is keyed on worker_port only, and a
+  // worker runs every job it claims on that one port. A card that was live
+  // when the page rendered can go stale before the operator clicks Open VNC —
+  // the worker finished this job's park and moved to its NEXT job (often a
+  // different keyword/engine) on the same port. Opening now would stream that
+  // other job's browser ("it's searching for another keyword"). Refuse if the
+  // job is no longer awaiting a human, or a newer park has taken this port.
+  const { data: cp } = await svc
+    .from('interactive_checkpoints')
+    .select('job_id, worker_id, worker_port, created_at')
+    .eq('id', checkpointId)
+    .maybeSingle<{ job_id: string; worker_id: string | null; worker_port: number; created_at: string }>()
+  if (cp) {
+    const jobP = svc
+      .from('scrape_queue')
+      .select('status')
+      .eq('id', cp.job_id)
+      .maybeSingle<{ status: string }>()
+    // A newer waiting checkpoint on the SAME worker+port means this port has
+    // already re-parked on a later job — this card is a ghost.
+    const newerP = cp.worker_id
+      ? svc
+          .from('interactive_checkpoints')
+          .select('id')
+          .eq('worker_id', cp.worker_id)
+          .eq('worker_port', cp.worker_port)
+          .eq('status', 'waiting')
+          .gt('created_at', cp.created_at)
+          .limit(1)
+      : Promise.resolve({ data: [] as { id: number }[] })
+    const [{ data: job }, { data: newer }] = await Promise.all([jobP, newerP])
+    const jobMovedOn = !!job && job.status !== 'needs_human'
+    const portReparked = (newer?.length ?? 0) > 0
+    if (jobMovedOn || portReparked) {
+      return { ok: false, reason: 'stale' }
+    }
+  }
+
   const { data, error } = await svc.rpc('claim_interactive_checkpoint', {
     p_id: checkpointId,
     p_user_id: auth.user_id,

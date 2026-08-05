@@ -547,6 +547,8 @@ export function CheckpointCard({
               </>
             ) : openVncError.reason === 'no_vnc_config' ? (
               <>Watching the browser yourself is turned off. You don&apos;t need it — captchas are solved automatically. If this one is stuck, click <strong>Cancel</strong>.</>
+            ) : openVncError.reason === 'stale' ? (
+              <>The worker already moved on to another keyword on this port, so this card is out of date — opening it would show a different scrape. <strong>Refresh the page</strong> and solve a card that&apos;s still waiting. (Don&apos;t open a new tab and search manually — the Resume button only resumes the worker&apos;s own session, not a search you type in.)</>
             ) : openVncError.reason === 'not_waiting' || openVncError.reason === 'not_found' ? (
               <>This captcha already expired — refresh the page, then use <strong>Re-queue with Captcha solver</strong> on the timed-out card if you still need it.</>
             ) : (
