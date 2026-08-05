@@ -573,6 +573,23 @@ def _kill_port() -> None:
     non-zero exit means a Chromium/GoLogin process may still hold the port,
     which makes the NEXT job collide on it. Logging at ERROR makes that
     visible in journald rather than silently degrading."""
+    # Close any human captcha checkpoint still 'waiting' on THIS port before we
+    # tear the browser down. We're about to destroy this Chromium session and
+    # reuse the port for the next job — often a different engine (Bing/X/…) on
+    # the same Xvfb display. The noVNC URL is port-only, so a leftover 'waiting'
+    # checkpoint would hand the operator a link that now streams the NEXT job's
+    # browser (the "open a Google captcha, see a Bing scrape" report, 2026-08-04).
+    # worker.py is the only actor that KNOWS the port is being recycled, and this
+    # runs before every job claim — so it closes the window on both the
+    # scraper-death and whole-worker-restart paths the job-status reaper misses.
+    # Best-effort: never block the job on this.
+    try:
+        supabase.rpc(
+            "supersede_interactive_checkpoints_for_worker",
+            {"p_worker_id": WORKER_ID, "p_worker_port": GOLOGIN_PORT},
+        ).execute()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("supersede stale checkpoints failed for port %d (non-fatal): %s", GOLOGIN_PORT, exc)
     try:
         result = subprocess.run(
             ["python3", KILL_SCRIPT_PATH, str(GOLOGIN_PORT)],

@@ -201,14 +201,18 @@ export default async function InteractiveCheckpointsPage({
     string,
     { display: string | null; username: string | null; keyword: string | null }
   >()
+  // Job status per checkpoint — used to hide ghost 'waiting' cards whose job
+  // has already moved off `needs_human` (see the visibleRows filter below).
+  const jobStatusById = new Map<string, string>()
   if (jobIds.length > 0) {
     const { data: jobRows } = await svc
       .from('scrape_queue')
-      .select('id, keyword, created_by_display, created_by_username')
+      .select('id, keyword, status, created_by_display, created_by_username')
       .in('id', jobIds)
     for (const j of (jobRows ?? []) as Array<{
       id: string
       keyword: string | null
+      status: string | null
       created_by_display: string | null
       created_by_username: string | null
     }>) {
@@ -217,8 +221,26 @@ export default async function InteractiveCheckpointsPage({
         username: j.created_by_username,
         keyword: j.keyword,
       })
+      if (j.status) jobStatusById.set(j.id, j.status)
     }
   }
+
+  // Defense-in-depth against ghost checkpoints: a 'waiting' card whose job has
+  // already moved OFF `needs_human` (worker recycled the port, job
+  // failed/completed/went captcha-terminal) is dead — its noVNC link is
+  // port-only, so it now streams whatever job currently owns that port (the
+  // "open a Google captcha, watch a Bing scrape" report, 2026-08-04). The
+  // worker supersedes these at the source the instant it kills the port; this
+  // render-time filter closes the brief window before that lands (or if the
+  // RPC was missed) so an operator is never handed a ghost. Only applied to the
+  // Waiting view — other tabs are historical and must show every row.
+  const visibleRows =
+    filter === 'waiting'
+      ? rows.filter(r => {
+          const js = jobStatusById.get(r.job_id)
+          return js === undefined || js === 'needs_human'
+        })
+      : rows
 
   // Pre-sign noVNC URLs + screenshot URLs for waiting rows so the
   // operator can click straight through. Resolved/cancelled rows
@@ -230,7 +252,7 @@ export default async function InteractiveCheckpointsPage({
   // generate it server-side here so the card can show "Re-open VNC"
   // immediately for the holder without an extra round trip.
   const liveCards = await Promise.all(
-    rows.map(async row => {
+    visibleRows.map(async row => {
       let vncUrl: string | null = null
       if (row.status === 'waiting') {
         vncUrl = await buildSignedVncUrl({
