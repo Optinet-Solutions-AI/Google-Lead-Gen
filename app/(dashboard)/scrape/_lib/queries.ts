@@ -1660,6 +1660,7 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
         'id, keyword, country_code, pages, priority, status, attempts, captcha_attempts',
         'claimed_by, started_at, completed_at, scheduled_at',
         'with_enrichment, enrichment_status, language, search_engine, view_mode',
+        'result_type_filter, scrape_source, batch_group_id',
         'created_by_email, created_by_username, created_by_display',
         'error_message, result_summary, batch_id, created_at',
         'reviewed_at, reviewed_by',

@@ -138,6 +138,11 @@ export type ScrapeJob = {
   language: string | null
   search_engine: 'google' | 'bing' | 'youtube' | 'twitch' | 'kick' | 'x' | 'facebook' | 'tiktok' | 'snapchat' | 'telegram' | null
   view_mode: 'desktop' | 'mobile' | 'both' | null
+  /** PPC | Organic | null(both). New-batch flow: a Google batch splits into an
+   *  Organic job (scrape_source='apify') + a PPC job (scrape_source='vm'). */
+  result_type_filter: 'PPC' | 'Organic' | null
+  scrape_source: 'vm' | 'apify' | null
+  batch_group_id: string | null
   created_by_email: string | null
   created_by_username: string | null
   created_by_display: string | null

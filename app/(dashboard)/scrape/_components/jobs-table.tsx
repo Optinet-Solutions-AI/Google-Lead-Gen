@@ -277,6 +277,36 @@ function errorTone(job: ScrapeJob): string {
     : 'text-red-700'
 }
 
+/** New-batch flow: a Google batch splits into an ORGANIC job (Apify, ships
+ *  first, captcha-free) + a PPC job (VM browser, runs in the background).
+ *  This chip labels which half a row is so two google rows per keyword read
+ *  clearly. The PPC row's own StatusBadge shows queued/running/needs-solve —
+ *  that IS the "still scraping PPC" signal. Nothing renders for legacy/unsplit
+ *  google jobs (scrape_source 'vm' with no result_type_filter). */
+function SourceBadge({ job }: { job: ScrapeJob }) {
+  if (job.scrape_source === 'apify') {
+    return (
+      <span
+        className="rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-medium text-emerald-800"
+        title="Organic results via Apify — captcha-free, ships first"
+      >
+        Organic
+      </span>
+    )
+  }
+  if (job.result_type_filter === 'PPC' && (job.search_engine ?? 'google') === 'google') {
+    return (
+      <span
+        className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium text-amber-900"
+        title="PPC ads via the VM browser — runs after organic; its status shows queued/scraping/needs-solve"
+      >
+        PPC
+      </span>
+    )
+  }
+  return null
+}
+
 function EngineBadge({ engine }: { engine: ScrapeJob['search_engine'] }) {
   const e = engine ?? 'google'
   const styles =
@@ -918,7 +948,10 @@ export function JobsTable({
                 </LinkTd>
                 <LinkTd href={href}>{job.country_code}</LinkTd>
                 <LinkTd href={href}>
-                  <EngineBadge engine={job.search_engine} />
+                  <span className="inline-flex items-center gap-1">
+                    <EngineBadge engine={job.search_engine} />
+                    <SourceBadge job={job} />
+                  </span>
                 </LinkTd>
                 <LinkTd href={href}>
                   <ViewModeBadge mode={job.view_mode} />

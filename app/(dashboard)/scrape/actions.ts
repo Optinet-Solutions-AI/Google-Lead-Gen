@@ -362,16 +362,36 @@ export async function enqueueScrape(
     }
   }
 
+  // New-batch flow: split each GOOGLE job into an Apify ORGANIC job (ships
+  // first, captcha-free) + a VM/GoLogin PPC job (runs in the background),
+  // linked by a batch_group_id so the UI can show "organic ready · PPC
+  // scraping". Non-google engines are unchanged. An explicit result_type_filter
+  // is respected (Organic-only → just the apify job; PPC-only → just the vm job).
+  const insertRows = rows.flatMap(r => {
+    if ((r.search_engine ?? 'google') !== 'google') return [r]
+    const rtf = (r as { result_type_filter?: string | null }).result_type_filter ?? null
+    const groupId = crypto.randomUUID()
+    const split: Array<typeof r & { scrape_source: string; result_type_filter: string; batch_group_id: string }> = []
+    if (rtf !== 'PPC')
+      split.push({ ...r, scrape_source: 'apify', result_type_filter: 'Organic', batch_group_id: groupId, priority: (r.priority ?? 5) + 10 })
+    if (rtf !== 'Organic')
+      split.push({ ...r, scrape_source: 'vm', result_type_filter: 'PPC', batch_group_id: groupId })
+    return split
+  })
+
   // Daily-quota gate. Admins are exempt; everyone else gets up to
-  // system_settings.daily_scrape_cap_per_user rows per UTC day. The
-  // friendly error message already includes used/cap/remaining so
-  // the EnqueueForm can render it as-is.
-  const quota = await checkQuota(rows.length)
+  // system_settings.daily_scrape_cap_per_user rows per UTC day. A split Google
+  // batch counts as ONE scrape — only the VM (PPC) job counts, the Apify
+  // organic job is excluded (mirrors count_user_scrapes_today).
+  const countedRows = insertRows.filter(
+    r => (r as { scrape_source?: string }).scrape_source !== 'apify',
+  ).length
+  const quota = await checkQuota(countedRows)
   if (!quota.ok) return { status: 'error', error: quota.error }
 
   const { data: insertedRows, error: insertError } = await svc
     .from('scrape_queue')
-    .insert(rows)
+    .insert(insertRows)
     .select('id')
   if (insertError) return { status: 'error', error: safeError(insertError, 'Failed to queue the scrape.') }
   const insertedIds = new Set(((insertedRows ?? []) as { id: string }[]).map(r => r.id))
