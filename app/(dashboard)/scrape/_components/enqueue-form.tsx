@@ -369,7 +369,7 @@ export function EnqueueForm({
             type="number"
             min={1}
             max={10}
-            defaultValue={1}
+            defaultValue={4}
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none focus:ring-1 focus:ring-[color:var(--color-accent)]"
           />
         </label>
