@@ -2449,7 +2449,8 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
             },
             timeout=180,
         )
-        if resp.status_code != 200:
+        # run-sync-get-dataset-items returns 201 Created on success (not 200).
+        if not (200 <= resp.status_code < 300):
             log.error("apify job %s HTTP %s: %s", job_id, resp.status_code, (resp.text or "")[:300])
             fail_job(job_id, "The organic search service had a hiccup — it retries automatically; hit Retry if it persists.")
             return
