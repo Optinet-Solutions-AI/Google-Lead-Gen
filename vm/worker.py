@@ -2476,6 +2476,30 @@ def _apify_parse_organic(items: list[Any], engine: str, keyword: str) -> list[di
     return results
 
 
+def _handoff_apify_to_vm(job_id: str) -> None:
+    """Apify returned 0 organic even after every retry — hand the job to the VM
+    browser (GoLogin) path instead of shipping an empty result. The real browser
+    can usually fetch a SERP that Apify's proxy pool couldn't. Reset to a fresh
+    pending VM job + release the country lock so it re-enters the normal claim;
+    scrape_source='vm' means it will NOT loop back into the Apify branch."""
+    try:
+        supabase.table("scrape_queue").update({
+            "scrape_source": "vm",
+            "status": "pending",
+            "claimed_by": None,
+            "started_at": None,
+            "attempts": 0,
+        }).eq("id", job_id).execute()
+        try:
+            supabase.table("active_profile_locks").delete().eq("job_id", job_id).execute()
+        except Exception:  # noqa: BLE001
+            pass
+        log.info("apify job %s: 0 organic after retries — handed off to VM browser path", job_id)
+    except Exception as exc:  # noqa: BLE001
+        log.error("apify->vm handoff failed for %s: %s", job_id, exc)
+        fail_job(job_id, "Couldn't fetch organic results — hit Retry on the row.")
+
+
 def process_apify_organic_job(job: dict[str, Any]) -> None:
     job_id = job["id"]
     keyword = job["keyword"]
@@ -2494,9 +2518,9 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
     got_2xx = False
     # Retry transient empty SERPs: Apify's proxy occasionally gets an
     # interstitial and returns 0 organic on an otherwise-successful run (201);
-    # a fresh run (new proxy session) almost always recovers. ~7% of the
-    # backlog fill hit this. 3 attempts, short backoff.
-    for attempt in range(1, 4):
+    # a fresh run (new proxy session) almost always recovers. 5 attempts, short
+    # backoff — anything still empty after that hands off to the VM browser.
+    for attempt in range(1, 6):
         try:
             resp = requests.post(
                 f"https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items",
@@ -2518,14 +2542,20 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
             log.error("apify job %s attempt %d error: %s", job_id, attempt, exc)
         if results:
             break
-        if attempt < 3:
+        if attempt < 5:
             log.info("apify job %s attempt %d -> %d organic; retrying", job_id, attempt, len(results))
             time.sleep(2)
 
-    # Fail (retryable) only if the service NEVER responded successfully. A
-    # genuinely empty SERP (2xx, 0 organic) completes cleanly with 0 rows.
-    if not results and not got_2xx:
-        fail_job(job_id, "The organic search service had a hiccup — it retries automatically; hit Retry if it persists.")
+    # Never ship an empty organic result. If Apify worked (2xx) but returned 0
+    # organic even after every retry, hand off to the VM browser path — the real
+    # browser can usually fetch a SERP that Apify's proxy couldn't. If Apify
+    # never responded at all, fail (retryable) rather than cascade every job to
+    # the VM during an Apify outage.
+    if not results:
+        if got_2xx:
+            _handoff_apify_to_vm(job_id)
+        else:
+            fail_job(job_id, "The organic search service had a hiccup — it retries automatically; hit Retry if it persists.")
         return
 
     summary = {
