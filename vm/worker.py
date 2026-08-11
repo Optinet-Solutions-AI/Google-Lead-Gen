@@ -32,7 +32,9 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
+import requests
 from dotenv import load_dotenv
 from supabase import Client, create_client
 
@@ -2388,6 +2390,114 @@ def process_fb_job(job: dict[str, Any]) -> None:
     log.info("facebook job %s completed | %d advertisers", job_id, summary.get("total_results") or 0)
 
 
+# ---------------------------------------------------------------------------
+# Apify organic path (new-batch flow). A google job with scrape_source='apify'
+# fetches ORGANIC results via the Apify Google SERP API — no GoLogin, no
+# Selenium, no captcha — and completes immediately. PPC for the same keyword
+# runs on a separate VM job (scrape_source='vm', result_type_filter='PPC') so
+# the operator gets organic + enrichment first while ads catch up.
+# ---------------------------------------------------------------------------
+APIFY_ACTOR = "apify~google-search-scraper"
+_APIFY_TOKEN_CACHE: str | None = None
+
+
+def _resolve_apify_token() -> str | None:
+    """Apify token — env first, else DB-backed system_settings
+    ('apify_api_token') so it survives VM redeploys (same pattern as the
+    2captcha key). Cached after the first successful lookup."""
+    global _APIFY_TOKEN_CACHE
+    if _APIFY_TOKEN_CACHE:
+        return _APIFY_TOKEN_CACHE
+    env = (os.environ.get("APIFY_TOKEN") or "").strip()
+    if env:
+        _APIFY_TOKEN_CACHE = env
+        return env
+    try:
+        r = supabase.table("system_settings").select("value").eq("key", "apify_api_token").single().execute()
+        val = r.data.get("value") if r.data else None
+        if isinstance(val, str) and val.strip():
+            _APIFY_TOKEN_CACHE = val.strip()
+            return _APIFY_TOKEN_CACHE
+    except Exception as exc:  # noqa: BLE001
+        log.error("could not read apify_api_token from system_settings: %s", exc)
+    return None
+
+
+def process_apify_organic_job(job: dict[str, Any]) -> None:
+    job_id = job["id"]
+    keyword = job["keyword"]
+    country_code = (job.get("country_code") or "").strip()
+    pages = max(1, int(job.get("pages") or 1))
+    log.info("claimed APIFY organic job %s | country=%s keyword=%r pages=%d", job_id, country_code, keyword, pages)
+
+    token = _resolve_apify_token()
+    if not token:
+        fail_job(job_id, "Apify isn't configured yet (missing API token) — organic scrape skipped. Tell a developer.")
+        return
+
+    try:
+        resp = requests.post(
+            f"https://api.apify.com/v2/acts/{APIFY_ACTOR}/run-sync-get-dataset-items",
+            params={"token": token},
+            json={
+                "queries": keyword,
+                "countryCode": country_code.lower(),
+                "resultsPerPage": 10,
+                "maxPagesPerQuery": pages,
+                "mobileResults": False,
+                "saveHtml": False,
+            },
+            timeout=180,
+        )
+        if resp.status_code != 200:
+            log.error("apify job %s HTTP %s: %s", job_id, resp.status_code, (resp.text or "")[:300])
+            fail_job(job_id, "The organic search service had a hiccup — it retries automatically; hit Retry if it persists.")
+            return
+        items = resp.json() or []
+    except Exception as exc:  # noqa: BLE001
+        log.error("apify organic job %s network error: %s", job_id, exc)
+        fail_job(job_id, "The organic search service didn't respond — it retries automatically.")
+        return
+
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for page_idx, it in enumerate(items):
+        for o in (it.get("organicResults") or []):
+            url = (o or {}).get("url")
+            if not url or url in seen:
+                continue
+            try:
+                p = urlparse(url)
+            except Exception:  # noqa: BLE001
+                continue
+            if not p.scheme or not p.netloc:
+                continue
+            seen.add(url)
+            results.append({
+                "url": url,
+                "full_url": f"{p.scheme}://{p.netloc}",
+                "title": (o or {}).get("title") or "",
+                "resultType": "Organic",
+                "page": page_idx + 1,
+                "position": len(results) + 1,
+                "overall_position": len(results) + 1,
+                "keyword": keyword,
+                "country": job.get("country"),
+                "seen_on": "desktop",
+            })
+
+    summary = {
+        "source": "apify", "engine": "google", "organic_only": True,
+        "ppc_pending": True, "organic_results": len(results), "ppc_results": 0,
+    }
+    try:
+        complete_job(job_id, results, summary)
+        log.info("apify organic job %s completed: %d organic results", job_id, len(results))
+    except Exception as exc:  # noqa: BLE001
+        log.error("complete_scrape_job failed for apify job %s: %s", job_id, exc)
+        fail_job(job_id, "The organic results couldn't be saved — retrying.")
+
+
 def process_job(job: dict[str, Any]) -> None:
     job_id = job["id"]
     country_code = job["country_code"]
@@ -2399,6 +2509,12 @@ def process_job(job: dict[str, Any]) -> None:
     engine = (job.get("search_engine") or "google").strip().lower() or "google"
     if engine not in ("google", "bing", "youtube", "kick", "x", "facebook", "tiktok", "snapchat", "telegram", "twitch"):
         engine = "google"
+
+    # Apify organic path routes BEFORE any GoLogin/engine handling — no
+    # profile, no port, no captcha. Only google jobs are ever tagged 'apify'.
+    if (job.get("scrape_source") or "vm").strip().lower() == "apify":
+        process_apify_organic_job(job)
+        return
 
     # YouTube and Kick jobs take a completely different path — pure
     # HTTP API calls, no GoLogin / Selenium / port management. Branch
