@@ -1745,6 +1745,11 @@ def ensure_google_login_if_required(driver):
 TWOCAPTCHA_API_KEY = os.environ.get("TWOCAPTCHA_API_KEY", "").strip()
 TWOCAPTCHA_IN_URL = "https://2captcha.com/in.php"
 TWOCAPTCHA_RES_URL = "https://2captcha.com/res.php"
+# createTask API (used for the IP-matched reCAPTCHA solve — pass our own proxy
+# so 2Captcha generates the token through OUR egress IP; the legacy in.php path
+# above stays for Turnstile/FunCaptcha).
+TWOCAPTCHA_CREATETASK_URL = "https://api.2captcha.com/createTask"
+TWOCAPTCHA_GETRESULT_URL = "https://api.2captcha.com/getTaskResult"
 # 2Captcha typically returns reCAPTCHA in 15-45s, Turnstile in 5-20s.
 # Poll every 5s, give up after 130s so a stuck solve doesn't hold the
 # worker hostage — failing through to retry is cheaper than waiting.
@@ -1841,7 +1846,12 @@ def _extract_captcha_challenge(driver) -> dict | None:
                 if (m) { reKey = decodeURIComponent(m[1]); break; }
               }
             }
-            if (reKey) return { kind: 'recaptcha', sitekey: reKey, iframes: iframes };
+            // data-s: Google /sorry/ ties the reCAPTCHA to the block session
+            // with this value — 2Captcha needs it (recaptchaDataSValue) or the
+            // token it returns won't clear the wall.
+            var reDataS = attr('.g-recaptcha[data-s]', 'data-s')
+                       || attr('[data-sitekey][class*="recaptcha"]', 'data-s') || '';
+            if (reKey) return { kind: 'recaptcha', sitekey: reKey, data_s: reDataS, iframes: iframes };
 
             // --- Cloudflare Turnstile via intercepted render() (Challenge page) ---
             // The interceptor captured the params Cloudflare only exposes
@@ -1931,6 +1941,117 @@ def _extract_captcha_challenge(driver) -> dict | None:
             print(f"[DEBUG] 2captcha: wall HTML dump failed: {exc}", file=sys.stderr)
         return None
     return info
+
+
+def _get_profile_proxy() -> dict | None:
+    """Fetch THIS GoLogin profile's proxy so we can hand it to 2Captcha for an
+    IP-matched solve — the token is then generated through our own egress IP and
+    actually clears the /sorry/ wall. Returns {mode,host,port,username,password}
+    or None. Only meaningful on a STICKY proxy (stable IP); on a rotating exit
+    the IP would differ between solve and submit and the token still won't clear."""
+    pid = _CAPTCHA_SOLVER_CTX.get("profile_id")
+    token = os.environ.get("GOLOGIN_API_TOKEN")
+    if not pid or not token:
+        return None
+    try:
+        r = requests.get(
+            f"https://api.gologin.com/browser/{pid}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            print(f"[WARN] 2captcha: gologin proxy fetch HTTP {r.status_code}", file=sys.stderr)
+            return None
+        proxy = (r.json() or {}).get("proxy") or {}
+        if not proxy.get("host") or not proxy.get("port"):
+            return None
+        return proxy
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] 2captcha: gologin proxy fetch failed: {exc}", file=sys.stderr)
+        return None
+
+
+def _format_cookies_for_2captcha(driver) -> str:
+    """Current page cookies as 'name=value; name2=value2' for 2Captcha — helps
+    the solved token validate against the same session."""
+    try:
+        cks = driver.get_cookies() or []
+        return "; ".join(f"{c['name']}={c['value']}" for c in cks if c.get("name"))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _2captcha_solve_recaptcha_proxied(
+    sitekey: str, page_url: str, data_s: str, proxy: dict,
+    user_agent: str, cookies: str,
+) -> str | None:
+    """IP-matched reCAPTCHA solve via 2Captcha's createTask (RecaptchaV2Task),
+    routed through OUR proxy + data-s + cookies + UA, so the token matches our
+    scraping IP. Returns the gRecaptchaResponse token, or None."""
+    key = _resolve_twocaptcha_key()
+    raw_mode = (proxy.get("mode") or "http").lower()
+    if raw_mode in ("http", "https", "socks4", "socks5"):
+        proxy_type = raw_mode
+    elif "socks" in raw_mode:
+        proxy_type = "socks5"
+    else:
+        proxy_type = "http"
+    task: dict = {
+        "type": "RecaptchaV2Task",
+        "websiteURL": page_url,
+        "websiteKey": sitekey,
+        "proxyType": proxy_type,
+        "proxyAddress": proxy["host"],
+        "proxyPort": int(proxy["port"]),
+    }
+    if proxy.get("username"):
+        task["proxyLogin"] = proxy["username"]
+    if proxy.get("password"):
+        task["proxyPassword"] = proxy["password"]
+    if data_s:
+        task["recaptchaDataSValue"] = data_s
+    if user_agent:
+        task["userAgent"] = user_agent
+    if cookies:
+        task["cookies"] = cookies
+    try:
+        r = requests.post(TWOCAPTCHA_CREATETASK_URL, json={"clientKey": key, "task": task}, timeout=30)
+        body = r.json()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] 2captcha createTask failed: {exc}", file=sys.stderr)
+        return None
+    if body.get("errorId"):
+        print(f"[ERROR] 2captcha createTask rejected: {body.get('errorCode')} — {body.get('errorDescription')}", file=sys.stderr)
+        return None
+    task_id = body.get("taskId")
+    if not task_id:
+        print(f"[ERROR] 2captcha createTask: no taskId ({body})", file=sys.stderr)
+        return None
+    print(f"[INFO] 2captcha: IP-matched task {task_id} "
+          f"(proxy {proxy_type}://{proxy['host']}:{proxy['port']}, data_s={'yes' if data_s else 'no'})")
+    deadline = time.time() + TWOCAPTCHA_SOLVE_TIMEOUT_SECONDS
+    time.sleep(TWOCAPTCHA_POLL_SECONDS)
+    while time.time() < deadline:
+        try:
+            r = requests.post(TWOCAPTCHA_GETRESULT_URL, json={"clientKey": key, "taskId": task_id}, timeout=30)
+            body = r.json()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] 2captcha: getTaskResult error: {exc}", file=sys.stderr)
+            time.sleep(TWOCAPTCHA_POLL_SECONDS)
+            continue
+        if body.get("errorId"):
+            print(f"[ERROR] 2captcha getTaskResult failed: {body.get('errorCode')} — {body.get('errorDescription')}", file=sys.stderr)
+            return None
+        if body.get("status") == "ready":
+            tok = (body.get("solution") or {}).get("gRecaptchaResponse")
+            if tok:
+                print("[INFO] 2captcha: IP-matched token ready")
+                return str(tok)
+            print(f"[ERROR] 2captcha: ready but no token ({body})", file=sys.stderr)
+            return None
+        time.sleep(TWOCAPTCHA_POLL_SECONDS)
+    print(f"[WARN] 2captcha: IP-matched solve timed out after {TWOCAPTCHA_SOLVE_TIMEOUT_SECONDS}s", file=sys.stderr)
+    return None
 
 
 def _2captcha_submit(challenge: dict, page_url: str) -> str | None:
@@ -2096,12 +2217,42 @@ def attempt_auto_captcha_solve(driver) -> bool:
 
     print(f"[INFO] 2captcha: attempting auto-solve ({challenge['kind']}, "
           f"sitekey={challenge['sitekey'][:12]}…)")
-    request_id = _2captcha_submit(challenge, page_url)
-    if not request_id:
-        return False
-    token = _2captcha_poll(request_id)
-    if not token:
-        return False
+
+    token: str | None = None
+    # reCAPTCHA (Google /sorry/) is IP-bound: solve it through OUR own proxy via
+    # createTask so the token matches our scraping IP. The proxyless in.php path
+    # returns a token Google rejects (the 1.9% success we measured). Only when
+    # no proxy is available do we fall through to the legacy path.
+    if challenge["kind"] == "recaptcha":
+        proxy = _get_profile_proxy()
+        if proxy:
+            try:
+                user_agent = driver.execute_script("return navigator.userAgent") or ""
+            except Exception:  # noqa: BLE001
+                user_agent = ""
+            token = _2captcha_solve_recaptcha_proxied(
+                challenge["sitekey"], page_url, challenge.get("data_s") or "",
+                proxy, user_agent, _format_cookies_for_2captcha(driver),
+            )
+            if not token:
+                # The IP-matched path IS our real shot at /sorry/ — don't burn
+                # ~130s + credits on the proxyless path Google rejects anyway.
+                print("[WARN] 2captcha: IP-matched solve produced no usable token — "
+                      "falling through to human/fail", file=sys.stderr)
+                return False
+        else:
+            print("[WARN] 2captcha: no proxy for IP-matched solve — trying proxyless "
+                  "(low success on IP-bound /sorry/)", file=sys.stderr)
+
+    # Legacy in.php path: Turnstile/FunCaptcha always; reCAPTCHA only when no
+    # proxy was available for the IP-matched solve.
+    if token is None:
+        request_id = _2captcha_submit(challenge, page_url)
+        if not request_id:
+            return False
+        token = _2captcha_poll(request_id)
+        if not token:
+            return False
 
     _inject_token_and_submit(driver, challenge["kind"], token)
     time.sleep(TWOCAPTCHA_POST_INJECT_SETTLE_S)
@@ -3581,6 +3732,9 @@ def main():
     _CAPTCHA_SOLVER_CTX["interactive"] = bool(args.interactive)
     _CAPTCHA_SOLVER_CTX["country_code"] = (args.country_code or "").strip().upper() or None
     _CAPTCHA_SOLVER_CTX["requires_google_login"] = bool(args.requires_google_login)
+    # profile_id lets the 2Captcha path fetch this profile's proxy for an
+    # IP-matched solve (token generated through our own egress IP).
+    _CAPTCHA_SOLVER_CTX["profile_id"] = args.profile_id
     if args.interactive and not args.job_id:
         print("[WARN] --interactive set without --job-id; Captcha solver checkpoints disabled",
               file=sys.stderr)
