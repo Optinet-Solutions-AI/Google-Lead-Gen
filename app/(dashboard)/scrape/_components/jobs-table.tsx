@@ -294,7 +294,7 @@ function SourceBadge({ job }: { job: ScrapeJob }) {
       </span>
     )
   }
-  if (job.result_type_filter === 'PPC' && (job.search_engine ?? 'google') === 'google') {
+  if (job.result_type_filter === 'PPC' && ['google', 'bing'].includes(job.search_engine ?? 'google')) {
     return (
       <span
         className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium text-amber-900"

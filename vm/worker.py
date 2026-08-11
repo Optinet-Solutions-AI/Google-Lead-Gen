@@ -2397,7 +2397,10 @@ def process_fb_job(job: dict[str, Any]) -> None:
 # runs on a separate VM job (scrape_source='vm', result_type_filter='PPC') so
 # the operator gets organic + enrichment first while ads catch up.
 # ---------------------------------------------------------------------------
-APIFY_ACTOR = "apify~google-search-scraper"
+APIFY_GOOGLE_ACTOR = "apify~google-search-scraper"
+# Bing: url is a bing.com/ck/a redirect, but displayedUrl carries the real site
+# ('https://host › path › …'), so we rebuild url/domain from displayedUrl.
+APIFY_BING_ACTOR = "tri_angle~bing-search-scraper"
 _APIFY_TOKEN_CACHE: str | None = None
 
 
@@ -2423,77 +2426,115 @@ def _resolve_apify_token() -> str | None:
     return None
 
 
+def _apify_url_and_domain(engine: str, o: dict[str, Any]) -> tuple[str | None, str | None]:
+    """(url, full_url) for one organic result, engine-aware. Google gives clean
+    urls. Bing wraps url in a bing.com/ck/a redirect but exposes the real site
+    in displayedUrl ('https://host › path › …'), so we rebuild from that — the
+    host (→ domain column) is reliable, the path is best-effort."""
+    if engine == "bing":
+        disp = (o.get("displayedUrl") or "").strip()
+        if not disp:
+            return None, None
+        base = disp.split("›")[0].strip()
+        try:
+            p = urlparse(base)
+        except Exception:  # noqa: BLE001
+            return None, None
+        if not p.scheme or not p.netloc:
+            return None, None
+        url = re.sub(r"\s*›\s*", "/", disp)  # breadcrumb → path
+        return url, f"{p.scheme}://{p.netloc}"
+    url = (o.get("url") or "").strip()
+    if not url:
+        return None, None
+    try:
+        p = urlparse(url)
+    except Exception:  # noqa: BLE001
+        return None, None
+    if not p.scheme or not p.netloc:
+        return None, None
+    return url, f"{p.scheme}://{p.netloc}"
+
+
+def _apify_parse_organic(items: list[Any], engine: str, keyword: str) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for page_idx, it in enumerate(items):
+        for o in (it.get("organicResults") or []):
+            if not isinstance(o, dict):
+                continue
+            url, full = _apify_url_and_domain(engine, o)
+            if not url or not full or url in seen:
+                continue
+            seen.add(url)
+            results.append({
+                "url": url, "full_url": full, "title": o.get("title") or "",
+                "resultType": "Organic", "page": page_idx + 1,
+                "position": len(results) + 1, "overall_position": len(results) + 1,
+                "keyword": keyword, "seen_on": "desktop",
+            })
+    return results
+
+
 def process_apify_organic_job(job: dict[str, Any]) -> None:
     job_id = job["id"]
     keyword = job["keyword"]
     country_code = (job.get("country_code") or "").strip()
+    engine = (job.get("search_engine") or "google").strip().lower()
     pages = max(1, int(job.get("pages") or 1))
-    log.info("claimed APIFY organic job %s | country=%s keyword=%r pages=%d", job_id, country_code, keyword, pages)
+    actor = APIFY_BING_ACTOR if engine == "bing" else APIFY_GOOGLE_ACTOR
+    log.info("claimed APIFY organic job %s | engine=%s country=%s keyword=%r pages=%d", job_id, engine, country_code, keyword, pages)
 
     token = _resolve_apify_token()
     if not token:
         fail_job(job_id, "Apify isn't configured yet (missing API token) — organic scrape skipped. Tell a developer.")
         return
 
-    try:
-        resp = requests.post(
-            f"https://api.apify.com/v2/acts/{APIFY_ACTOR}/run-sync-get-dataset-items",
-            params={"token": token},
-            json={
-                "queries": keyword,
-                "countryCode": country_code.lower(),
-                "resultsPerPage": 10,
-                "maxPagesPerQuery": pages,
-                "mobileResults": False,
-                "saveHtml": False,
-            },
-            timeout=180,
-        )
-        # run-sync-get-dataset-items returns 201 Created on success (not 200).
-        if not (200 <= resp.status_code < 300):
-            log.error("apify job %s HTTP %s: %s", job_id, resp.status_code, (resp.text or "")[:300])
-            fail_job(job_id, "The organic search service had a hiccup — it retries automatically; hit Retry if it persists.")
-            return
-        items = resp.json() or []
-    except Exception as exc:  # noqa: BLE001
-        log.error("apify organic job %s network error: %s", job_id, exc)
-        fail_job(job_id, "The organic search service didn't respond — it retries automatically.")
+    results: list[dict[str, Any]] = []
+    got_2xx = False
+    # Retry transient empty SERPs: Apify's proxy occasionally gets an
+    # interstitial and returns 0 organic on an otherwise-successful run (201);
+    # a fresh run (new proxy session) almost always recovers. ~7% of the
+    # backlog fill hit this. 3 attempts, short backoff.
+    for attempt in range(1, 4):
+        try:
+            resp = requests.post(
+                f"https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items",
+                params={"token": token},
+                json={
+                    "queries": keyword, "countryCode": country_code.lower(),
+                    "resultsPerPage": 10, "maxPagesPerQuery": pages,
+                    "mobileResults": False, "saveHtml": False,
+                },
+                timeout=180,
+            )
+            # run-sync-get-dataset-items returns 201 Created on success.
+            if 200 <= resp.status_code < 300:
+                got_2xx = True
+                results = _apify_parse_organic(resp.json() or [], engine, keyword)
+            else:
+                log.error("apify job %s attempt %d HTTP %s: %s", job_id, attempt, resp.status_code, (resp.text or "")[:200])
+        except Exception as exc:  # noqa: BLE001
+            log.error("apify job %s attempt %d error: %s", job_id, attempt, exc)
+        if results:
+            break
+        if attempt < 3:
+            log.info("apify job %s attempt %d -> %d organic; retrying", job_id, attempt, len(results))
+            time.sleep(2)
+
+    # Fail (retryable) only if the service NEVER responded successfully. A
+    # genuinely empty SERP (2xx, 0 organic) completes cleanly with 0 rows.
+    if not results and not got_2xx:
+        fail_job(job_id, "The organic search service had a hiccup — it retries automatically; hit Retry if it persists.")
         return
 
-    results: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for page_idx, it in enumerate(items):
-        for o in (it.get("organicResults") or []):
-            url = (o or {}).get("url")
-            if not url or url in seen:
-                continue
-            try:
-                p = urlparse(url)
-            except Exception:  # noqa: BLE001
-                continue
-            if not p.scheme or not p.netloc:
-                continue
-            seen.add(url)
-            results.append({
-                "url": url,
-                "full_url": f"{p.scheme}://{p.netloc}",
-                "title": (o or {}).get("title") or "",
-                "resultType": "Organic",
-                "page": page_idx + 1,
-                "position": len(results) + 1,
-                "overall_position": len(results) + 1,
-                "keyword": keyword,
-                "country": job.get("country"),
-                "seen_on": "desktop",
-            })
-
     summary = {
-        "source": "apify", "engine": "google", "organic_only": True,
+        "source": "apify", "engine": engine, "organic_only": True,
         "ppc_pending": True, "organic_results": len(results), "ppc_results": 0,
     }
     try:
         complete_job(job_id, results, summary)
-        log.info("apify organic job %s completed: %d organic results", job_id, len(results))
+        log.info("apify organic job %s (%s) completed: %d organic results", job_id, engine, len(results))
     except Exception as exc:  # noqa: BLE001
         log.error("complete_scrape_job failed for apify job %s: %s", job_id, exc)
         fail_job(job_id, "The organic results couldn't be saved — retrying.")

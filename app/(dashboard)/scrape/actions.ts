@@ -368,7 +368,8 @@ export async function enqueueScrape(
   // scraping". Non-google engines are unchanged. An explicit result_type_filter
   // is respected (Organic-only → just the apify job; PPC-only → just the vm job).
   const insertRows = rows.flatMap(r => {
-    if ((r.search_engine ?? 'google') !== 'google') return [r]
+    const eng = r.search_engine ?? 'google'
+    if (eng !== 'google' && eng !== 'bing') return [r]
     const rtf = (r as { result_type_filter?: string | null }).result_type_filter ?? null
     const groupId = crypto.randomUUID()
     const split: Array<typeof r & { scrape_source: string; result_type_filter: string; batch_group_id: string }> = []
