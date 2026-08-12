@@ -70,6 +70,12 @@ export type LeadsQueryOptions = {
   resultType: string
   /** If set, only rows whose scrape_job_id matches (single-job detail page). */
   scrapeJobId?: string
+  /** If set, rows across ANY of these job ids. Used to merge the Organic
+   *  (Apify) + PPC (VM) halves of one split batch on the detail page so that
+   *  opening either half shows the batch's full result set — previously an
+   *  operator opening the PPC half saw "no results" while the organic leads
+   *  sat under a sibling job id. Takes precedence over scrapeJobId. */
+  scrapeJobIds?: string[]
   /** Advanced filter rows from the URL (parsed `?f=` params). */
   filters?: Filter[]
   /** Advanced sort priority list (parsed `?s=` params). */
@@ -130,7 +136,9 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
     query = query.eq('is_not_relevant', false)
   }
 
-  if (opts.scrapeJobId) {
+  if (opts.scrapeJobIds && opts.scrapeJobIds.length > 0) {
+    query = query.in('scrape_job_id', opts.scrapeJobIds)
+  } else if (opts.scrapeJobId) {
     query = query.eq('scrape_job_id', opts.scrapeJobId)
   }
 

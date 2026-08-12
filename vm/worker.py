@@ -2500,6 +2500,63 @@ def _handoff_apify_to_vm(job_id: str) -> None:
         fail_job(job_id, "Couldn't fetch organic results — hit Retry on the row.")
 
 
+def _apify_run_and_fetch(
+    actor: str, run_input: dict[str, Any], token: str, max_wait: float = 200.0
+) -> tuple[bool, list[Any]]:
+    """Start an Apify actor run asynchronously, poll it to completion, then fetch
+    its dataset. Returns (ok, items). ok=True only when the run reaches SUCCEEDED
+    and we retrieved its dataset (items may still be []).
+
+    Why not run-sync-get-dataset-items: the synchronous endpoint holds one HTTP
+    request open for the whole run. Deep runs (10 pages) routinely blow past its
+    window and the concurrent-sync-run limit, so they 4xx/timeout — the cause of
+    the batch-refill failures. The async run API waits them out: cheap start call,
+    then short polls, then a plain dataset read."""
+    try:
+        start = requests.post(
+            f"https://api.apify.com/v2/acts/{actor}/runs",
+            params={"token": token},
+            json=run_input,
+            timeout=30,
+        )
+        if not (200 <= start.status_code < 300):
+            log.error("apify run start HTTP %s: %s", start.status_code, (start.text or "")[:200])
+            return False, []
+        data = (start.json() or {}).get("data") or {}
+        run_id = data.get("id")
+        dataset_id = data.get("defaultDatasetId")
+        status = data.get("status") or "READY"
+        if not run_id or not dataset_id:
+            return False, []
+        deadline = time.time() + max_wait
+        while status in ("READY", "RUNNING") and time.time() < deadline:
+            time.sleep(3)
+            try:
+                poll = requests.get(
+                    f"https://api.apify.com/v2/actor-runs/{run_id}",
+                    params={"token": token}, timeout=30,
+                )
+                if 200 <= poll.status_code < 300:
+                    status = ((poll.json() or {}).get("data") or {}).get("status") or status
+            except Exception as exc:  # noqa: BLE001
+                log.error("apify poll error (run %s): %s", run_id, exc)
+        if status != "SUCCEEDED":
+            log.error("apify run %s ended status=%s", run_id, status)
+            return False, []
+        items = requests.get(
+            f"https://api.apify.com/v2/datasets/{dataset_id}/items",
+            params={"token": token, "clean": "true"}, timeout=60,
+        )
+        if not (200 <= items.status_code < 300):
+            log.error("apify dataset fetch HTTP %s (run %s)", items.status_code, run_id)
+            return False, []
+        payload = items.json()
+        return True, (payload if isinstance(payload, list) else [])
+    except Exception as exc:  # noqa: BLE001
+        log.error("apify async run error: %s", exc)
+        return False, []
+
+
 def process_apify_organic_job(job: dict[str, Any]) -> None:
     job_id = job["id"]
     keyword = job["keyword"]
@@ -2517,32 +2574,22 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
     results: list[dict[str, Any]] = []
     got_2xx = False
     # Retry transient empty SERPs: Apify's proxy occasionally gets an
-    # interstitial and returns 0 organic on an otherwise-successful run (201);
-    # a fresh run (new proxy session) almost always recovers. 5 attempts, short
-    # backoff — anything still empty after that hands off to the VM browser.
-    for attempt in range(1, 6):
-        try:
-            resp = requests.post(
-                f"https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items",
-                params={"token": token},
-                json={
-                    "queries": keyword, "countryCode": country_code.lower(),
-                    "resultsPerPage": 10, "maxPagesPerQuery": pages,
-                    "mobileResults": False, "saveHtml": False,
-                },
-                timeout=180,
-            )
-            # run-sync-get-dataset-items returns 201 Created on success.
-            if 200 <= resp.status_code < 300:
-                got_2xx = True
-                results = _apify_parse_organic(resp.json() or [], engine, keyword)
-            else:
-                log.error("apify job %s attempt %d HTTP %s: %s", job_id, attempt, resp.status_code, (resp.text or "")[:200])
-        except Exception as exc:  # noqa: BLE001
-            log.error("apify job %s attempt %d error: %s", job_id, attempt, exc)
+    # interstitial and returns 0 organic on an otherwise-successful run; a fresh
+    # run (new proxy session) almost always recovers. Each attempt is now a full
+    # async run (start→poll→fetch), which is slower per attempt but reliable at
+    # depth — so 3 attempts, not 5. Anything still empty hands off to the VM.
+    for attempt in range(1, 4):
+        ok, items = _apify_run_and_fetch(actor, {
+            "queries": keyword, "countryCode": country_code.lower(),
+            "resultsPerPage": 10, "maxPagesPerQuery": pages,
+            "mobileResults": False, "saveHtml": False,
+        }, token)
+        if ok:
+            got_2xx = True  # run SUCCEEDED (even if 0 organic → VM handoff below)
+            results = _apify_parse_organic(items, engine, keyword)
         if results:
             break
-        if attempt < 5:
+        if attempt < 3:
             log.info("apify job %s attempt %d -> %d organic; retrying", job_id, attempt, len(results))
             time.sleep(2)
 

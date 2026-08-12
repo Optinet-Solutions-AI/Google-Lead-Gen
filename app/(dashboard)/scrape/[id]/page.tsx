@@ -103,12 +103,12 @@ export const maxDuration = 300
 
 async function countNotRelevantInJob(
   svc: ReturnType<typeof createServiceClient>,
-  jobId: string,
+  jobIds: string[],
 ): Promise<number> {
   const { count } = await svc
     .from('google_lead_gen_table')
     .select('id', { head: true, count: 'exact' })
-    .eq('scrape_job_id', jobId)
+    .in('scrape_job_id', jobIds)
     .eq('is_not_relevant', true)
   return count ?? 0
 }
@@ -121,7 +121,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const { data: jobRaw, error: jobError } = await svc
     .from('scrape_queue')
     .select(
-      'id, keyword, keyword_en, country_code, pages, status, attempts, batch_id, claimed_by, started_at, completed_at, error_message, result_summary, search_engine, view_mode, language, created_at, created_by_is_shadow, created_by_email',
+      'id, keyword, keyword_en, country_code, pages, status, attempts, batch_id, claimed_by, started_at, completed_at, error_message, result_summary, search_engine, view_mode, language, created_at, created_by_is_shadow, created_by_email, batch_group_id',
     )
     .eq('id', id)
     .maybeSingle()
@@ -151,6 +151,23 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   if (!allowed) notFound()
 
   const job = jobRaw as Job
+
+  // Split-batch merge: a Google/Bing batch fans out into an Organic (Apify)
+  // job and a PPC (VM) job that share a batch_group_id but have DIFFERENT job
+  // ids. Opening one half used to show only its own leads — so the PPC half
+  // (often 0 ads) read as "no results" even when the organic half held dozens
+  // (the Darren "No results" report). Load leads across the whole group so
+  // opening EITHER half shows the batch's full result set.
+  const batchGroupId = (jobRaw as { batch_group_id?: string | null }).batch_group_id ?? null
+  let batchJobIds: string[] = [id]
+  if (batchGroupId) {
+    const { data: sibs } = await svc
+      .from('scrape_queue')
+      .select('id')
+      .eq('batch_group_id', batchGroupId)
+    if (sibs && sibs.length > 1) batchJobIds = (sibs as { id: string }[]).map(s => s.id)
+  }
+  const isMergedBatch = batchJobIds.length > 1
 
   // Lazy backfill: jobs queued before the translation feature shipped
   // have keyword_en = null. Translate on first non-English view and
@@ -237,12 +254,12 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         q,
         countryCode,
         resultType,
-        scrapeJobId: id,
+        scrapeJobIds: batchJobIds,
         filters,
         sorts,
         includeNotRelevant: showHidden,
       }),
-      countNotRelevantInJob(svc, id),
+      countNotRelevantInJob(svc, batchJobIds),
       // Kick / YouTube jobs have no leads, so the lead-enrichment stages don't apply.
       noLeadsEngine ? Promise.resolve(null) : fetchStageSummary(id),
       mobileCaptchaAborted
@@ -360,6 +377,17 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       </header>
 
       <JobMeta job={job} />
+
+      {isMergedBatch && (
+        <div className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-[11px] text-[color:var(--color-text-secondary)]">
+          This batch was scraped as an{' '}
+          <span className="font-medium text-[color:var(--color-text-primary)]">Organic</span> (search
+          results) job and a separate{' '}
+          <span className="font-medium text-[color:var(--color-text-primary)]">PPC</span> (paid ads)
+          job. The table below shows leads from both halves, so you&rsquo;re seeing the full batch
+          even if one half found nothing.
+        </div>
+      )}
 
       {job.status === 'captcha' && (
         <CaptchaRecoveryBanner jobId={job.id} errorMessage={job.error_message} />
