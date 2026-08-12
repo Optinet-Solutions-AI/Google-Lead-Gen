@@ -8,6 +8,9 @@ import {
   Bot,
   Check,
   CheckSquare,
+  ChevronDown,
+  ChevronsUpDown,
+  ChevronUp,
   ExternalLink,
   RotateCcw,
   Send,
@@ -495,6 +498,19 @@ function PipelineBadges({
   )
 }
 
+/** Number of green pipeline checks (0–5 leads stages) a job has — the
+ *  metric the Pipeline column's click-to-sort orders by. Kick/social jobs
+ *  don't write to the leads pipeline so they score 0 and sink to the bottom
+ *  under "most-complete first", which is exactly what an operator asking
+ *  for "the ones with 5 green" expects. */
+const PIPELINE_SORT_KEYS = VISIBLE_PIPELINE_STAGES.map(s => s.key)
+function pipelineScore(job: ScrapeJob): number {
+  return PIPELINE_SORT_KEYS.reduce(
+    (n, k) => n + (job.enrichment[k] === true ? 1 : 0),
+    0,
+  )
+}
+
 export function JobsTable({
   jobs: initialJobs,
   isAdmin = false,
@@ -525,6 +541,20 @@ export function JobsTable({
     () => (extraRows.length === 0 ? initialJobs : [...initialJobs, ...extraRows]),
     [initialJobs, extraRows],
   )
+
+  // Client-side "sort by pipeline completeness". The green-check count
+  // (0–5 leads stages) is derived after the DB page fetch, so it can't be
+  // a SQL ORDER BY — we sort the loaded rows here instead. Clicking the
+  // Pipeline header cycles off → most-complete first → least-complete
+  // first. Sorts whatever is currently loaded; pick "Rows: All" to sort
+  // the whole result set. Stable within equal scores (keeps the server's
+  // default order for ties, so it's a pure re-rank of what you see).
+  const [pipelineSort, setPipelineSort] = useState<'off' | 'desc' | 'asc'>('off')
+  const sortedJobs = useMemo(() => {
+    if (pipelineSort === 'off') return jobs
+    const dir = pipelineSort === 'desc' ? -1 : 1
+    return [...jobs].sort((a, b) => dir * (pipelineScore(a) - pipelineScore(b)))
+  }, [jobs, pipelineSort])
 
   // Reset the cursor whenever a NEW server-rendered chunk arrives —
   // filter change, sort change, size change, or a pagination chevron
@@ -860,13 +890,32 @@ export function JobsTable({
               <Th>Started</Th>
               <Th>Duration</Th>
               <Th>Results</Th>
-              <Th>Pipeline</Th>
+              <Th>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPipelineSort(s => (s === 'off' ? 'desc' : s === 'desc' ? 'asc' : 'off'))
+                  }
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-text-primary)] hover:text-[color:var(--color-accent)]"
+                  title="Sort by pipeline completeness (green checks). Click to cycle: most-complete first → least-complete first → off. Sorts the loaded rows — pick Rows: All to sort everything."
+                  aria-label="Sort by pipeline completeness"
+                >
+                  Pipeline
+                  {pipelineSort === 'desc' ? (
+                    <ChevronDown className="h-3 w-3" />
+                  ) : pipelineSort === 'asc' ? (
+                    <ChevronUp className="h-3 w-3" />
+                  ) : (
+                    <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                  )}
+                </button>
+              </Th>
               <Th>Batch</Th>
               <Th>Error</Th>
             </tr>
           </thead>
           <tbody>
-            {jobs.map(job => {
+            {sortedJobs.map(job => {
               const href = `/scrape/${job.id}`
               const isSelected = selectedIds.has(job.id)
               return (

@@ -381,12 +381,17 @@ export async function enqueueScrape(
   })
 
   // Daily-quota gate. Admins are exempt; everyone else gets up to
-  // system_settings.daily_scrape_cap_per_user rows per UTC day. A split Google
-  // batch counts as ONE scrape — only the VM (PPC) job counts, the Apify
-  // organic job is excluded (mirrors count_user_scrapes_today).
-  const countedRows = insertRows.filter(
-    r => (r as { scrape_source?: string }).scrape_source !== 'apify',
-  ).length
+  // system_settings.daily_scrape_cap_per_user scrapes per UTC day. One
+  // "scrape" = one distinct (keyword, country) — so a keyword on Google,
+  // Bing, or BOTH costs exactly ONE (not two), and the Apify organic half
+  // of a split batch is excluded. Mirrors count_user_scrapes_today, which
+  // now counts distinct (keyword, country) too.
+  const countedKeys = new Set<string>()
+  for (const r of insertRows) {
+    if ((r as { scrape_source?: string }).scrape_source === 'apify') continue
+    countedKeys.add(`${(r.keyword ?? '').toLowerCase()}|${r.country_code}`)
+  }
+  const countedRows = countedKeys.size
   const quota = await checkQuota(countedRows)
   if (!quota.ok) return { status: 'error', error: quota.error }
 
