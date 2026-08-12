@@ -2513,14 +2513,25 @@ def _apify_run_and_fetch(
     the batch-refill failures. The async run API waits them out: cheap start call,
     then short polls, then a plain dataset read."""
     try:
-        start = requests.post(
-            f"https://api.apify.com/v2/acts/{actor}/runs",
-            params={"token": token},
-            json=run_input,
-            timeout=30,
-        )
-        if not (200 <= start.status_code < 300):
-            log.error("apify run start HTTP %s: %s", start.status_code, (start.text or "")[:200])
+        # The Apify account caps concurrent actor runs (memory-bound — ~3 on the
+        # current plan). When a whole batch is submitted, several workers can try
+        # to start organic runs at once; the ones past the cap get rejected. Wait
+        # for a free slot and retry the start rather than failing the job, so a
+        # burst serializes across the fleet instead of erroring out.
+        start = None
+        for _ in range(4):
+            start = requests.post(
+                f"https://api.apify.com/v2/acts/{actor}/runs",
+                params={"token": token},
+                json=run_input,
+                timeout=30,
+            )
+            if 200 <= start.status_code < 300:
+                break
+            log.info("apify run start HTTP %s (all run slots busy?) — waiting for a slot", start.status_code)
+            time.sleep(6)
+        if start is None or not (200 <= start.status_code < 300):
+            log.error("apify run start failed HTTP %s: %s", getattr(start, "status_code", "?"), (getattr(start, "text", "") or "")[:200])
             return False, []
         data = (start.json() or {}).get("data") or {}
         run_id = data.get("id")
