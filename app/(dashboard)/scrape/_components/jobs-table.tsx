@@ -1226,6 +1226,15 @@ function totalResults(summary: Record<string, unknown> | null): number | null {
   if (!summary) return null
   const v = summary['total_results']
   if (typeof v === 'number') return v
+  // Apify organic jobs (and split halves) don't set total_results — fall back
+  // to the websites they actually collected so the Results column shows the
+  // real count instead of an empty "—". Sum organic + ppc so a split half still
+  // reports the number of sites it gathered.
+  const org = summary['organic_results']
+  const ppc = summary['ppc_results']
+  if (typeof org === 'number' || typeof ppc === 'number') {
+    return (typeof org === 'number' ? org : 0) + (typeof ppc === 'number' ? ppc : 0)
+  }
   return null
 }
 
@@ -1244,8 +1253,8 @@ function ResultsCell({
 }) {
   const total = totalResults(summary)
   if (total === null) return <span>—</span>
-  const ppc = asNumber(summary, 'ppc')
-  const organic = asNumber(summary, 'organic')
+  const ppc = asNumber(summary, 'ppc') ?? asNumber(summary, 'ppc_results')
+  const organic = asNumber(summary, 'organic') ?? asNumber(summary, 'organic_results')
 
   if (mobile) {
     return (

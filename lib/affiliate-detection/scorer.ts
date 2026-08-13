@@ -446,6 +446,22 @@ export function scoreAffiliate(
 /** Domains that should be skipped entirely (never affiliates). Mirrors
  *  the JS skip list at the top of workflow 2.3. */
 const SKIP_DOMAINS = [
+  // search / cloud / reference infrastructure — never a lead or an affiliate
+  // (mirrors is_social_host in 20260813130000). Stops junk SERP results like
+  // google.com / bing.com / wikipedia.org from being scored as affiliates.
+  'google.com',
+  'gstatic.com',
+  'googleusercontent.com',
+  'bing.com',
+  'microsoft.com',
+  'live.com',
+  'msn.com',
+  'apple.com',
+  'icloud.com',
+  'amazonaws.com',
+  'cloudflare.com',
+  'wikipedia.org',
+  'wikimedia.org',
   'youtube.com',
   'youtu.be',
   'twitch.tv',
