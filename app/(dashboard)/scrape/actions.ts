@@ -362,33 +362,26 @@ export async function enqueueScrape(
     }
   }
 
-  // New-batch flow: split each GOOGLE job into an Apify ORGANIC job (ships
-  // first, captcha-free) + a VM/GoLogin PPC job (runs in the background),
-  // linked by a batch_group_id so the UI can show "organic ready · PPC
-  // scraping". Non-google engines are unchanged. An explicit result_type_filter
-  // is respected (Organic-only → just the apify job; PPC-only → just the vm job).
+  // New-batch flow: a GOOGLE/BING job runs as ONE Apify job that returns BOTH
+  // organic results and paid ads (paidResults) — captcha-free, no login, no VM.
+  // The old Apify-organic + VM-PPC split is retired: the VM PPC path was
+  // captcha-blocked and couldn't read the current SERP ad markup anyway, while
+  // Apify ships organic + PPC in a single fast call. Non-google/bing engines are
+  // unchanged. batch_group_id is kept for grouping / UI continuity.
   const insertRows = rows.flatMap(r => {
     const eng = r.search_engine ?? 'google'
     if (eng !== 'google' && eng !== 'bing') return [r]
-    const rtf = (r as { result_type_filter?: string | null }).result_type_filter ?? null
-    const groupId = crypto.randomUUID()
-    const split: Array<typeof r & { scrape_source: string; result_type_filter: string; batch_group_id: string }> = []
-    if (rtf !== 'PPC')
-      split.push({ ...r, scrape_source: 'apify', result_type_filter: 'Organic', batch_group_id: groupId, priority: (r.priority ?? 5) + 10 })
-    if (rtf !== 'Organic')
-      split.push({ ...r, scrape_source: 'vm', result_type_filter: 'PPC', batch_group_id: groupId })
-    return split
+    return [{ ...r, scrape_source: 'apify', batch_group_id: crypto.randomUUID(), priority: (r.priority ?? 5) + 10 }]
   })
 
   // Daily-quota gate. Admins are exempt; everyone else gets up to
   // system_settings.daily_scrape_cap_per_user scrapes per UTC day. One
-  // "scrape" = one distinct (keyword, country) — so a keyword on Google,
-  // Bing, or BOTH costs exactly ONE (not two), and the Apify organic half
-  // of a split batch is excluded. Mirrors count_user_scrapes_today, which
-  // now counts distinct (keyword, country) too.
+  // "scrape" = one distinct (keyword, country), so a keyword on Google, Bing,
+  // or BOTH costs exactly ONE. Every job counts now — the Apify job IS the whole
+  // scrape, so there's no free organic half to exclude any more. Mirrors
+  // count_user_scrapes_today.
   const countedKeys = new Set<string>()
   for (const r of insertRows) {
-    if ((r as { scrape_source?: string }).scrape_source === 'apify') continue
     countedKeys.add(`${(r.keyword ?? '').toLowerCase()}|${r.country_code}`)
   }
   const countedRows = countedKeys.size
