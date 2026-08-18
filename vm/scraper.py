@@ -1660,6 +1660,64 @@ def _continue_logged_out_after_login_block(driver, country_code, why):
               file=sys.stderr)
 
 
+def _inject_gologin_cookies(driver, profile_id: str, token: str) -> int:
+    """Pull the profile's saved cookies from the GoLogin cloud and set them via
+    CDP. Works around gl.start() not loading server-side cookies into the
+    launched browser (even with writeCookiesFromServer): a Google login done in
+    the GoLogin desktop app saves to the cloud profile, but the VM browser starts
+    without it — verified, the AT cloud profile carried 8 valid Google auth
+    cookies while the browser had none, so the scrape ran signed-out. CDP
+    Network.setCookie sets httpOnly cookies that Selenium's add_cookie cannot.
+    Returns the number of cookies set."""
+    try:
+        r = requests.get(
+            f"https://api.gologin.com/browser/{profile_id}/cookies",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            print(f"[WARN] cookie-inject: gologin cookies HTTP {r.status_code}", file=sys.stderr)
+            return 0
+        cookies = r.json() or []
+    except Exception as exc:  # noqa: BLE001
+        print(f"[WARN] cookie-inject: fetch failed: {exc}", file=sys.stderr)
+        return 0
+    if not isinstance(cookies, list):
+        return 0
+    injected = 0
+    for c in cookies:
+        name = c.get("name")
+        domain = c.get("domain")
+        if not name or not domain:
+            continue
+        params = {
+            "name": name,
+            "value": c.get("value") or "",
+            "domain": domain,
+            "path": c.get("path") or "/",
+            "secure": bool(c.get("secure")),
+            "httpOnly": bool(c.get("httpOnly")),
+        }
+        ss = (c.get("sameSite") or "").lower().replace("_", "")
+        if ss in ("norestriction", "none"):
+            params["sameSite"] = "None"
+            params["secure"] = True  # SameSite=None requires Secure
+        elif ss == "lax":
+            params["sameSite"] = "Lax"
+        elif ss == "strict":
+            params["sameSite"] = "Strict"
+        exp = c.get("expirationDate")
+        if isinstance(exp, (int, float)) and exp > 0:
+            params["expires"] = exp
+        try:
+            driver.execute_cdp_cmd("Network.setCookie", params)
+            injected += 1
+        except Exception:  # noqa: BLE001
+            pass
+    print(f"[INFO] cookie-inject: set {injected}/{len(cookies)} GoLogin cloud cookies into the browser")
+    return injected
+
+
 def ensure_google_login_if_required(driver):
     """
     Run this once after the connectivity check, before the first search.
@@ -1698,6 +1756,22 @@ def ensure_google_login_if_required(driver):
             print(f"[WARN] google login: nav to google.com failed: {exc}",
                   file=sys.stderr)
             return
+
+    # gl.start() doesn't reliably load the profile's server-side cookies, so a
+    # Google login saved to the cloud profile is invisible to the browser. Pull
+    # those cookies from the GoLogin API and inject them via CDP, then reload so
+    # the session applies, BEFORE probing login state.
+    profile_id = _CAPTCHA_SOLVER_CTX.get("profile_id")
+    gl_token = os.environ.get("GOLOGIN_API_TOKEN")
+    if requires_login and profile_id and gl_token:
+        if _inject_gologin_cookies(driver, profile_id, gl_token) > 0:
+            try:
+                driver.get("https://www.google.com/?hl=en")
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
     # Dismiss the consent overlay so detect_login_state can read the page.
     accept_google_consent(driver)
