@@ -2476,6 +2476,48 @@ def _apify_parse_organic(items: list[Any], engine: str, keyword: str) -> list[di
     return results
 
 
+def _apify_parse_paid(items: list[Any], engine: str, keyword: str) -> list[dict[str, Any]]:
+    """Parse Apify `paidResults` (Google/Bing PPC ads) into lead rows. The ad's
+    own `url` is an aclk redirect (google.com/aclk / bing.com/aclk), so the real
+    advertiser lives in `displayedUrl` ("https://host › path › …"). Google
+    occasionally mangles it as "https://Ahttps://B" — take the substring from the
+    LAST scheme so we land on the true destination. Deduped by advertiser domain.
+    Bing carries the bulk of casino ad inventory; Google gambling ads are policy-
+    restricted (usually none), but this handles both."""
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for page_idx, it in enumerate(items):
+        for o in (it.get("paidResults") or []):
+            if not isinstance(o, dict):
+                continue
+            disp = (o.get("displayedUrl") or "").strip()
+            if not disp:
+                continue
+            base = disp.split("›")[0].strip()
+            cut = max(base.rfind("https://"), base.rfind("http://"))
+            if cut > 0:
+                base = base[cut:]
+            try:
+                p = urlparse(base)
+            except Exception:  # noqa: BLE001
+                continue
+            host = p.netloc
+            if not p.scheme or not host or "." not in host or "http" in host.lower():
+                continue  # unparseable / still-mangled displayedUrl — skip
+            full = f"{p.scheme}://{host}"
+            key = host.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append({
+                "url": full, "full_url": full, "title": o.get("title") or "",
+                "resultType": "PPC", "page": page_idx + 1,
+                "position": len(results) + 1, "overall_position": len(results) + 1,
+                "keyword": keyword, "seen_on": "desktop",
+            })
+    return results
+
+
 def _handoff_apify_to_vm(job_id: str) -> None:
     """Apify returned 0 organic even after every retry — hand the job to the VM
     browser (GoLogin) path instead of shipping an empty result. The real browser
@@ -2582,13 +2624,13 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
         fail_job(job_id, "Apify isn't configured yet (missing API token) — organic scrape skipped. Tell a developer.")
         return
 
-    results: list[dict[str, Any]] = []
+    organic: list[dict[str, Any]] = []
+    paid: list[dict[str, Any]] = []
     got_2xx = False
     # Retry transient empty SERPs: Apify's proxy occasionally gets an
-    # interstitial and returns 0 organic on an otherwise-successful run; a fresh
-    # run (new proxy session) almost always recovers. Each attempt is now a full
-    # async run (start→poll→fetch), which is slower per attempt but reliable at
-    # depth — so 3 attempts, not 5. Anything still empty hands off to the VM.
+    # interstitial and returns nothing on an otherwise-successful run; a fresh
+    # run (new proxy session) almost always recovers. 3 async attempts, then a
+    # VM handoff if still empty. Each run returns BOTH organic + paid ads.
     for attempt in range(1, 4):
         ok, items = _apify_run_and_fetch(actor, {
             "queries": keyword, "countryCode": country_code.lower(),
@@ -2596,19 +2638,20 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
             "mobileResults": False, "saveHtml": False,
         }, token)
         if ok:
-            got_2xx = True  # run SUCCEEDED (even if 0 organic → VM handoff below)
-            results = _apify_parse_organic(items, engine, keyword)
-        if results:
+            got_2xx = True  # run SUCCEEDED (even if empty → VM handoff below)
+            organic = _apify_parse_organic(items, engine, keyword)
+            paid = _apify_parse_paid(items, engine, keyword)  # PPC ads (esp. Bing)
+        if organic or paid:
             break
         if attempt < 3:
-            log.info("apify job %s attempt %d -> %d organic; retrying", job_id, attempt, len(results))
+            log.info("apify job %s attempt %d -> 0 results; retrying", job_id, attempt)
             time.sleep(2)
 
-    # Never ship an empty organic result. If Apify worked (2xx) but returned 0
-    # organic even after every retry, hand off to the VM browser path — the real
-    # browser can usually fetch a SERP that Apify's proxy couldn't. If Apify
-    # never responded at all, fail (retryable) rather than cascade every job to
-    # the VM during an Apify outage.
+    results = organic + paid
+    # Never ship an empty result. If Apify worked (2xx) but returned nothing even
+    # after every retry, hand off to the VM browser path. If Apify never responded
+    # at all, fail (retryable) rather than cascade every job to the VM during an
+    # Apify outage.
     if not results:
         if got_2xx:
             _handoff_apify_to_vm(job_id)
@@ -2616,16 +2659,23 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
             fail_job(job_id, "The organic search service had a hiccup — it retries automatically; hit Retry if it persists.")
         return
 
+    # The Apify job now carries BOTH organic and paid (PPC) leads, so clear the
+    # 'Organic' filter label — otherwise the detail view would hide the PPC rows.
+    try:
+        supabase.table("scrape_queue").update({"result_type_filter": None}).eq("id", job_id).execute()
+    except Exception as exc:  # noqa: BLE001
+        log.error("apify job %s: could not clear result_type_filter: %s", job_id, exc)
+
     summary = {
-        "source": "apify", "engine": engine, "organic_only": True,
-        "ppc_pending": True, "organic_results": len(results), "ppc_results": 0,
+        "source": "apify", "engine": engine, "ppc_pending": False,
+        "organic_results": len(organic), "ppc_results": len(paid),
     }
     try:
         complete_job(job_id, results, summary)
-        log.info("apify organic job %s (%s) completed: %d organic results", job_id, engine, len(results))
+        log.info("apify job %s (%s) completed: %d organic + %d PPC", job_id, engine, len(organic), len(paid))
     except Exception as exc:  # noqa: BLE001
         log.error("complete_scrape_job failed for apify job %s: %s", job_id, exc)
-        fail_job(job_id, "The organic results couldn't be saved — retrying.")
+        fail_job(job_id, "The results couldn't be saved — retrying.")
 
 
 def process_job(job: dict[str, Any]) -> None:
