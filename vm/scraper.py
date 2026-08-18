@@ -3876,6 +3876,17 @@ def main():
         "token": gologin_token,
         "profile_id": args.profile_id,
         "port": args.port,
+        # Pull the latest cookies from the GoLogin CLOUD into the profile before
+        # launch. Without this the SDK can start from a profile that lacks the
+        # server-side cookies, so a Google login done in the desktop app (which
+        # saves to the cloud profile) never reaches the VM browser and the scrape
+        # runs signed-out. Confirmed: the AT cloud profile had all 8 Google auth
+        # cookies (SID/__Secure-1PSID/…) yet the launched browser had NONE, so
+        # detect_login_state (now cookie-based) still read signed-out → 0 PPC ads.
+        "writeCookiesFromServer": True,
+        # Don't push the scrape session's cookies back up — a logged-out scrape
+        # must never overwrite the manually-established cloud login.
+        "uploadCookiesToServer": False,
     })
 
     # Defensive: close any active session for this profile before opening
