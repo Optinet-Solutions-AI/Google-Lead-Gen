@@ -2643,7 +2643,9 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
         if ok:
             got_2xx = True  # run SUCCEEDED (even if empty → VM handoff below)
             o = _apify_parse_organic(items, engine, keyword)
-            pd = _apify_parse_paid(items, engine, keyword)  # PPC ads (esp. Bing)
+            # Only BING paidResults are usable; Google's mash several advertisers
+            # into one displayedUrl, so Google PPC is captured by the VM instead.
+            pd = _apify_parse_paid(items, engine, keyword) if engine == "bing" else []
             if len(o) > len(organic):
                 organic = o
             if len(pd) > len(paid):

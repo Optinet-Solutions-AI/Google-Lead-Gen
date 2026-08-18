@@ -371,7 +371,19 @@ export async function enqueueScrape(
   const insertRows = rows.flatMap(r => {
     const eng = r.search_engine ?? 'google'
     if (eng !== 'google' && eng !== 'bing') return [r]
-    return [{ ...r, scrape_source: 'apify', batch_group_id: crypto.randomUUID(), priority: (r.priority ?? 5) + 10 }]
+    const groupId = crypto.randomUUID()
+    // BING: one Apify job returns organic + paid ads — Bing carries the casino
+    // ad inventory and Apify's Bing paidResults are clean.
+    if (eng === 'bing') {
+      return [{ ...r, scrape_source: 'apify', batch_group_id: groupId, priority: (r.priority ?? 5) + 10 }]
+    }
+    // GOOGLE: Apify ORGANIC (ships fast, captcha-free) + a VM PPC job. Apify's
+    // Google paidResults mash several advertisers into one field (unusable), so
+    // Google ads are captured by the VM's real logged-in browser instead.
+    return [
+      { ...r, scrape_source: 'apify', result_type_filter: 'Organic', batch_group_id: groupId, priority: (r.priority ?? 5) + 10 },
+      { ...r, scrape_source: 'vm', result_type_filter: 'PPC', batch_group_id: groupId },
+    ]
   })
 
   // Daily-quota gate. Admins are exempt; everyone else gets up to

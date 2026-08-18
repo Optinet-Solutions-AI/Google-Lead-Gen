@@ -158,37 +158,66 @@ def extract_sponsored_urls_selenium(driver):
     enumerate sponsored URLs AND screenshot the corresponding ad cards.
     """
     sponsored: dict = {}
+    seen_keys: set = set()
+
+    def _display_host(anchor) -> str:
+        # The ad card shows the advertiser's domain in a small text span near the
+        # headline. Pull the first domain-looking token from the anchor's ad-card
+        # ancestor so an ad's headline + sitelinks dedup to a single lead.
+        txt = ""
+        for xp in ('./ancestor::div[@data-text-ad][1]',
+                   './ancestor::div[@data-hveid][1]'):
+            try:
+                txt = anchor.find_element(By.XPATH, xp).text or ""
+                if txt:
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+        if not txt:
+            try:
+                txt = anchor.text or ""
+            except Exception:  # noqa: BLE001
+                txt = ""
+        m = re.search(r'(?:https?://)?((?:[a-z0-9-]+\.)+[a-z]{2,})', txt, re.I)
+        return m.group(1).lower() if m else ""
 
     try:
-        print("[DEBUG] Searching for 'Sponsored results' sections...")
-        sponsored_sections = driver.find_elements(
-            By.XPATH, '//span[text()="Sponsored results"]/ancestor::div[@jscontroller]'
+        # Google dropped data-pcu and the English "Sponsored results" label, so
+        # find ads by their click-tracking href: every search ad routes through
+        # /aclk (google.com/aclk or googleadservices.com/pagead/aclk). The aclk
+        # href is returned as the url — the existing click-through + decode_ad_url
+        # resolve it to the real landing page. data-pcu kept as a legacy fallback.
+        anchors = driver.find_elements(
+            By.CSS_SELECTOR,
+            'a[data-pcu], a[href*="/aclk?"], a[href*="/aclk&"], '
+            'a[href*="googleadservices.com/pagead/aclk"]',
         )
-        print(f"[DEBUG] Found {len(sponsored_sections)} 'Sponsored results' sections.")
-
-        for section in sponsored_sections:
-            a_tags = section.find_elements(By.CSS_SELECTOR, 'a[data-pcu], a[href]')
-            print(f"[DEBUG] Found {len(a_tags)} ad links inside this section.")
-            for a in a_tags:
-                raw_url = a.get_attribute("data-pcu") or a.get_attribute("href")
-                url = raw_url.split(",")[0] if raw_url else None
-                if url and url.startswith("http") and url not in sponsored:
-                    sponsored[url] = a
-                    print(f"[DEBUG] Detected PPC URL: {url}")
-
-        fallback_links = driver.find_elements(By.CSS_SELECTOR, 'a[data-pcu]')
-        print(f"[DEBUG] Found {len(fallback_links)} fallback ad links.")
-        for a in fallback_links:
-            raw_url = a.get_attribute("data-pcu")
-            url = raw_url.split(",")[0] if raw_url else None
-            if url and url.startswith("http") and url not in sponsored:
-                sponsored[url] = a
-                print(f"[DEBUG] Detected fallback PPC URL: {url}")
-
-    except Exception as e:
+        print(f"[DEBUG] Found {len(anchors)} candidate ad anchors (aclk/data-pcu).")
+        for a in anchors:
+            try:
+                raw = a.get_attribute("data-pcu")
+                href = a.get_attribute("href") or ""
+            except Exception:  # noqa: BLE001
+                continue
+            url = (raw.split(",")[0] if raw else href) or ""
+            if not url.startswith("http"):
+                continue
+            # Dedup on the visible advertiser host (an ad's headline + sitelinks
+            # share it); fall back to the data-pcu host, else the raw aclk url.
+            host = _display_host(a)
+            if not host and raw:
+                mm = re.search(r'https?://([^/]+)', url)
+                host = mm.group(1).lower() if mm else ""
+            key = host or url
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            sponsored[url] = a
+            print(f"[DEBUG] Detected PPC ad: host={host or '?'} url={url[:80]}")
+    except Exception as e:  # noqa: BLE001
         print(f"[WARN] PPC extraction failed: {e}", file=sys.stderr)
 
-    print(f"[INFO] Detected {len(sponsored)} PPC URLs")
+    print(f"[INFO] Detected {len(sponsored)} PPC ad(s)")
     return sponsored
 
 
