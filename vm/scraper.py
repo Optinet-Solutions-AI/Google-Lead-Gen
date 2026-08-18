@@ -459,11 +459,26 @@ def detect_login_state(driver):
         source = driver.page_source
     except Exception as exc:
         print(f"[WARN] login-state: page_source unavailable: {exc}", file=sys.stderr)
-        return None
+        source = ""
+
+    # Cookie-based signal FIRST — a live Google session always carries these
+    # auth cookies, regardless of the account's UI language. The avatar markup
+    # below is English-only ('aria-label="Google Account"'); a German/other-
+    # locale account renders 'Google-Konto' etc., so relying on markup alone
+    # false-negatives a real login (the AT case: 8 auth cookies present, but
+    # detection said signed-out → a pointless MFA-blocked auto-login ran and the
+    # scrape proceeded logged-out with 0 ads). Cookie presence is authoritative.
+    try:
+        cookie_names = {c.get("name") for c in (driver.get_cookies() or [])}
+    except Exception:  # noqa: BLE001
+        cookie_names = set()
+    has_auth_cookie = bool(cookie_names & {
+        "__Secure-1PSID", "__Secure-3PSID", "SID", "SAPISID", "SSID", "HSID",
+    })
 
     # Logged-in signals (specific to an active account on Google)
     logged_in_signals = (
-        'aria-label="Google Account',          # account avatar tooltip
+        'aria-label="Google Account',          # account avatar tooltip (en)
         'myaccount.google.com',                # account dashboard link
     )
     # Logged-out signal — the explicit "Sign in" CTA points at ServiceLogin
@@ -471,7 +486,7 @@ def detect_login_state(driver):
         'accounts.google.com/ServiceLogin',
     )
 
-    has_logged_in  = any(s in source for s in logged_in_signals)
+    has_logged_in  = has_auth_cookie or any(s in source for s in logged_in_signals)
     has_logged_out = any(s in source for s in logged_out_signals)
 
     if has_logged_in and not has_logged_out:
