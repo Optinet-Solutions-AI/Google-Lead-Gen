@@ -2054,6 +2054,90 @@ def _2captcha_solve_recaptcha_proxied(
     return None
 
 
+def _2captcha_solve_turnstile_proxied(
+    sitekey: str, page_url: str, action: str | None, cdata: str | None,
+    pagedata: str | None, proxy: dict, user_agent: str,
+) -> str | None:
+    """IP-matched Cloudflare Turnstile solve via 2Captcha's createTask
+    (TurnstileTask), routed through OUR proxy so the token is generated from our
+    own egress IP — the SAME fix that took Google reCAPTCHA from 1.9% to 100%.
+    Bing's Turnstile was stuck on the proxyless in.php path, whose tokens
+    Cloudflare rejects on an IP mismatch (the 0/24 we measured). For Cloudflare
+    *Challenge pages* (the Bing case) 2Captcha needs action/data/pagedata + a
+    userAgent that matches the browser; the token it returns is UA-bound, so the
+    caller must inject it in the SAME session. Returns the Turnstile token, or
+    None. Requires a STICKY proxy (stable IP between solve + submit)."""
+    key = _resolve_twocaptcha_key()
+    raw_mode = (proxy.get("mode") or "http").lower()
+    if raw_mode in ("http", "https", "socks4", "socks5"):
+        proxy_type = raw_mode
+    elif "socks" in raw_mode:
+        proxy_type = "socks5"
+    else:
+        proxy_type = "http"
+    task: dict = {
+        "type": "TurnstileTask",
+        "websiteURL": page_url,
+        "websiteKey": sitekey,
+        "proxyType": proxy_type,
+        "proxyAddress": proxy["host"],
+        "proxyPort": int(proxy["port"]),
+    }
+    if proxy.get("username"):
+        task["proxyLogin"] = proxy["username"]
+    if proxy.get("password"):
+        task["proxyPassword"] = proxy["password"]
+    # Cloudflare Challenge-page params (Bing). Harmless/omitted for a standalone
+    # Turnstile widget, required for the managed-challenge interstitial.
+    if action:
+        task["action"] = action
+    if cdata:
+        task["data"] = cdata
+    if pagedata:
+        task["pagedata"] = pagedata
+    if user_agent:
+        task["userAgent"] = user_agent
+    try:
+        r = requests.post(TWOCAPTCHA_CREATETASK_URL, json={"clientKey": key, "task": task}, timeout=30)
+        body = r.json()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ERROR] 2captcha createTask (turnstile) failed: {exc}", file=sys.stderr)
+        return None
+    if body.get("errorId"):
+        print(f"[ERROR] 2captcha createTask (turnstile) rejected: {body.get('errorCode')} — {body.get('errorDescription')}", file=sys.stderr)
+        return None
+    task_id = body.get("taskId")
+    if not task_id:
+        print(f"[ERROR] 2captcha createTask (turnstile): no taskId ({body})", file=sys.stderr)
+        return None
+    print(f"[INFO] 2captcha: IP-matched turnstile task {task_id} "
+          f"(proxy {proxy_type}://{proxy['host']}:{proxy['port']}, "
+          f"action={'yes' if action else 'no'}, cdata={'yes' if cdata else 'no'})")
+    deadline = time.time() + TWOCAPTCHA_SOLVE_TIMEOUT_SECONDS
+    time.sleep(TWOCAPTCHA_POLL_SECONDS)
+    while time.time() < deadline:
+        try:
+            r = requests.post(TWOCAPTCHA_GETRESULT_URL, json={"clientKey": key, "taskId": task_id}, timeout=30)
+            body = r.json()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] 2captcha: getTaskResult (turnstile) error: {exc}", file=sys.stderr)
+            time.sleep(TWOCAPTCHA_POLL_SECONDS)
+            continue
+        if body.get("errorId"):
+            print(f"[ERROR] 2captcha getTaskResult (turnstile) failed: {body.get('errorCode')} — {body.get('errorDescription')}", file=sys.stderr)
+            return None
+        if body.get("status") == "ready":
+            tok = (body.get("solution") or {}).get("token")
+            if tok:
+                print("[INFO] 2captcha: IP-matched turnstile token ready")
+                return str(tok)
+            print(f"[ERROR] 2captcha: turnstile ready but no token ({body})", file=sys.stderr)
+            return None
+        time.sleep(TWOCAPTCHA_POLL_SECONDS)
+    print(f"[WARN] 2captcha: IP-matched turnstile solve timed out after {TWOCAPTCHA_SOLVE_TIMEOUT_SECONDS}s", file=sys.stderr)
+    return None
+
+
 def _2captcha_submit(challenge: dict, page_url: str) -> str | None:
     """POST the challenge to 2Captcha's in.php. Returns the request id."""
     params = {"key": _resolve_twocaptcha_key(), "json": 1, "pageurl": page_url}
@@ -2244,7 +2328,33 @@ def attempt_auto_captcha_solve(driver) -> bool:
             print("[WARN] 2captcha: no proxy for IP-matched solve — trying proxyless "
                   "(low success on IP-bound /sorry/)", file=sys.stderr)
 
-    # Legacy in.php path: Turnstile/FunCaptcha always; reCAPTCHA only when no
+    # Cloudflare Turnstile (Bing) is IP-bound the same way: solve it through OUR
+    # sticky proxy via createTask (TurnstileTask) so the token matches our
+    # scraping IP. The proxyless in.php path returned tokens Cloudflare rejects
+    # (0/24 measured). Only when no proxy is available do we fall back to it.
+    elif challenge["kind"] == "turnstile":
+        proxy = _get_profile_proxy()
+        if proxy:
+            try:
+                user_agent = driver.execute_script("return navigator.userAgent") or ""
+            except Exception:  # noqa: BLE001
+                user_agent = ""
+            token = _2captcha_solve_turnstile_proxied(
+                challenge["sitekey"], page_url, challenge.get("action"),
+                challenge.get("cdata"), challenge.get("pagedata"),
+                proxy, user_agent,
+            )
+            if not token:
+                # IP-matched is our real shot at Cloudflare — the proxyless path
+                # is rejected on IP mismatch anyway, so don't burn credits on it.
+                print("[WARN] 2captcha: IP-matched turnstile solve produced no usable "
+                      "token — falling through to human/fail", file=sys.stderr)
+                return False
+        else:
+            print("[WARN] 2captcha: no proxy for IP-matched turnstile solve — trying "
+                  "proxyless (low success on IP-bound Cloudflare)", file=sys.stderr)
+
+    # Legacy in.php path: FunCaptcha always; reCAPTCHA / Turnstile only when no
     # proxy was available for the IP-matched solve.
     if token is None:
         request_id = _2captcha_submit(challenge, page_url)
