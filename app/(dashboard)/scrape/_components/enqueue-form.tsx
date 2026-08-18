@@ -17,11 +17,6 @@ type Profile = {
   languages: string[]
 }
 
-function loginBadge(p: Profile): string {
-  if (!p.requires_google_login) return ''
-  return p.is_google_logged_in ? ' ✓' : ' ⚠ needs login'
-}
-
 const LANG_NAMES: Record<string, string> = {
   en: 'English',
   ar: 'Arabic',
@@ -172,8 +167,6 @@ export function EnqueueForm({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availableLangs.join(',')])
-  const loginWarning =
-    selectedProfile?.requires_google_login && !selectedProfile.is_google_logged_in
 
   // Per-country queue state for the currently-selected country (if any).
   const selectedCountryState = useMemo(
@@ -329,7 +322,7 @@ export function EnqueueForm({
               const load = cs ? countryLoadSuffix(cs) : ''
               return (
                 <option key={p.country_code} value={p.country_code}>
-                  {p.country_name} ({p.country_code}){loginBadge(p)}
+                  {p.country_name} ({p.country_code})
                   {load}
                 </option>
               )
@@ -519,18 +512,6 @@ export function EnqueueForm({
         </button>
       </div>
 
-      {loginWarning && (
-        <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-          ⚠ <strong>{selectedProfile?.country_name}</strong> needs a Google account
-          signed in for PPC ads to render reliably. The scrape will still run but
-          PPC results may be missing or filtered. Mark the profile as logged in
-          on{' '}
-          <a href="/profiles" className="underline underline-offset-2">
-            /profiles
-          </a>{' '}
-          once you&apos;ve signed in.
-        </p>
-      )}
           {state?.status === 'ok' && (
             <p className="mt-3 rounded-md bg-green-50 px-3 py-2 text-[12px] text-green-700">
               {state.message}
