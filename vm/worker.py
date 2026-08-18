@@ -2627,10 +2627,13 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
     organic: list[dict[str, Any]] = []
     paid: list[dict[str, Any]] = []
     got_2xx = False
-    # Retry transient empty SERPs: Apify's proxy occasionally gets an
-    # interstitial and returns nothing on an otherwise-successful run; a fresh
-    # run (new proxy session) almost always recovers. 3 async attempts, then a
-    # VM handoff if still empty. Each run returns BOTH organic + paid ads.
+    # Retry transient empty SERPs, AND — for Bing — keep retrying to CATCH the
+    # paid ads even once organic is in hand: Bing's paid count swings run-to-run
+    # (measured 0–4 for the same query), so a single run often misses ads that
+    # are really there. We keep the best organic + best paid seen across attempts.
+    # Google casino ads are policy-blocked (always 0), so we don't burn retries
+    # chasing them. 3 async attempts, then a VM handoff if still totally empty.
+    want_ads = (engine == "bing")
     for attempt in range(1, 4):
         ok, items = _apify_run_and_fetch(actor, {
             "queries": keyword, "countryCode": country_code.lower(),
@@ -2639,12 +2642,16 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
         }, token)
         if ok:
             got_2xx = True  # run SUCCEEDED (even if empty → VM handoff below)
-            organic = _apify_parse_organic(items, engine, keyword)
-            paid = _apify_parse_paid(items, engine, keyword)  # PPC ads (esp. Bing)
-        if organic or paid:
+            o = _apify_parse_organic(items, engine, keyword)
+            pd = _apify_parse_paid(items, engine, keyword)  # PPC ads (esp. Bing)
+            if len(o) > len(organic):
+                organic = o
+            if len(pd) > len(paid):
+                paid = pd
+        if organic and (paid or not want_ads):
             break
         if attempt < 3:
-            log.info("apify job %s attempt %d -> 0 results; retrying", job_id, attempt)
+            log.info("apify job %s attempt %d -> %d organic, %d paid; retrying", job_id, attempt, len(organic), len(paid))
             time.sleep(2)
 
     results = organic + paid
