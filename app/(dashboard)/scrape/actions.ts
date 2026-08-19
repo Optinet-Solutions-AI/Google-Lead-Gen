@@ -371,24 +371,25 @@ export async function enqueueScrape(
     }
   }
 
-  // New-batch flow: a GOOGLE/BING job runs as ONE Apify job that returns BOTH
-  // organic results and paid ads (paidResults) — captcha-free, no login, no VM.
-  // The old Apify-organic + VM-PPC split is retired: the VM PPC path was
-  // captcha-blocked and couldn't read the current SERP ad markup anyway, while
-  // Apify ships organic + PPC in a single fast call. Non-google/bing engines are
-  // unchanged. batch_group_id is kept for grouping / UI continuity.
+  // One scrape per engine, but Google runs as TWO linked jobs (same
+  // batch_group_id) so the fast organic path isn't held back by the slow PPC one:
+  //   • Apify ORGANIC — captcha-free, ships in seconds. This is the job the
+  //     operator's results appear under; it completes as soon as organic lands.
+  //   • VM PPC — a PPC-ONLY pass on the real logged-in browser (Apify can't read
+  //     Google's ad markup). It runs in the BACKGROUND with captcha-solve + a
+  //     GoLogin IP refresh, and folds its ads into the same batch when done.
+  // The UI groups the two by batch_group_id into ONE batch (organic delivered +
+  // "PPC still running"), so the operator never sees two rows or a held status.
+  // BING carries the casino ad inventory and Apify's Bing paidResults are clean,
+  // so Bing stays a single Apify job (organic + PPC together). Non-google/bing
+  // engines are unchanged.
   const insertRows = rows.flatMap(r => {
     const eng = r.search_engine ?? 'google'
     if (eng !== 'google' && eng !== 'bing') return [r]
     const groupId = crypto.randomUUID()
-    // BING: one Apify job returns organic + paid ads — Bing carries the casino
-    // ad inventory and Apify's Bing paidResults are clean.
     if (eng === 'bing') {
       return [{ ...r, scrape_source: 'apify', batch_group_id: groupId, priority: (r.priority ?? 5) + 10 }]
     }
-    // GOOGLE: Apify ORGANIC (ships fast, captcha-free) + a VM PPC job. Apify's
-    // Google paidResults mash several advertisers into one field (unusable), so
-    // Google ads are captured by the VM's real logged-in browser instead.
     return [
       { ...r, scrape_source: 'apify', result_type_filter: 'Organic', batch_group_id: groupId, priority: (r.priority ?? 5) + 10 },
       { ...r, scrape_source: 'vm', result_type_filter: 'PPC', batch_group_id: groupId },

@@ -3131,6 +3131,15 @@ def scrape_google_search(
     run_mobile = view_mode in ("mobile", "both")
     mobile_is_primary = (view_mode == "mobile")
 
+    # PPC-only jobs need just the FIRST SERP page: Google ads render at the
+    # top/bottom of page 1, never deeper. Apify already delivered the organic
+    # results for this batch, so there is nothing else for the VM to fetch —
+    # capping to one page makes the PPC pass much faster and cuts captcha
+    # exposure. Both desktop AND mobile passes still run, because a lot of
+    # casino-vertical PPC campaigns are configured mobile-only.
+    if result_type_filter == "PPC":
+        max_pages = 1
+
     # ---- Desktop pass ----
     if run_desktop:
         for page in range(max_pages):

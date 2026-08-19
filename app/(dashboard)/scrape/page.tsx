@@ -75,8 +75,11 @@ export default async function ScrapePage({
     getFleetQueueSnapshot(),
     // Independent counts for the toggle pills. Head-only queries; the
     // shadow filter still applies so the Mine / All numbers respect
-    // shadow isolation. parent_scrape_job_id is null mirrors what
-    // queryJobs filters out (kick phase-2 child jobs).
+    // shadow isolation. The two filters mirror what queryJobs hides so the
+    // pills match the visible row count: parent_scrape_job_id is null (drops
+    // kick phase-2 child jobs) and the .or (drops the auto Google PPC sibling —
+    // result_type_filter='PPC' with a batch_group_id — which is folded into its
+    // organic row in the list).
     (async () => {
       if (!callerEmail) return 0
       const svc = createServiceClient()
@@ -85,6 +88,7 @@ export default async function ScrapePage({
         .from('scrape_queue')
         .select('id', { count: 'exact', head: true })
         .is('parent_scrape_job_id', null)
+        .or('result_type_filter.is.null,result_type_filter.neq.PPC,batch_group_id.is.null')
         .eq('created_by_email', callerEmail)
       const { count } = await (applyShadowFilter(base, ctx) as typeof base)
       return count ?? 0
@@ -96,6 +100,7 @@ export default async function ScrapePage({
         .from('scrape_queue')
         .select('id', { count: 'exact', head: true })
         .is('parent_scrape_job_id', null)
+        .or('result_type_filter.is.null,result_type_filter.neq.PPC,batch_group_id.is.null')
       const { count } = await (applyShadowFilter(base, ctx) as typeof base)
       return count ?? 0
     })(),
@@ -110,14 +115,18 @@ export default async function ScrapePage({
 
   // Auto-refresh stays on while either the scrape itself OR a follow-on
   // enrichment chain is still in flight, so the badge can transition from
-  // "enriching" to "completed" without a manual reload.
+  // "enriching" to "completed" without a manual reload. It also stays on while a
+  // Google batch's hidden background PPC sibling is still working, so the
+  // "PPC scraping…" chip flips to "+N ads" on its own once the VM finishes.
   const hasActive = rows.some(
     j =>
       j.status === 'pending' ||
       j.status === 'running' ||
       (j.status === 'completed' &&
         j.with_enrichment &&
-        j.enrichment_status !== 'complete'),
+        j.enrichment_status !== 'complete') ||
+      (j.ppc_status != null &&
+        ['pending', 'running', 'captcha', 'paused'].includes(j.ppc_status)),
   )
 
   // Inject the live country list into the column registry so the dropdown

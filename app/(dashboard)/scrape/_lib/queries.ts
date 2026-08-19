@@ -1672,6 +1672,16 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
   // their own, and would otherwise clutter the list as "No streamers
   // discovered" rows. The parent discovery job stays in the list.
   query = query.is('parent_scrape_job_id', null)
+  // Hide the auto-generated Google PPC sibling. A Google scrape enqueues TWO
+  // linked rows in one batch_group: the Apify ORGANIC job (shown here) and a VM
+  // PPC job that finishes later in the background. Listing both made "1 keyword
+  // on google+bing" show up as 4 batches. The PPC sibling is uniquely
+  // identified by result_type_filter='PPC' AND a non-null batch_group_id — a
+  // manual PPC re-run has no batch_group_id, so it still shows. Its live status
+  // is folded onto the organic row below as `ppc_status` so the batch can read
+  // "organic delivered · PPC still running" without a second row. Excluding it
+  // here also keeps `count`/pagination honest (the row isn't counted).
+  query = query.or('result_type_filter.is.null,result_type_filter.neq.PPC,batch_group_id.is.null')
   query = applyShadowFilter(query, shadowCtx) as typeof query
 
   // "Mine only" gate — when set, restrict to the caller's own scrapes.
@@ -1717,6 +1727,30 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
   const { data, count, error } = await query
   if (error) throw error
   const jobs = (data ?? []) as unknown as Omit<ScrapeJob, 'enrichment' | 'stage_timings' | 'kick' | 'social'>[]
+  // Fold each Google batch's background PPC-sibling status/ad-count onto its
+  // organic row so the list can show "PPC still running" (or "+N ads" once
+  // done) without a separate batch row. One indexed lookup for the whole page.
+  const organicBatchIds = jobs
+    .filter(j => j.scrape_source === 'apify' && j.search_engine === 'google' && j.batch_group_id)
+    .map(j => j.batch_group_id as string)
+  const ppcSiblingByBatch = new Map<string, { status: ScrapeJob['status']; ads: number }>()
+  if (organicBatchIds.length > 0) {
+    const { data: ppcSibs } = await svc
+      .from('scrape_queue')
+      .select('batch_group_id, status, result_summary')
+      .eq('scrape_source', 'vm')
+      .eq('result_type_filter', 'PPC')
+      .in('batch_group_id', organicBatchIds)
+    for (const s of (ppcSibs ?? []) as {
+      batch_group_id: string | null
+      status: ScrapeJob['status']
+      result_summary: { ppc_results?: number; ppc?: number } | null
+    }[]) {
+      if (!s.batch_group_id) continue
+      const ads = Number(s.result_summary?.ppc_results ?? s.result_summary?.ppc ?? 0) || 0
+      ppcSiblingByBatch.set(s.batch_group_id, { status: s.status, ads })
+    }
+  }
   const completedIds = jobs.filter(j => j.status === 'completed').map(j => j.id)
   const completedKickIds = jobs
     .filter(j => j.status === 'completed' && j.search_engine === 'kick')
@@ -1741,14 +1775,19 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
     fetchSocialProgress(completedSocialByEngine),
   ])
   return {
-    rows: jobs.map(j => ({
-      ...j,
-      enrichment: enrichmentByJob.get(j.id) ?? {},
-      stage_timings: timingsByJob.get(j.id) ?? null,
-      captcha_solved_by: captchaByJob.get(j.id) ?? null,
-      kick: kickByJob.get(j.id) ?? null,
-      social: socialByJob.get(j.id) ?? null,
-    })),
+    rows: jobs.map(j => {
+      const ppc = j.batch_group_id ? ppcSiblingByBatch.get(j.batch_group_id) ?? null : null
+      return {
+        ...j,
+        enrichment: enrichmentByJob.get(j.id) ?? {},
+        stage_timings: timingsByJob.get(j.id) ?? null,
+        captcha_solved_by: captchaByJob.get(j.id) ?? null,
+        kick: kickByJob.get(j.id) ?? null,
+        social: socialByJob.get(j.id) ?? null,
+        ppc_status: ppc?.status ?? null,
+        ppc_ads: ppc?.ads ?? null,
+      }
+    }),
     total: count ?? jobs.length,
   }
 }

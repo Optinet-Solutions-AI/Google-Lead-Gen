@@ -2644,7 +2644,8 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
             got_2xx = True  # run SUCCEEDED (even if empty → VM handoff below)
             o = _apify_parse_organic(items, engine, keyword)
             # Only BING paidResults are usable; Google's mash several advertisers
-            # into one displayedUrl, so Google PPC is captured by the VM instead.
+            # into one displayedUrl, so Google PPC is captured by the VM's real
+            # browser instead (a separate PPC-only VM job in the same batch_group).
             pd = _apify_parse_paid(items, engine, keyword) if engine == "bing" else []
             if len(o) > len(organic):
                 organic = o
@@ -2668,15 +2669,23 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
             fail_job(job_id, "The organic search service had a hiccup — it retries automatically; hit Retry if it persists.")
         return
 
-    # The Apify job now carries BOTH organic and paid (PPC) leads, so clear the
-    # 'Organic' filter label — otherwise the detail view would hide the PPC rows.
-    try:
-        supabase.table("scrape_queue").update({"result_type_filter": None}).eq("id", job_id).execute()
-    except Exception as exc:  # noqa: BLE001
-        log.error("apify job %s: could not clear result_type_filter: %s", job_id, exc)
+    # BING's Apify job carries BOTH organic and paid, so clear the 'Organic'
+    # filter label — otherwise the detail view would hide the PPC rows. GOOGLE's
+    # Apify job is organic-ONLY (its PPC comes from the sibling VM job in the same
+    # batch_group), so keep its 'Organic' label intact.
+    if engine == "bing":
+        try:
+            supabase.table("scrape_queue").update({"result_type_filter": None}).eq("id", job_id).execute()
+        except Exception as exc:  # noqa: BLE001
+            log.error("apify job %s: could not clear result_type_filter: %s", job_id, exc)
 
     summary = {
-        "source": "apify", "engine": engine, "ppc_pending": False,
+        "source": "apify", "engine": engine,
+        # Google's PPC is still coming from the sibling VM job, so flag it pending
+        # — the UI reads this (plus the sibling's live status) to show
+        # "PPC still running" without making the batch look held. Bing already
+        # shipped its PPC in this same job.
+        "ppc_pending": engine != "bing",
         "organic_results": len(organic), "ppc_results": len(paid),
     }
     try:

@@ -160,14 +160,23 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   // opening EITHER half shows the batch's full result set.
   const batchGroupId = (jobRaw as { batch_group_id?: string | null }).batch_group_id ?? null
   let batchJobIds: string[] = [id]
+  // Live status of the background VM PPC sibling, if any — drives the
+  // "PPC still running" note so the batch never looks held.
+  let ppcSiblingStatus: string | null = null
   if (batchGroupId) {
     const { data: sibs } = await svc
       .from('scrape_queue')
-      .select('id')
+      .select('id, scrape_source, status, result_type_filter')
       .eq('batch_group_id', batchGroupId)
-    if (sibs && sibs.length > 1) batchJobIds = (sibs as { id: string }[]).map(s => s.id)
+    if (sibs && sibs.length > 1) {
+      const rows = sibs as { id: string; scrape_source: string | null; status: string; result_type_filter: string | null }[]
+      batchJobIds = rows.map(s => s.id)
+      ppcSiblingStatus = rows.find(s => s.scrape_source === 'vm' && s.result_type_filter === 'PPC')?.status ?? null
+    }
   }
   const isMergedBatch = batchJobIds.length > 1
+  const ppcRunning = ppcSiblingStatus != null && ['pending', 'running', 'captcha', 'paused'].includes(ppcSiblingStatus)
+  const ppcDidNotFinish = ppcSiblingStatus === 'failed' || ppcSiblingStatus === 'cancelled'
 
   // Lazy backfill: jobs queued before the translation feature shipped
   // have keyword_en = null. Translate on first non-English view and
@@ -402,12 +411,25 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
 
       {isMergedBatch && (
         <div className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-[11px] text-[color:var(--color-text-secondary)]">
-          This batch was scraped as an{' '}
+          This batch combines{' '}
           <span className="font-medium text-[color:var(--color-text-primary)]">Organic</span> (search
-          results) job and a separate{' '}
-          <span className="font-medium text-[color:var(--color-text-primary)]">PPC</span> (paid ads)
-          job. The table below shows leads from both halves, so you&rsquo;re seeing the full batch
-          even if one half found nothing.
+          results) and{' '}
+          <span className="font-medium text-[color:var(--color-text-primary)]">PPC</span> (paid ads).
+          The table below shows leads from both, so you&rsquo;re seeing the full batch even if one half
+          found nothing.
+          {ppcRunning && (
+            <span className="mt-1 block font-medium text-amber-700">
+              ✓ Organic results are ready. The PPC ads are still being fetched by the VM browser in
+              the background — this batch is not on hold; refresh in a moment to see them.
+            </span>
+          )}
+          {ppcDidNotFinish && (
+            <span className="mt-1 block">
+              The organic results are complete; the background PPC pass didn&rsquo;t finish. Use{' '}
+              <span className="font-medium text-[color:var(--color-text-primary)]">Re-run PPC</span> if
+              you need the ads.
+            </span>
+          )}
         </div>
       )}
 

@@ -173,4 +173,13 @@ export type ScrapeJob = {
    *  'auto_2captcha' (the bot) | 'human'. Undefined when no captcha was
    *  hit or it wasn't looked up. Sourced from interactive_checkpoints. */
   captcha_solved_by?: 'auto_2captcha' | 'human' | null
+  /** Live status of this Google batch's background VM PPC sibling (the hidden
+   *  half of the batch_group). Folded on by queryJobs so the single visible
+   *  organic row can show "PPC still running" / "PPC done" without a second
+   *  batch row. Null when there is no PPC sibling (Bing, social engines, or a
+   *  manual PPC re-run). */
+  ppc_status?: ScrapeJob['status'] | null
+  /** Ad count from the PPC sibling's summary once it completes. Null until then
+   *  (or when there is no sibling). */
+  ppc_ads?: number | null
 }

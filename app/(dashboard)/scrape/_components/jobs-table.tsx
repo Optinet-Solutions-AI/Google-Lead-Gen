@@ -280,34 +280,86 @@ function errorTone(job: ScrapeJob): string {
     : 'text-red-700'
 }
 
-/** New-batch flow: a Google batch splits into an ORGANIC job (Apify, ships
- *  first, captcha-free) + a PPC job (VM browser, runs in the background).
- *  This chip labels which half a row is so two google rows per keyword read
- *  clearly. The PPC row's own StatusBadge shows queued/running/needs-solve —
- *  that IS the "still scraping PPC" signal. Nothing renders for legacy/unsplit
- *  google jobs (scrape_source 'vm' with no result_type_filter). */
+/** A Google batch runs as ONE row in the list (the fast Apify organic job); its
+ *  PPC ads are fetched by a background VM sibling that's hidden from the list and
+ *  folded onto this row via PpcSiblingBadge. This chip marks the row as the
+ *  organic half so "Organic" + "PPC scraping…" read together as one batch. Bing
+ *  and other engines run as a single complete job, so they get no half-label. */
 function SourceBadge({ job }: { job: ScrapeJob }) {
-  if (job.scrape_source === 'apify') {
+  if (job.scrape_source === 'apify' && job.search_engine === 'google') {
     return (
       <span
         className="rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-medium text-emerald-800"
-        title="Organic results via Apify — captcha-free, ships first"
+        title="Organic results via Apify — captcha-free, ships first. PPC ads follow from the VM browser in the background."
       >
         Organic
       </span>
     )
   }
+  // A standalone manual PPC re-run (no batch_group) still shows its PPC tag.
   if (job.result_type_filter === 'PPC' && ['google', 'bing'].includes(job.search_engine ?? 'google')) {
     return (
       <span
         className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium text-amber-900"
-        title="PPC ads via the VM browser — runs after organic; its status shows queued/scraping/needs-solve"
+        title="PPC-only re-run via the VM browser"
       >
         PPC
       </span>
     )
   }
   return null
+}
+
+/** The Google batch's background PPC sibling, folded onto the visible organic
+ *  row (its own row is hidden from the list). Communicates the PPC half's live
+ *  state WITHOUT making the batch look held — organic is already delivered:
+ *    pending/running/captcha → "PPC scraping…" (amber, in-progress)
+ *    completed               → "+N PPC ads" (emerald) or muted "no PPC ads"
+ *    failed/cancelled        → muted "PPC unavailable" (don't alarm)
+ *  Renders nothing when there's no sibling (Bing, social, manual re-run). */
+function PpcSiblingBadge({ job }: { job: ScrapeJob }) {
+  const st = job.ppc_status
+  if (!st) return null
+  if (st === 'completed') {
+    const ads = job.ppc_ads ?? 0
+    if (ads > 0) {
+      return (
+        <span
+          className="rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-medium text-emerald-800"
+          title="PPC ads captured by the VM browser and added to this batch"
+        >
+          +{ads} PPC {ads === 1 ? 'ad' : 'ads'}
+        </span>
+      )
+    }
+    return (
+      <span
+        className="rounded bg-[color:var(--color-bg-secondary)] px-1.5 py-0.5 text-[9px] font-medium text-[color:var(--color-text-secondary)]"
+        title="PPC pass finished — no ads were serving on this SERP"
+      >
+        no PPC ads
+      </span>
+    )
+  }
+  if (st === 'failed' || st === 'cancelled') {
+    return (
+      <span
+        className="rounded bg-[color:var(--color-bg-secondary)] px-1.5 py-0.5 text-[9px] font-medium text-[color:var(--color-text-secondary)]"
+        title="Organic results were delivered; the background PPC pass didn't finish. Use Re-run PPC on the batch if you need the ads."
+      >
+        PPC unavailable
+      </span>
+    )
+  }
+  const label = st === 'captcha' ? 'PPC · solving captcha' : 'PPC scraping…'
+  return (
+    <span
+      className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium text-amber-900 motion-safe:animate-pulse"
+      title="Organic results are ready. The PPC ads are still being fetched by the VM browser in the background — this batch is NOT on hold."
+    >
+      {label}
+    </span>
+  )
 }
 
 function EngineBadge({ engine }: { engine: ScrapeJob['search_engine'] }) {
@@ -1026,6 +1078,7 @@ export function JobsTable({
                 <LinkTd href={href}>
                   <span className="inline-flex flex-wrap items-center gap-1">
                     <StatusBadge job={job} />
+                    <PpcSiblingBadge job={job} />
                     <OutcomeMarker job={job} />
                     <QueuePositionBadge job={job} positions={pendingPositions} />
                   </span>
@@ -1156,6 +1209,7 @@ export function JobsCardList({ jobs, pendingPositions }: Props) {
             </div>
             <span className="inline-flex flex-wrap items-center gap-1">
               <StatusBadge job={job} />
+              <PpcSiblingBadge job={job} />
               <OutcomeMarker job={job} />
               <QueuePositionBadge job={job} positions={pendingPositions} />
             </span>
