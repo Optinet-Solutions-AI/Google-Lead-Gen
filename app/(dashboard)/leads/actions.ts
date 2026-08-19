@@ -745,6 +745,64 @@ export async function deleteLeads(
 }
 
 /**
+ * Bulk "Mark Not Relevant" — hides the selected leads from /leads and
+ * stamps who marked them + when. Mirrors deleteLeads for the
+ * parse/auth/revalidate shape and setNotRelevantAction for the columns
+ * written. Reversible per-row from the detail drawer.
+ */
+export async function bulkSetNotRelevantAction(
+  _prev: BulkActionState,
+  fd: FormData,
+): Promise<BulkActionState> {
+  const leadIds = parseLeadIds(fd)
+  if (leadIds.length === 0) {
+    return { status: 'error', error: 'No leads selected.' }
+  }
+
+  const access = await requireLeadsAccess(leadIds)
+  if (!access.ok) return { status: 'error', error: access.error }
+
+  const supabase = await createServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { status: 'error', error: 'Not signed in.' }
+
+  const svc = createServiceClient()
+  // Resolve a friendly attribution string — display_name → username → email.
+  const { data: profileRow } = await svc
+    .from('user_profiles')
+    .select('username, display_name')
+    .eq('id', user.id)
+    .maybeSingle()
+  const profile = profileRow as { username: string | null; display_name: string | null } | null
+  const markedBy = profile?.display_name ?? profile?.username ?? user.email ?? user.id
+
+  const { error: updErr } = await svc
+    .from('google_lead_gen_table')
+    .update({
+      is_not_relevant: true,
+      not_relevant_marked_at: new Date().toISOString(),
+      not_relevant_marked_by: markedBy,
+    })
+    .in('id', leadIds)
+  if (updErr) return { status: 'error', error: safeError(updErr, 'Failed to update leads.') }
+
+  await logActivity({
+    action: 'leads.mark_not_relevant',
+    entity_type: 'leads_bulk',
+    details: { requested: leadIds.length, marked_by: markedBy },
+  })
+
+  revalidatePath('/leads')
+  revalidatePath('/scrape', 'layout')
+  return {
+    status: 'ok',
+    message: `Marked ${leadIds.length} lead${leadIds.length === 1 ? '' : 's'} not relevant.`,
+  }
+}
+
+/**
  * S-tag verification = "has the duplicate-check run on this lead's tags?"
  * Uses s_tags_checked_at as the flag. `yes` sets the timestamp to now
  * (marking it manually verified), `no`/`clear` nulls it.

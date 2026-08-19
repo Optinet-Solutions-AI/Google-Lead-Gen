@@ -180,6 +180,15 @@ export async function enqueueScrape(
                       : engineRaw === 'telegram'
                         ? ['telegram']
                         : ['google']
+  // Bing has poor SERP coverage for gambling in some markets — it returns
+  // generic/irrelevant results (Darren: "bestes Online Casino Schweiz" on CH).
+  // Drop Bing there so the batch runs Google-only. Extend the set as needed.
+  const BING_DISABLED_COUNTRIES = new Set(['CH', 'IE'])
+  const bingDroppedForCountry = enginesToRun.includes('bing') && BING_DISABLED_COUNTRIES.has(country_code)
+  const enginesActive: typeof enginesToRun = bingDroppedForCountry
+    ? (enginesToRun.filter(e => e !== 'bing') as typeof enginesToRun)
+    : enginesToRun
+  const enginesRun: typeof enginesToRun = enginesActive.length > 0 ? enginesActive : (['google'] as typeof enginesToRun)
   // view_mode controls whether the scraper runs desktop, mobile (iPhone
   // UA + 375x812 viewport via CDP), or both passes. 'both' is the
   // default — catches mobile-only PPC ads + mobile-ranked organic that
@@ -295,7 +304,7 @@ export async function enqueueScrape(
       : await translateKeywordsToEnglish(keywords, finalLang)
 
   const rows = keywords.flatMap(keyword =>
-    enginesToRun.map(engine => ({
+    enginesRun.map(engine => ({
       keyword,
       keyword_en: translations.get(keyword) ?? null,
       country_code,
@@ -432,9 +441,10 @@ export async function enqueueScrape(
     twitch: ' on Twitch',
   }
   const engineDescription =
-    enginesToRun.length === 2
+    enginesRun.length === 2
       ? ' on Google + Bing'
-      : (ENGINE_LABELS[enginesToRun[0] ?? ''] ?? '')
+      : (ENGINE_LABELS[enginesRun[0] ?? ''] ?? '')
+      + (bingDroppedForCountry ? ` (Bing skipped — low coverage in ${country_code})` : '')
 
   await logActivity({
     action: 'scrape.enqueue',
@@ -447,14 +457,15 @@ export async function enqueueScrape(
       with_enrichment: withEnrichment,
       scheduled_at: scheduledAtIso,
       language: finalLang,
-      engines: enginesToRun,
+      engines: enginesRun,
+      bing_dropped: bingDroppedForCountry,
       rows_inserted: rows.length,
     },
   })
 
   revalidatePath('/scrape')
   const rowsLabel =
-    enginesToRun.length === 2
+    enginesRun.length === 2
       ? ` (${rows.length} jobs total — one per keyword per engine)`
       : ''
 

@@ -4,6 +4,7 @@ import { useActionState, useEffect, useState } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
+  EyeOff,
   Loader2,
   Mail,
   Search,
@@ -13,6 +14,7 @@ import {
   X,
 } from 'lucide-react'
 import {
+  bulkSetNotRelevantAction,
   deleteLeads,
   retryEnrichmentForLeads,
   type BulkActionState,
@@ -32,9 +34,19 @@ export function BulkActionsBar({ selectedIds, onClear }: Props) {
     retryEnrichmentForLeads,
     initial,
   )
+  const [notRelevantState, notRelevantAction, notRelevantPending] = useActionState(
+    bulkSetNotRelevantAction,
+    initial,
+  )
   const [showDelete, setShowDelete] = useState(false)
-  const lastMessage = retryState
+  const lastMessage = notRelevantState ?? retryState
   const expectedConfirm = `delete ${selectedIds.length}`
+
+  // Clear the selection once the bulk mark-not-relevant succeeds, same as
+  // the delete panel does on its success.
+  useEffect(() => {
+    if (notRelevantState?.status === 'ok') onClear()
+  }, [notRelevantState, onClear])
 
   // Bottom-anchored fixed bar so it stays in view as the user scrolls
   // the table (vertical or horizontal) and doesn't fight the sticky
@@ -88,6 +100,21 @@ export function BulkActionsBar({ selectedIds, onClear }: Props) {
         </RetryButton>
 
         <span className="ml-auto flex items-center gap-2">
+          <form action={notRelevantAction}>
+            <input type="hidden" name="lead_ids" value={idCsv} />
+            <button
+              type="submit"
+              disabled={notRelevantPending}
+              className="inline-flex items-center gap-1 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {notRelevantPending ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <EyeOff className="h-3 w-3" />
+              )}
+              Mark Not Relevant
+            </button>
+          </form>
           <button
             type="button"
             onClick={() => setShowDelete(s => !s)}

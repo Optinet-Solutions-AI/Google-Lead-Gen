@@ -298,6 +298,28 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
     return qs ? `/scrape/${id}?${qs}` : `/scrape/${id}`
   })()
 
+  // Result-type filter chips (All / Organic / PPC). A split batch merges
+  // its Organic (Apify) + PPC (VM) halves into one table, which confused
+  // operators ("PPC scrape shows organic results"). These chips narrow the
+  // merged table to one half. Clone the current params, drop `page` so the
+  // filter resets to page 1, and set (or clear, for "All") result_type.
+  const resultTypeHref = (value: string) => {
+    const next = new URLSearchParams()
+    for (const [k, v] of Object.entries(sp)) {
+      if (k === 'result_type' || k === 'page') continue
+      if (typeof v === 'string') next.set(k, v)
+      else if (Array.isArray(v)) for (const item of v) next.append(k, item)
+    }
+    if (value) next.set('result_type', value)
+    const qs = next.toString()
+    return qs ? `/scrape/${id}?${qs}` : `/scrape/${id}`
+  }
+  const RESULT_TYPE_CHIPS = [
+    { value: '', label: 'All' },
+    { value: 'Organic', label: 'Organic' },
+    { value: 'PPC', label: 'PPC' },
+  ] as const
+
   // Country and batch are constant for one job, so drop them from the
   // filter dropdowns; URL is constant so omitting them keeps the picker tidy.
   const columns = LEADS_COLUMNS.filter(
@@ -449,6 +471,29 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
           just render an empty "No rows" block — hide them for those engines. */}
       {!noLeadsEngine && (
         <>
+          {/* Result-type filter chips — narrow the merged Organic + PPC table
+              to one half so a "PPC" batch no longer appears to show organic
+              results (and vice versa). '' = All. */}
+          <div className="flex flex-wrap items-center gap-1 pt-2">
+            {RESULT_TYPE_CHIPS.map(chip => {
+              const active = resultType === chip.value
+              return (
+                <Link
+                  key={chip.value || 'all'}
+                  href={resultTypeHref(chip.value)}
+                  className={[
+                    'rounded-full border px-3 py-1 text-[12px] font-medium transition-colors',
+                    active
+                      ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/10 text-[color:var(--color-text-primary)]'
+                      : 'border-[color:var(--color-border)] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]',
+                  ].join(' ')}
+                >
+                  {chip.label}
+                </Link>
+              )
+            })}
+          </div>
+
           <div className="pt-2">
             <AdvancedFilters columns={columns} preserve={['show_hidden']} />
           </div>
