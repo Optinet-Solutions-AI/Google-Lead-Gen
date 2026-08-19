@@ -396,7 +396,13 @@ export async function enqueueScrape(
   for (const r of insertRows) {
     countedKeys.add(`${(r.keyword ?? '').toLowerCase()}|${r.country_code}`)
   }
-  const countedRows = countedKeys.size
+  // A scrape SCHEDULED for a future UTC day counts against THAT day's quota, not
+  // today's (count_user_scrapes_today keys off coalesce(scheduled_at, created_at)),
+  // so operators can queue tomorrow's work even when today is full. Only
+  // immediate / same-day submits are charged against today's remaining.
+  const nowUtcDay = new Date().toISOString().slice(0, 10)
+  const scheduledForFuture = scheduledAtIso !== null && scheduledAtIso.slice(0, 10) > nowUtcDay
+  const countedRows = scheduledForFuture ? 0 : countedKeys.size
   const quota = await checkQuota(countedRows)
   if (!quota.ok) return { status: 'error', error: quota.error }
 
