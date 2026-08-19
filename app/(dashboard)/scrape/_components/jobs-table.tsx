@@ -457,12 +457,14 @@ function PipelineBadges({
   engine,
   kick,
   social,
+  resultTypeFilter,
 }: {
   status: ScrapeJob['status']
   enrichment: EnrichmentStatus
   engine: ScrapeJob['search_engine']
   kick: ScrapeJob['kick']
   social: ScrapeJob['social']
+  resultTypeFilter: ScrapeJob['result_type_filter']
 }) {
   if (status !== 'completed') {
     return <span className="text-[color:var(--color-text-secondary)]">—</span>
@@ -483,6 +485,21 @@ function PipelineBadges({
       <SocialPipelineBadges social={social} />
     ) : (
       <span className="text-[color:var(--color-text-secondary)]">—</span>
+    )
+  }
+  // PPC (paid-ads) jobs are the screenshot/ads-verification half of a split
+  // batch — they usually collect 0 leads, so the 5-dot leads pipeline would
+  // always read empty and operators misread it as "broken". Show a distinct
+  // chip instead of the dots. Placed before the leads-pipeline fallback and
+  // independent of engine (PPC is google/bing today, but this future-proofs).
+  if (resultTypeFilter === 'PPC') {
+    return (
+      <span
+        title="Paid-ads capture (screenshot verification) — not the leads enrichment pipeline."
+        className="inline-flex items-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-2 py-0.5 text-[9px] font-medium text-[color:var(--color-text-secondary)]"
+      >
+        PPC · ads
+      </span>
     )
   }
   return (
@@ -1032,6 +1049,7 @@ export function JobsTable({
                     engine={job.search_engine}
                     kick={job.kick}
                     social={job.social}
+                    resultTypeFilter={job.result_type_filter}
                   />
                 </LinkTd>
                 <LinkTd href={href}>{job.batch_id ?? '—'}</LinkTd>
@@ -1160,6 +1178,7 @@ export function JobsCardList({ jobs, pendingPositions }: Props) {
                 engine={job.search_engine}
                 kick={job.kick}
                 social={job.social}
+                resultTypeFilter={job.result_type_filter}
               />
             </div>
           )}

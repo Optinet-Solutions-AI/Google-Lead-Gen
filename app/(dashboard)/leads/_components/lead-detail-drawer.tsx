@@ -534,6 +534,23 @@ function DetailBody({
         )}
       </Section>
 
+      {/* Positive callout: promotes one of our brands (Rooster partner) but
+          isn't recorded on Monday yet — i.e. a fresh affiliate to onboard.
+          Only fires when both signals agree, sitting right under the two
+          checks (On Monday? + Rooster partner?) it draws from. */}
+      {lead.is_rooster_partner === true && lead.is_on_monday !== true && (
+        <section className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+          <div className="flex items-center gap-1.5 text-[12px] font-semibold text-emerald-900">
+            <span aria-hidden="true">🎯</span>
+            New affiliate candidate
+          </div>
+          <p className="mt-0.5 text-[11px] text-emerald-800">
+            Promotes one of our brands but isn&apos;t on Monday yet — a lead to
+            onboard.
+          </p>
+        </section>
+      )}
+
       <Section title="Contacts">
         {!detail.contact ? (
           <p className="text-[color:var(--color-text-secondary)]">Not yet extracted.</p>
