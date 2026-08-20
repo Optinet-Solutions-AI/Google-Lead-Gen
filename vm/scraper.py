@@ -2902,8 +2902,22 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
                 f.write(src)
             labels = sum(src.count(x) for x in (
                 "Sponsored", "Gesponsert", "Sponsorisé", "Sponsorizzato", "Annonse", "Patrocinado"))
+            # Shadow-DOM-aware live count of /aclk ad links: Google sometimes
+            # hydrates ad blocks into shadow roots that page_source (a static
+            # string) and normal find_elements never see. If deep_aclk > raw_aclk,
+            # the ads ARE there — just behind a shadow root our selector can't pierce.
+            deep_aclk = -1
+            try:
+                deep_aclk = driver.execute_script(
+                    "let n=0;function w(r){try{"
+                    "r.querySelectorAll('a[href*=\"/aclk\"]').forEach(()=>n++);"
+                    "r.querySelectorAll('*').forEach(e=>{if(e.shadowRoot)w(e.shadowRoot);});"
+                    "}catch(e){}}w(document);return n;")
+            except Exception:  # noqa: BLE001
+                pass
             line = (f"{ts} kw={keyword!r} page={page} raw_aclk={src.count('/aclk')} "
-                    f"data_text_ad={src.count('data-text-ad')} sponsored_labels={labels} dump={dump}\n")
+                    f"deep_aclk={deep_aclk} data_text_ad={src.count('data-text-ad')} "
+                    f"sponsored_labels={labels} dump={dump}\n")
             with open("/tmp/ppc_debug.log", "a", encoding="utf-8") as f:
                 f.write(line)
             print(f"[PPC-DEBUG] 0 ads → {line.strip()}")
