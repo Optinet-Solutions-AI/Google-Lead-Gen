@@ -2886,44 +2886,6 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
     sponsored_map = extract_sponsored_urls_selenium(driver)
     sponsored_urls = set(sponsored_map.keys())
 
-    # PPC diagnostic (2026-08): when a PPC job finds 0 ads, capture WHY to a
-    # persistent log so we can tell an extractor miss from a genuinely ad-free
-    # SERP. raw_aclk = count of /aclk click-tracking links in the DOM (an ad's
-    # fingerprint); if it's >0 while we detected 0, the extractor selector is the
-    # problem. If both raw_aclk AND the sponsored labels are 0, Google served no
-    # ads (gating). Dumps the full page_source to a timestamped file for markup
-    # inspection. PPC-only + 0-ads-only so it never touches normal scrapes.
-    if result_type_filter == "PPC" and not sponsored_map:
-        try:
-            src = driver.page_source or ""
-            ts = int(time.time())
-            dump = f"/tmp/ppc_debug_{ts}_p{page}.html"
-            with open(dump, "w", encoding="utf-8") as f:
-                f.write(src)
-            labels = sum(src.count(x) for x in (
-                "Sponsored", "Gesponsert", "Sponsorisé", "Sponsorizzato", "Annonse", "Patrocinado"))
-            # Shadow-DOM-aware live count of /aclk ad links: Google sometimes
-            # hydrates ad blocks into shadow roots that page_source (a static
-            # string) and normal find_elements never see. If deep_aclk > raw_aclk,
-            # the ads ARE there — just behind a shadow root our selector can't pierce.
-            deep_aclk = -1
-            try:
-                deep_aclk = driver.execute_script(
-                    "let n=0;function w(r){try{"
-                    "r.querySelectorAll('a[href*=\"/aclk\"]').forEach(()=>n++);"
-                    "r.querySelectorAll('*').forEach(e=>{if(e.shadowRoot)w(e.shadowRoot);});"
-                    "}catch(e){}}w(document);return n;")
-            except Exception:  # noqa: BLE001
-                pass
-            line = (f"{ts} kw={keyword!r} page={page} raw_aclk={src.count('/aclk')} "
-                    f"deep_aclk={deep_aclk} data_text_ad={src.count('data-text-ad')} "
-                    f"sponsored_labels={labels} dump={dump}\n")
-            with open("/tmp/ppc_debug.log", "a", encoding="utf-8") as f:
-                f.write(line)
-            print(f"[PPC-DEBUG] 0 ads → {line.strip()}")
-        except Exception as exc:  # noqa: BLE001
-            print(f"[PPC-DEBUG] dump failed: {exc}", file=sys.stderr)
-
     # Per-PPC-ad: snap the ad card on the SERP first (always-on, ~100%
     # reliable — what the searcher actually saw), then best-effort
     # click-through to resolve the full URL with gclid + gad_*.
