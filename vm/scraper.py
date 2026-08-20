@@ -131,13 +131,19 @@ def _maybe_save_bing_debug(page_source, url):
 # count of ads testers see when checking by hand.
 # ---------------------------
 def wait_for_sponsored_results(driver, timeout=15):
+    # Google dropped the literal "Sponsored results" label, and on a logged-in
+    # profile the ad block hydrates a few seconds AFTER the SERP first paints —
+    # the profile's Google login takes ~3-5s to register, and the personalized
+    # ads render only after that. Wait for an actual ad ANCHOR (/aclk click-
+    # tracking href) instead of a text label, so we don't extract before the ads
+    # exist. Proceed on timeout (the SERP may genuinely be ad-free).
     try:
         WebDriverWait(driver, timeout).until(
-            EC.presence_of_element_located((By.XPATH, '//span[text()="Sponsored results"]'))
+            EC.presence_of_element_located((By.CSS_SELECTOR, 'a[href*="/aclk"]'))
         )
-        print("[DEBUG] Sponsored results section is now visible.")
+        print("[DEBUG] Sponsored ad anchor (/aclk) detected.")
     except Exception:  # noqa: BLE001
-        print("[INFO] Sponsored results section not found within timeout.")
+        print("[INFO] No /aclk ad anchor within timeout — SERP may be ad-free.")
 
     # Scroll-and-settle so any below-the-fold ad blocks load before
     # extract_sponsored_urls_selenium runs. Cheap (one second total).
@@ -2881,10 +2887,42 @@ def get_google_results_selenium(driver, keyword, country, page=0, language="en",
         return []
 
     if wait_for_sponsored:
-        wait_for_sponsored_results(driver, timeout=7)
+        # 10s so the ~3-5s login-recognition + ad hydration has time to complete
+        # before we extract. Returns as soon as an /aclk anchor appears.
+        wait_for_sponsored_results(driver, timeout=10)
 
     sponsored_map = extract_sponsored_urls_selenium(driver)
     sponsored_urls = set(sponsored_map.keys())
+
+    # PPC diagnostic: on a 0-ad PPC job, record whether ad markup is present
+    # (extractor miss) or absent (nothing served), + dump the SERP HTML. deep_aclk
+    # pierces shadow roots. PPC-only + 0-ads-only. TEMPORARY — revert after.
+    if result_type_filter == "PPC" and not sponsored_map:
+        try:
+            src = driver.page_source or ""
+            ts = int(time.time())
+            dump = f"/tmp/ppc_debug_{ts}_p{page}.html"
+            with open(dump, "w", encoding="utf-8") as f:
+                f.write(src)
+            labels = sum(src.count(x) for x in (
+                "Sponsored", "Gesponsert", "Sponsorisé", "Sponsorizzato", "Annonse", "Patrocinado"))
+            deep_aclk = -1
+            try:
+                deep_aclk = driver.execute_script(
+                    "let n=0;function w(r){try{"
+                    "r.querySelectorAll('a[href*=\"/aclk\"]').forEach(()=>n++);"
+                    "r.querySelectorAll('*').forEach(e=>{if(e.shadowRoot)w(e.shadowRoot);});"
+                    "}catch(e){}}w(document);return n;")
+            except Exception:  # noqa: BLE001
+                pass
+            line = (f"{ts} kw={keyword!r} page={page} raw_aclk={src.count('/aclk')} "
+                    f"deep_aclk={deep_aclk} data_text_ad={src.count('data-text-ad')} "
+                    f"sponsored_labels={labels} dump={dump}\n")
+            with open("/tmp/ppc_debug.log", "a", encoding="utf-8") as f:
+                f.write(line)
+            print(f"[PPC-DEBUG] 0 ads → {line.strip()}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[PPC-DEBUG] dump failed: {exc}", file=sys.stderr)
 
     # Per-PPC-ad: snap the ad card on the SERP first (always-on, ~100%
     # reliable — what the searcher actually saw), then best-effort
