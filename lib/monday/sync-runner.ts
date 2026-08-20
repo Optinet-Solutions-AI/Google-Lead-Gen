@@ -271,11 +271,13 @@ export async function runMondaySync(opts?: {
   // — flip their is_on_monday flag. Without this the match stays
   // frozen at scrape-complete time and operators see stale "not on
   // Monday" labels for items pushed after the scrape finished.
-  // Cron-side cap (50k) prevents this from running long on a
-  // multi-tens-of-thousands lead table.
+  // Cron-side cap: rematch the newest N leads (most recently scraped = most
+  // relevant). Even with the functional indexes (20260820140000) the match is
+  // ~2.5ms/lead, so 50k grazed the statement timeout; 25k completes in ~60s and
+  // covers recent activity. Older leads settle and rarely need re-matching.
   try {
     const t0 = Date.now()
-    const { data, error } = await supabase.rpc('rematch_monday_for_all_leads', { p_limit: 50_000 })
+    const { data, error } = await supabase.rpc('rematch_monday_for_all_leads', { p_limit: 25_000 })
     if (error) {
       opts?.onProgress?.(`rematch failed: ${error.message}`)
     } else {
