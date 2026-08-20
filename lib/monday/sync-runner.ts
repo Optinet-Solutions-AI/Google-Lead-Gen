@@ -12,7 +12,16 @@ import {
 } from '@/lib/monday/row-mapping'
 
 const ITEMS_PER_PAGE = 25
-const UPDATES_PER_ITEM = 100
+// Pull deeper into each item's Updates feed. Busy affiliate items (e.g. the 31
+// "Vostok Enterprises" rows) accumulate many comments, so an affiliate URL
+// mentioned months ago can sit beyond the newest-N window and never get synced —
+// which is why some leads show "Not on Monday" despite being in an item's
+// Updates. 200 reaches further back. (Tradeoff: bigger per-page GraphQL cost +
+// slower full sync; kept at 2x rather than higher to stay within the leads
+// board's 300s cron budget and Monday's query-complexity limit.) A mention that
+// lives in a file/hyperlink/linked item rather than comment TEXT still won't be
+// caught — that needs a separate sync path.
+const UPDATES_PER_ITEM = 200
 const BATCH_UPSERT_SIZE = 200
 const SLEEP_BETWEEN_REQUESTS_MS = 700
 
