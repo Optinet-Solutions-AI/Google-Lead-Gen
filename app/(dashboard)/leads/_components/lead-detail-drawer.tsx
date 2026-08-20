@@ -33,6 +33,7 @@ import {
   setCachedLeadDetail,
 } from '../_lib/detail-cache'
 import {
+  confirmMondayCandidate,
   deleteLeadScreenshot,
   forceEnrichLeadsAction,
   pushLeadToMondayAction,
@@ -42,6 +43,7 @@ import {
   type PushNotRelevantState,
   type PushToMondayState,
 } from '../actions'
+import type { MondayCandidate } from '../_lib/detail-query'
 import { MAX_OPERATOR_NOTE_LEN } from '@/lib/monday/push-constants'
 
 type Detail = LeadDetail
@@ -467,6 +469,9 @@ function DetailBody({
         {lead.monday_item_id && (
           <KV label="Item ID" value={lead.monday_item_id} />
         )}
+        {lead.is_on_monday !== true && (detail.monday_candidates?.length ?? 0) > 0 && (
+          <PossibleMondayMatches leadId={lead.id} candidates={detail.monday_candidates} />
+        )}
       </Section>
 
       {detail.serp_screenshot_url && (
@@ -705,6 +710,74 @@ function DetailBody({
           </ul>
         )}
       </Section>
+    </div>
+  )
+}
+
+/** Fuzzy "possible Monday matches" surfaced when the exact matcher found
+ *  nothing. The operator eyeballs each candidate and confirms the right one,
+ *  which sets a manual override (persists across future scrapes). */
+function PossibleMondayMatches({
+  leadId,
+  candidates,
+}: {
+  leadId: number
+  candidates: MondayCandidate[]
+}) {
+  const [pending, startTransition] = useTransition()
+  const [confirmedId, setConfirmedId] = useState<string | null>(null)
+  const BOARD_LABEL: Record<string, string> = {
+    affiliates: 'Affiliates',
+    leads: 'Leads',
+    not_relevant_leads: 'Not Relevant',
+    email_undelivered_leads: 'Email Undelivered',
+  }
+  return (
+    <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-[11px]">
+      <p className="mb-1.5 font-medium text-amber-900">
+        Possible Monday matches — not an exact hit, so validate before trusting
+      </p>
+      <ul className="flex flex-col gap-1.5">
+        {candidates.map(c => (
+          <li
+            key={`${c.board}:${c.item_id}`}
+            className="flex items-start justify-between gap-2 rounded bg-[color:var(--color-bg-primary)] px-2 py-1.5"
+          >
+            <span className="min-w-0">
+              <span className="block truncate font-medium text-[color:var(--color-text-primary)]">
+                {c.item_name || c.website || c.item_id}
+              </span>
+              <span className="block truncate text-[10px] text-[color:var(--color-text-secondary)]">
+                {(BOARD_LABEL[c.board] ?? c.board)} · matched on {c.matched_on}
+                {c.website ? ` · ${c.website}` : ''}
+              </span>
+            </span>
+            {confirmedId === c.item_id ? (
+              <span className="shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-800">
+                Confirmed ✓
+              </span>
+            ) : (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => {
+                  const fd = new FormData()
+                  fd.set('lead_id', String(leadId))
+                  fd.set('board', c.board)
+                  fd.set('item_id', c.item_id)
+                  startTransition(async () => {
+                    await confirmMondayCandidate(fd)
+                    setConfirmedId(c.item_id)
+                  })
+                }}
+                className="shrink-0 rounded bg-[color:var(--color-accent)] px-2 py-1 text-[10px] font-medium text-white disabled:opacity-50"
+              >
+                This one
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

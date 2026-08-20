@@ -139,6 +139,21 @@ export type LeadDetail = {
    *  (captured at scrape time, the small ad creative as seen on
    *  Google). Null for organic rows or when the capture failed. */
   serp_screenshot_url: string | null
+  /** Fuzzy "possible Monday matches" — partial/LIKE on the domain's brand stem
+   *  across item titles, websites, and the updates feed. Populated only when the
+   *  lead isn't already confirmed on Monday, so operators can validate a match
+   *  the exact matcher missed. Empty when on-Monday or nothing similar exists. */
+  monday_candidates: MondayCandidate[]
+}
+
+/** One fuzzy Monday-board candidate surfaced for operator validation. */
+export type MondayCandidate = {
+  board: string
+  item_id: string
+  item_name: string | null
+  website: string | null
+  matched_on: string
+  score: number
 }
 
 export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
@@ -350,11 +365,29 @@ export async function loadLeadDetail(leadId: number): Promise<LeadDetail> {
     }
   }
 
+  // Fuzzy "possible Monday matches" — only when this lead isn't already
+  // confirmed on Monday. We mirror the whole board locally, so surface partial
+  // matches the exact matcher missed for the operator to validate (confirming
+  // one sets a manual override that persists across future scrapes).
+  let mondayCandidates: MondayCandidate[] = []
+  if (lead && lead.is_on_monday !== true) {
+    const probe = (lead.domain || lead.url || '').trim()
+    if (probe) {
+      const { data: cands, error: candErr } = await svc.rpc('search_monday_candidates', {
+        p_domain: probe,
+        p_limit: 8,
+      })
+      if (candErr) console.error(`[loadLeadDetail/candidates/${leadId}]`, candErr)
+      else mondayCandidates = (cands ?? []) as MondayCandidate[]
+    }
+  }
+
   return {
     lead,
     contact,
     stags,
     cohort,
+    monday_candidates: mondayCandidates,
     screenshot_url: screenshotUrl,
     serp_screenshot_url: serpScreenshotUrl,
   }

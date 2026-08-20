@@ -263,6 +263,47 @@ export async function setMondayLabel(formData: FormData): Promise<void> {
 }
 
 // ============================================================
+// Confirm a fuzzy "possible Monday match" (from search_monday_candidates).
+// The operator eyeballed a candidate and validated it, so we set the Monday
+// verdict as a MANUAL override (monday_overridden_at) — which now carries
+// forward to future scrapes of the same URL (20260820120000) and is skipped by
+// the nightly rematch. Records the specific item so the drawer links to it.
+// ============================================================
+export async function confirmMondayCandidate(formData: FormData): Promise<void> {
+  const leadId = Number(formData.get('lead_id'))
+  const board = String(formData.get('board') ?? '').trim()
+  const itemId = String(formData.get('item_id') ?? '').trim()
+  if (!Number.isInteger(leadId) || leadId <= 0) throw new Error('Missing lead id.')
+  if (!board) throw new Error('Missing board.')
+
+  const access = await requireLeadAccess(leadId)
+  if (!access.ok) throw new Error(access.error)
+
+  const svc = createServiceClient()
+  const { error } = await svc
+    .from('google_lead_gen_table')
+    .update({
+      is_on_monday: true,
+      monday_board: board,
+      monday_item_id: itemId || null,
+      monday_match_kind: 'operator_confirmed',
+      monday_overridden_at: new Date().toISOString(),
+    })
+    .eq('id', leadId)
+  if (error) throw new Error(safeError(error, 'Failed to confirm the match.'))
+
+  await logActivity({
+    action: 'override.monday_candidate',
+    entity_type: 'lead',
+    entity_id: leadId,
+    details: { board, item_id: itemId },
+  })
+
+  revalidatePath('/leads')
+  revalidatePath('/scrape', 'layout')
+}
+
+// ============================================================
 // Generic boolean-flag override (used by 7.2–7.6 editors)
 // ============================================================
 
