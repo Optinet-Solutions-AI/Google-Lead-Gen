@@ -2663,7 +2663,14 @@ def process_apify_organic_job(job: dict[str, Any]) -> None:
     # at all, fail (retryable) rather than cascade every job to the VM during an
     # Apify outage.
     if not results:
-        if got_2xx:
+        # The VM browser can often get what Apify can't — restricted markets
+        # (e.g. KW/SA) and obscure brand queries where Apify's actor errors or
+        # returns nothing. Empty-but-2xx hands off to the VM immediately. A
+        # non-2xx (Apify API hiccup) fails-retryable for the first couple of
+        # attempts so a brief Apify outage self-heals WITHOUT cascading every
+        # job to the VM — but once it's clearly persistent for THIS job
+        # (attempts >= 2), fall back to the VM instead of failing forever.
+        if got_2xx or (int(job.get("attempts") or 0) >= 2):
             _handoff_apify_to_vm(job_id)
         else:
             fail_job(job_id, "The organic search service had a hiccup — it retries automatically; hit Retry if it persists.")
