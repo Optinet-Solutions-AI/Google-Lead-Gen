@@ -257,12 +257,66 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // ----------------------------------------------------------------
+  // Affiliate safety net — ALWAYS score affiliate status on recent leads, even
+  // when the scrape was queued WITHOUT with_enrichment. The chain above only
+  // advances with_enrichment=true jobs, so new/unknown domains from a no-enrich
+  // scrape were left is_affiliate=null (operators: "has tracking links, should
+  // be an affiliate, but no tag"). Enqueue ONLY the cheap affiliate stage for
+  // recent, relevant, not-on-Monday, still-unscored ORGANIC leads with no fetch
+  // row yet. Known domains already inherited is_affiliate so they won't match;
+  // PPC leads are covered by the net above; the heavier rooster/contact/stag
+  // stages stay gated behind the enrichment toggle.
+  const { data: unscored } = await svc
+    .from('google_lead_gen_table')
+    .select('id, country_code, url')
+    .is('is_affiliate', null)
+    .is('affiliate_checked_at', null)
+    .neq('is_not_relevant', true)
+    .not('is_on_monday', 'is', true)
+    .neq('result_type', 'PPC')
+    .gte('created_at', since)
+    .order('id', { ascending: false })
+    .limit(50)
+  const affCandidates = ((unscored ?? []) as Array<{
+    id: number
+    country_code: string | null
+    url: string | null
+  }>).filter(r => r.country_code && r.url && r.url.startsWith('http'))
+
+  let affEnqueued = 0
+  if (affCandidates.length > 0) {
+    const ids = affCandidates.map(r => r.id)
+    const { data: existingAff } = await svc
+      .from('enrichment_fetch_queue')
+      .select('lead_id')
+      .in('lead_id', ids)
+    const alreadyAff = new Set(
+      ((existingAff ?? []) as Array<{ lead_id: number }>).map(r => r.lead_id),
+    )
+    const toInsertAff = affCandidates
+      .filter(r => !alreadyAff.has(r.id))
+      .map(r => ({
+        lead_id: r.id,
+        country_code: r.country_code!,
+        url: r.url!,
+        want_html: true,
+        want_screenshot: false,
+        process_stages: ['affiliate'],
+      }))
+    if (toInsertAff.length > 0) {
+      const { error: insErr } = await svc.from('enrichment_fetch_queue').insert(toInsertAff)
+      if (!insErr) affEnqueued = toInsertAff.length
+    }
+  }
+
   return Response.json({
     ok: true,
     now: now.toISOString(),
     runs,
     enrichment_advances: advances,
     ppc_screenshot_enqueued: ppcEnqueued,
+    affiliate_scoring_enqueued: affEnqueued,
     orphan_checkpoints_cancelled: orphansCancelled,
     duplicate_scrapes_cancelled: dupesCancelled,
   })
