@@ -271,24 +271,40 @@ export async function runMondaySync(opts?: {
   // — flip their is_on_monday flag. Without this the match stays
   // frozen at scrape-complete time and operators see stale "not on
   // Monday" labels for items pushed after the scrape finished.
-  // Cron-side cap: rematch the newest N leads (most recently scraped = most
-  // relevant). Even with the functional indexes (20260820140000) the match is
-  // ~2.5ms/lead, so 50k grazed the statement timeout; 25k completes in ~60s and
-  // covers recent activity. Older leads settle and rarely need re-matching.
+  // Rematch the newest non-overridden leads so any that just became matchable
+  // (a new Monday entry / a new Updates mention) flip their is_on_monday flag.
+  // A single rematch_monday_for_all_leads(N) call blows the app's statement
+  // timeout for large N even WITH the functional indexes (20260820140000) — it
+  // kept failing, which is a hidden driver of stale "Not on Monday". So chunk
+  // it: pull the newest ~15k ids and rematch in batches of 3k via
+  // rematch_monday_for_leads — each batch completes comfortably under the
+  // timeout, and together they reliably cover recent activity. Older leads
+  // settle; brand-new scrapes already match at scrape-complete time.
   try {
     const t0 = Date.now()
-    const { data, error } = await supabase.rpc('rematch_monday_for_all_leads', { p_limit: 25_000 })
-    if (error) {
-      opts?.onProgress?.(`rematch failed: ${error.message}`)
-    } else {
+    const { data: idRows } = await supabase
+      .from('google_lead_gen_table')
+      .select('id')
+      .is('monday_overridden_at', null)
+      .order('created_at', { ascending: false })
+      .limit(15_000)
+    const ids = ((idRows ?? []) as { id: number }[]).map(r => r.id)
+    let checked = 0
+    let flipped = 0
+    for (let i = 0; i < ids.length; i += 3_000) {
+      const batch = ids.slice(i, i + 3_000)
+      const { data, error } = await supabase.rpc('rematch_monday_for_leads', { p_lead_ids: batch })
+      if (error) {
+        opts?.onProgress?.(`rematch batch @${i} failed: ${error.message}`)
+        break
+      }
       const row = Array.isArray(data) ? (data[0] as { checked?: number; flipped?: number } | undefined) : undefined
-      opts?.onProgress?.(
-        `rematch: checked ${row?.checked ?? 0}, flipped ${row?.flipped ?? 0} in ${Date.now() - t0}ms`,
-      )
+      checked += row?.checked ?? 0
+      flipped += row?.flipped ?? 0
     }
+    opts?.onProgress?.(`rematch: checked ${checked}, flipped ${flipped} in ${Date.now() - t0}ms`)
   } catch (err) {
-    // Non-fatal — the next sync will retry. Logged via onProgress so
-    // the route response surface it.
+    // Non-fatal — the next sync will retry. Logged via onProgress.
     opts?.onProgress?.(`rematch threw: ${err instanceof Error ? err.message : String(err)}`)
   }
 
