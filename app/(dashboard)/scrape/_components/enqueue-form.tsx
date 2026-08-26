@@ -92,6 +92,36 @@ function sourceLabelFor(engine: string): string {
   return ENGINE_LABELS[engine] ?? 'These'
 }
 
+// Schedule timezones. Operators span timezones (Malta, PH, …), so a scheduled
+// "04:30" must mean ONE real time regardless of who set it — default Malta.
+const SCHEDULE_TIMEZONES: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'Europe/Malta', label: 'Malta (CET/CEST)' },
+  { value: 'Asia/Manila', label: 'Philippines (PHT)' },
+  { value: 'Europe/London', label: 'UK (GMT/BST)' },
+  { value: 'UTC', label: 'UTC' },
+]
+
+/** Interpret a `datetime-local` wall-clock string ("YYYY-MM-DDTHH:mm", no zone)
+ *  AS IF it were in `timeZone`, returning the UTC ISO instant. datetime-local
+ *  otherwise resolves in the BROWSER's zone, so a PH operator and a Malta
+ *  operator scheduling "04:30" would get different real times. Handles DST via
+ *  the zone's actual offset at that date. Empty/invalid input → ''. */
+function wallClockToUtcIso(local: string, timeZone: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(local)
+  if (!m) return ''
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]), h = Number(m[4]), mi = Number(m[5])
+  const utcGuess = Date.UTC(y, mo - 1, d, h, mi)
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(utcGuess))
+  const p: Record<string, number> = {}
+  for (const part of parts) if (part.type !== 'literal') p[part.type] = Number(part.value)
+  const hour = p.hour === 24 ? 0 : (p.hour ?? h)
+  const asZone = Date.UTC(p.year ?? y, (p.month ?? mo) - 1, p.day ?? d, hour, p.minute ?? mi)
+  return new Date(utcGuess - (asZone - utcGuess)).toISOString()
+}
+
 export function EnqueueForm({
   profiles,
   quota,
@@ -125,11 +155,13 @@ export function EnqueueForm({
   // is meaningful) so the server doesn't reinterpret the wall-clock
   // time as UTC.
   const [scheduledAtLocal, setScheduledAtLocal] = useState('')
-  const scheduledAtIso = useMemo(() => {
-    if (!scheduledAtLocal) return ''
-    const d = new Date(scheduledAtLocal)
-    return Number.isFinite(d.getTime()) ? d.toISOString() : ''
-  }, [scheduledAtLocal])
+  // The wall-clock entered above is interpreted in this timezone (default Malta),
+  // NOT the browser's — so a scheduled time means the same for every operator.
+  const [scheduleTz, setScheduleTz] = useState('Europe/Malta')
+  const scheduledAtIso = useMemo(
+    () => wallClockToUtcIso(scheduledAtLocal, scheduleTz),
+    [scheduledAtLocal, scheduleTz],
+  )
   // Open by default. Collapsed state persists per-browser via
   // localStorage so once an operator hides it, it stays hidden across
   // page navigations.
@@ -472,31 +504,46 @@ export function EnqueueForm({
             Schedule for{' '}
             <span className="text-[10px]">(optional — leave empty to run now)</span>
           </span>
-          <input
-            type="datetime-local"
-            value={scheduledAtLocal}
-            onChange={e => setScheduledAtLocal(e.target.value)}
-            className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-1.5 text-[12px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="datetime-local"
+              value={scheduledAtLocal}
+              onChange={e => setScheduledAtLocal(e.target.value)}
+              className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-1.5 text-[12px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none"
+            />
+            <select
+              value={scheduleTz}
+              onChange={e => setScheduleTz(e.target.value)}
+              aria-label="Schedule timezone"
+              className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2 py-1.5 text-[12px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none"
+            >
+              {SCHEDULE_TIMEZONES.map(tz => (
+                <option key={tz.value} value={tz.value}>
+                  {tz.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <input type="hidden" name="scheduled_at" value={scheduledAtIso} />
           {scheduledAtLocal &&
             (() => {
-              const d = new Date(scheduledAtLocal)
-              if (!Number.isFinite(d.getTime())) {
+              if (!scheduledAtIso) {
                 return (
                   <span className="text-[10px] text-amber-600">
                     Pick both a date and a time, or it will run now.
                   </span>
                 )
               }
-              const past = d.getTime() <= Date.now()
+              const tzLabel =
+                SCHEDULE_TIMEZONES.find(t => t.value === scheduleTz)?.label ?? scheduleTz
+              const past = new Date(scheduledAtIso).getTime() <= Date.now()
               return past ? (
                 <span className="text-[10px] text-red-600">
-                  ⚠ That time is in the past — this will run now. Choose a later date/time.
+                  ⚠ That time ({tzLabel}) is in the past — this will run now. Choose a later date/time.
                 </span>
               ) : (
                 <span className="text-[10px] text-emerald-700">
-                  → Will run {d.toLocaleString()} (your local time)
+                  → Runs {scheduledAtLocal.replace('T', ' ')} {tzLabel} (= {new Date(scheduledAtIso).toLocaleString()} your time)
                 </span>
               )
             })()}
