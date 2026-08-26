@@ -199,6 +199,14 @@ export function EnqueueForm({
        
       setKeywordsText('')
       setScheduledAtLocal('')
+      // Reset the country + language too. These are controlled React state, so
+      // formRef.reset() (which only clears native inputs) leaves them holding
+      // the PREVIOUS scrape's country — an operator who queues a new batch
+      // without re-picking then silently gets the old country (the recurring
+      // "I chose NO/NZ but it ran as AU" reports). Forcing a fresh pick each
+      // batch makes the geo an explicit choice every time.
+      setSelectedCountry('')
+      setSelectedLang('en')
       // Refresh the jobs table to show the new rows immediately
       router.refresh()
     }
