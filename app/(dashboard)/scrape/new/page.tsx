@@ -4,7 +4,7 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { listActiveProfiles } from '../_lib/queries'
 import { NewScrapeWizard } from './_components/new-scrape-wizard'
-import { engineDef, utcDay, type DayUsage, type LastConfig, type QuotaPreview, type ScrapeDraft } from './_lib/wizard-helpers'
+import { engineDef, utcDay, type DayUsage, type QuotaPreview, type ScrapeDraft } from './_lib/wizard-helpers'
 
 export const dynamic = 'force-dynamic'
 
@@ -60,7 +60,7 @@ export default async function NewScrapePage({ searchParams }: { searchParams: Pr
   todayStart.setUTCHours(0, 0, 0, 0)
   const todayIso = todayStart.toISOString()
 
-  const [profiles, capRaw, bypassRow, usageRows, recentRows, fromRow] = await Promise.all([
+  const [profiles, capRaw, bypassRow, usageRows, fromRow] = await Promise.all([
     listActiveProfiles(),
     svc.rpc('get_system_setting', { p_key: 'daily_scrape_cap_per_user' }).then(r => r.data as unknown),
     user
@@ -76,16 +76,6 @@ export default async function NewScrapePage({ searchParams }: { searchParams: Pr
           .or(`created_at.gte.${todayIso},scheduled_at.gte.${todayIso}`)
           .then(r => (r.data ?? []) as Array<Pick<QueueRow, 'keyword' | 'country_code' | 'scheduled_at' | 'created_at'>>)
       : Promise.resolve([]),
-    email
-      ? svc
-          .from('scrape_queue')
-          .select(ROW_COLS)
-          .eq('created_by_email', email)
-          .is('parent_scrape_job_id', null)
-          .order('created_at', { ascending: false })
-          .limit(80)
-          .then(r => (r.data ?? []) as unknown as QueueRow[])
-      : Promise.resolve([] as QueueRow[]),
     fromId && email
       ? svc.from('scrape_queue').select(ROW_COLS).eq('id', fromId).eq('created_by_email', email).maybeSingle().then(r => (r.data ?? null) as unknown as QueueRow | null)
       : Promise.resolve(null),
@@ -105,6 +95,10 @@ export default async function NewScrapePage({ searchParams }: { searchParams: Pr
     set.add(`${(r.keyword ?? '').toLowerCase()}|${r.country_code}`)
     usedByDay.set(day, set)
   }
+  // Saved setups and unfinished drafts live in the operator's own browser,
+  // namespaced by this key so two accounts on one machine stay separate.
+  const userKey = user?.id ?? email ?? 'anonymous'
+
   const days: DayUsage[] = []
   for (let i = 0; i < DAYS_AHEAD; i++) {
     const d = new Date(todayStart.getTime() + i * 86_400_000)
@@ -115,28 +109,6 @@ export default async function NewScrapePage({ searchParams }: { searchParams: Pr
   for (const [day, set] of usedByDay) if (!days.some(x => x.day === day)) days.push({ day, used: set.size })
   days.sort((a, b) => a.day.localeCompare(b.day))
   const quota: QuotaPreview = { cap, exempt, days }
-
-  // ----- last configuration: the most recent submit, all its keywords -----
-  let lastConfig: LastConfig | null = null
-  const first = recentRows.find(r => r.result_type_filter !== 'PPC') ?? recentRows[0]
-  if (first) {
-    const stamp = first.created_at.slice(0, 19)
-    const sameSubmit = recentRows.filter(
-      r => r.created_at.slice(0, 19) === stamp && r.country_code === first.country_code && (r.search_engine ?? 'google') === (first.search_engine ?? 'google'),
-    )
-    const keywords = [...new Set(sameSubmit.map(r => r.keyword.trim()).filter(Boolean))]
-    lastConfig = {
-      search_engine: first.search_engine ?? 'google',
-      country_code: first.country_code,
-      language: first.language ?? 'en',
-      pages: first.pages ?? 1,
-      view_mode: first.view_mode ?? 'both',
-      with_enrichment: first.with_enrichment === true,
-      top_n_by_follower: first.top_n_by_follower ?? null,
-      keywords,
-      created_at: first.created_at,
-    }
-  }
 
   // ----- prefill from "Edit" on the today's-queue page -----
   let prefill: Partial<ScrapeDraft> | null = null
@@ -169,7 +141,7 @@ export default async function NewScrapePage({ searchParams }: { searchParams: Pr
         languages: p.languages,
       }))}
       quota={quota}
-      lastConfig={lastConfig}
+      userKey={userKey}
       prefill={prefill}
     />
   )

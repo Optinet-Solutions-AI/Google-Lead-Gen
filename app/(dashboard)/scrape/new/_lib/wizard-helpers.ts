@@ -25,22 +25,100 @@ export type EngineDef = {
   tone: string
   /** SERP engines produce leads and go through the enrichment stages. */
   kind: 'serp' | 'social'
-  hint: string
+  /** What this source returns, in two or three words, shown under the tile. */
+  returns: string
+  /** The full statement of what you get and where it is stored. */
+  detail: string
 }
 
 /** Order matters: it is the order of the icon grid. "Both" (Google + Bing)
  *  is intentionally not offered here — one engine per scrape. */
 export const ENGINES: ReadonlyArray<EngineDef> = [
-  { key: 'google', label: 'Google', mono: 'G', tone: 'bg-blue-50 text-blue-700 ring-blue-200', kind: 'serp', hint: 'Organic via Apify, ads via the VM browser' },
-  { key: 'bing', label: 'Bing', mono: 'B', tone: 'bg-teal-50 text-teal-700 ring-teal-200', kind: 'serp', hint: 'Organic and ads via Apify. Not available for CH and IE' },
-  { key: 'youtube', label: 'YouTube', mono: 'YT', tone: 'bg-red-50 text-red-700 ring-red-200', kind: 'social', hint: 'Channels, not leads' },
-  { key: 'twitch', label: 'Twitch', mono: 'TW', tone: 'bg-violet-50 text-violet-700 ring-violet-200', kind: 'social', hint: 'Streamers, not leads' },
-  { key: 'kick', label: 'Kick', mono: 'K', tone: 'bg-lime-50 text-lime-700 ring-lime-200', kind: 'social', hint: 'Streamers, not leads' },
-  { key: 'facebook', label: 'Facebook', mono: 'FB', tone: 'bg-indigo-50 text-indigo-700 ring-indigo-200', kind: 'social', hint: 'Ad Library advertisers' },
-  { key: 'tiktok', label: 'TikTok', mono: 'TT', tone: 'bg-zinc-100 text-zinc-800 ring-zinc-300', kind: 'social', hint: 'Creators, not leads' },
-  { key: 'snapchat', label: 'Snapchat', mono: 'SC', tone: 'bg-yellow-50 text-yellow-700 ring-yellow-200', kind: 'social', hint: 'Creators, not leads' },
-  { key: 'telegram', label: 'Telegram', mono: 'TG', tone: 'bg-sky-50 text-sky-700 ring-sky-200', kind: 'social', hint: 'Channels, not leads' },
+  {
+    key: 'google',
+    label: 'Google',
+    mono: 'G',
+    tone: 'bg-blue-50 text-blue-700 ring-blue-200',
+    kind: 'serp',
+    returns: 'Organic only',
+    detail: 'Returns organic search results only. Paid ads are gated by IP address and almost never come back, so expect no PPC rows.',
+  },
+  {
+    key: 'bing',
+    label: 'Bing',
+    mono: 'B',
+    tone: 'bg-teal-50 text-teal-700 ring-teal-200',
+    kind: 'serp',
+    returns: 'Organic and ads',
+    detail: 'Returns organic results and paid ads in the same pass. Not available for Switzerland or Ireland, where coverage is too thin.',
+  },
+  {
+    key: 'youtube',
+    label: 'YouTube',
+    mono: 'YT',
+    tone: 'bg-red-50 text-red-700 ring-red-200',
+    kind: 'social',
+    returns: 'Channels',
+    detail: 'Finds channels. They are stored as YouTube channels, never as leads, and no enrichment stage runs on them.',
+  },
+  {
+    key: 'twitch',
+    label: 'Twitch',
+    mono: 'TW',
+    tone: 'bg-violet-50 text-violet-700 ring-violet-200',
+    kind: 'social',
+    returns: 'Streamers',
+    detail: 'Finds streamers. They are stored as Twitch streamers, never as leads, and no enrichment stage runs on them.',
+  },
+  {
+    key: 'kick',
+    label: 'Kick',
+    mono: 'K',
+    tone: 'bg-lime-50 text-lime-700 ring-lime-200',
+    kind: 'social',
+    returns: 'Streamers',
+    detail: 'Finds streamers. They are stored as Kick streamers, never as leads, and no enrichment stage runs on them.',
+  },
+  {
+    key: 'facebook',
+    label: 'Facebook',
+    mono: 'FB',
+    tone: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
+    kind: 'social',
+    returns: 'Advertisers',
+    detail: 'Finds advertisers in the public Ad Library. They are stored as Facebook advertisers, never as leads. No login needed.',
+  },
+  {
+    key: 'tiktok',
+    label: 'TikTok',
+    mono: 'TT',
+    tone: 'bg-zinc-100 text-zinc-800 ring-zinc-300',
+    kind: 'social',
+    returns: 'Creators',
+    detail: 'Finds creators. They are stored as TikTok creators, never as leads, and no enrichment stage runs on them.',
+  },
+  {
+    key: 'snapchat',
+    label: 'Snapchat',
+    mono: 'SC',
+    tone: 'bg-yellow-50 text-yellow-700 ring-yellow-200',
+    kind: 'social',
+    returns: 'Creators',
+    detail: 'Finds creators. They are stored as Snapchat creators, never as leads, and no enrichment stage runs on them.',
+  },
+  {
+    key: 'telegram',
+    label: 'Telegram',
+    mono: 'TG',
+    tone: 'bg-sky-50 text-sky-700 ring-sky-200',
+    kind: 'social',
+    returns: 'Channels',
+    detail: 'Finds channels. They are stored as Telegram channels, never as leads, and no enrichment stage runs on them.',
+  },
 ]
+
+/** The source chosen when nothing has been picked yet. */
+export const DEFAULT_ENGINE: EngineKey = 'google'
 
 export function engineDef(key: string | null | undefined): EngineDef | null {
   return ENGINES.find(e => e.key === key) ?? null
@@ -88,14 +166,16 @@ export function flagEmoji(cc: string): string {
   return String.fromCodePoint(...[...code].map(c => 127397 + c.charCodeAt(0)))
 }
 
-/** Enrichment stages the user can pick. The Monday duplicate check always
- *  runs on insert, so it is not offered as a choice. */
+/** Enrichment stages the user can pick, in the order they run. */
 export const ENRICHMENT_STAGES: ReadonlyArray<{ key: string; label: string; hint: string }> = [
-  { key: 'affiliate', label: 'Affiliate detection', hint: 'Is the site an affiliate?' },
-  { key: 'rooster', label: 'Rooster partner check', hint: 'Does it promote our brands?' },
-  { key: 'stags', label: 'S-tag extraction', hint: 'Tracking tags on the CTA links' },
-  { key: 'contacts', label: 'Contact extraction', hint: 'Emails, phones, contact page' },
+  { key: 'monday', label: 'Already exists on Monday', hint: 'Matches each domain against the Monday boards and marks the ones already known.' },
+  { key: 'affiliate', label: 'Affiliate detection', hint: 'Reads the page and decides whether it sells traffic to casino brands.' },
+  { key: 'rooster', label: 'Rooster partner check', hint: 'Looks for our own brands being promoted on the page.' },
+  { key: 'stags', label: 'S-tag extraction', hint: 'Follows the call-to-action links and reads the affiliate tracking tag.' },
+  { key: 'contacts', label: 'Contact extraction', hint: 'Collects business emails, phone numbers and the contact page.' },
 ]
+
+export const ALL_STAGE_KEYS: ReadonlyArray<string> = ENRICHMENT_STAGES.map(s => s.key)
 
 export const SCHEDULE_TIMEZONES: ReadonlyArray<{ value: string; label: string }> = [
   { value: 'Europe/Malta', label: 'Malta (CET/CEST)' },
@@ -201,14 +281,136 @@ export type QuotaPreview = {
   days: DayUsage[]
 }
 
-export type LastConfig = {
-  search_engine: string
+/** A setup the user explicitly chose to save, kept in their own browser. */
+export type SavedConfig = {
+  savedAt: string
+  search_engine: EngineKey
   country_code: string
   language: string
   pages: number
   view_mode: 'both' | 'desktop' | 'mobile'
+  enrichment_stages: string[]
   with_enrichment: boolean
   top_n_by_follower: number | null
+}
+
+/** Everything the wizard needs to pick up exactly where it left off. */
+export type WizardDraft = {
+  v: 1
+  stepIndex: number
+  mode: 'now' | 'schedule'
+  scheduledAtLocal: string
+  scheduleTz: string
+  configChoice: 'new' | 'saved' | null
+  engine: EngineKey
+  country: string | null
+  language: string
+  pages: number
+  viewMode: 'both' | 'desktop' | 'mobile'
   keywords: string[]
-  created_at: string
+  enrichChoice: 'none' | 'stages'
+  stages: string[]
+  topChoice: 'all' | 'n' | null
+  topN: number
+  runAnyway: boolean
+  saveConfig: boolean
+}
+
+const KEY_PREFIX = 'lg-new-scrape'
+
+/** Storage keys are namespaced per user so two accounts on one machine
+ *  never inherit each other's setup. */
+export function draftKey(userKey: string): string {
+  return `${KEY_PREFIX}-draft:${userKey}`
+}
+export function savedConfigKey(userKey: string): string {
+  return `${KEY_PREFIX}-saved:${userKey}`
+}
+export function lastStagesKey(userKey: string): string {
+  return `${KEY_PREFIX}-stages:${userKey}`
+}
+
+/** Reads and validates JSON from localStorage. Returns null on anything odd,
+ *  including a private window where storage throws. */
+export function readStored<T>(key: string, validate: (v: unknown) => T | null): T | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return null
+    return validate(JSON.parse(raw) as unknown)
+  } catch {
+    return null
+  }
+}
+
+export function writeStored(key: string, value: unknown): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    /* storage full or blocked — the wizard still works, it just will not resume */
+  }
+}
+
+export function clearStored(key: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.removeItem(key)
+  } catch {
+    /* ignore */
+  }
+}
+
+const VIEW_MODES = ['both', 'desktop', 'mobile'] as const
+
+function isEngine(v: unknown): v is EngineKey {
+  return typeof v === 'string' && ENGINES.some(e => e.key === v)
+}
+
+export function parseDraft(v: unknown): WizardDraft | null {
+  if (!v || typeof v !== 'object') return null
+  const d = v as Partial<WizardDraft>
+  if (d.v !== 1) return null
+  return {
+    v: 1,
+    stepIndex: typeof d.stepIndex === 'number' && d.stepIndex >= 0 ? d.stepIndex : 0,
+    mode: d.mode === 'schedule' ? 'schedule' : 'now',
+    scheduledAtLocal: typeof d.scheduledAtLocal === 'string' ? d.scheduledAtLocal : '',
+    scheduleTz: typeof d.scheduleTz === 'string' ? d.scheduleTz : 'Europe/Malta',
+    configChoice: d.configChoice === 'saved' || d.configChoice === 'new' ? d.configChoice : null,
+    engine: isEngine(d.engine) ? d.engine : DEFAULT_ENGINE,
+    country: typeof d.country === 'string' ? d.country : null,
+    language: typeof d.language === 'string' ? d.language : 'en',
+    pages: typeof d.pages === 'number' && d.pages >= 1 && d.pages <= 10 ? d.pages : 1,
+    viewMode: VIEW_MODES.includes(d.viewMode as (typeof VIEW_MODES)[number]) ? (d.viewMode as 'both' | 'desktop' | 'mobile') : 'both',
+    keywords: Array.isArray(d.keywords) ? d.keywords.filter((k): k is string => typeof k === 'string').slice(0, MAX_KEYWORDS) : [],
+    enrichChoice: d.enrichChoice === 'stages' ? 'stages' : 'none',
+    stages: Array.isArray(d.stages) ? d.stages.filter((s): s is string => typeof s === 'string' && ALL_STAGE_KEYS.includes(s)) : [],
+    topChoice: d.topChoice === 'n' || d.topChoice === 'all' ? d.topChoice : null,
+    topN: typeof d.topN === 'number' && d.topN > 0 ? d.topN : 25,
+    runAnyway: d.runAnyway === true,
+    saveConfig: d.saveConfig === true,
+  }
+}
+
+export function parseSavedConfig(v: unknown): SavedConfig | null {
+  if (!v || typeof v !== 'object') return null
+  const c = v as Partial<SavedConfig>
+  if (!isEngine(c.search_engine) || typeof c.country_code !== 'string' || !c.country_code) return null
+  return {
+    savedAt: typeof c.savedAt === 'string' ? c.savedAt : new Date().toISOString(),
+    search_engine: c.search_engine,
+    country_code: c.country_code,
+    language: typeof c.language === 'string' ? c.language : 'en',
+    pages: typeof c.pages === 'number' ? c.pages : 1,
+    view_mode: VIEW_MODES.includes(c.view_mode as (typeof VIEW_MODES)[number]) ? (c.view_mode as 'both' | 'desktop' | 'mobile') : 'both',
+    enrichment_stages: Array.isArray(c.enrichment_stages) ? c.enrichment_stages.filter((s): s is string => typeof s === 'string') : [],
+    with_enrichment: c.with_enrichment === true,
+    top_n_by_follower: typeof c.top_n_by_follower === 'number' ? c.top_n_by_follower : null,
+  }
+}
+
+export function parseStageList(v: unknown): string[] | null {
+  if (!Array.isArray(v)) return null
+  return v.filter((s): s is string => typeof s === 'string' && ALL_STAGE_KEYS.includes(s))
 }
