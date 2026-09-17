@@ -23,7 +23,6 @@ import {
   MonitorSmartphone,
   Pencil,
   Plus,
-  RotateCcw,
   Search,
   Smartphone,
   Star,
@@ -62,6 +61,7 @@ import {
   type WizardDraft,
 } from '../_lib/wizard-helpers'
 import { QuotaStatus, remainingFor, useResetCountdown } from './quota-status'
+import { QueueTicket, type QueueEstimate } from './queue-ticket'
 
 export type WizardProfile = {
   country_code: string
@@ -77,6 +77,9 @@ type Props = {
   /** Namespaces this browser's saved setup and draft to the signed-in user. */
   userKey: string
   prefill: Partial<ScrapeDraft> | null
+  /** Live queue depth per country, for the ticket's position and wait. */
+  queueByCountry: Record<string, QueueEstimate>
+  totalPending: number
 }
 
 type StepKey =
@@ -220,7 +223,7 @@ function EngineMono({ engine, size = 'md' }: { engine: EngineKey; size?: 'sm' | 
 
 // ---------------------------------------------------------------- wizard ----
 
-export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
+export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCountry, totalPending }: Props) {
   const isClient = useSyncExternalStore(emptySubscribe, () => true, () => false)
   const today = utcDay(new Date())
 
@@ -278,6 +281,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
   const [keywordInput, setKeywordInput] = useState('')
   const [countryQuery, setCountryQuery] = useState('')
   const [submitted, setSubmitted] = useState<ScrapeDraft | null>(null)
+  const [ticketRef, setTicketRef] = useState('—')
   const [copied, setCopied] = useState(false)
   const [dismissedResume, setDismissedResume] = useState(false)
   const keywordRef = useRef<HTMLInputElement>(null)
@@ -470,6 +474,11 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
     }
     if (stages.length > 0) writeStored(lastStagesKey(userKey), stages)
     clearStored(draftKey(userKey))
+    // Stand-in reference until the server action returns a real batch number.
+    const stamp = new Date()
+    setTicketRef(
+      `${stamp.getUTCFullYear()}${String(stamp.getUTCMonth() + 1).padStart(2, '0')}${String(stamp.getUTCDate()).padStart(2, '0')}-${draft.country_code}-${String(stamp.getTime()).slice(-4)}`,
+    )
     setSubmitted(draft)
   }
 
@@ -531,35 +540,37 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
   }
 
   if (submitted) {
+    const estimate = queueByCountry[submitted.country_code] ?? null
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-4 md:px-6 md:py-5">
+      <div className="mx-auto w-full max-w-2xl px-4 py-4 md:px-6 md:py-5">
         <Header quota={quota} day={quotaDay} />
         <div className="mt-4 flex flex-col gap-3">
+          <QueueTicket
+            info={{
+              draft: submitted,
+              countryName: profile?.country_name ?? submitted.country_code,
+              estimate: estimate ? { ...estimate, totalPending } : null,
+              reference: ticketRef,
+            }}
+            onCreateAnother={resetAll}
+          />
           <Note tone="ok">
-            <span className="font-medium">Preview only. Nothing was queued.</span> This is the payload the scrape would send once the backend is connected.
-            {saveConfig && ' Your setup was saved to this browser and will appear as the saved configuration next time.'}
+            <span className="font-medium">Preview only. Nothing was queued.</span> The position and wait above are the real queue for{' '}
+            {profile?.country_name ?? submitted.country_code} as of page load.
+            {saveConfig && ' Your setup was saved to this browser and will be offered next time.'}
           </Note>
-          <SummaryCard draft={submitted} profile={profile} />
-          <div className="rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
-            <div className="flex items-center justify-between border-b border-[color:var(--color-border)] px-3 py-2">
-              <span className="text-[12px] font-medium text-[color:var(--color-text-secondary)]">Payload</span>
-              <button type="button" onClick={copyPayload} className="inline-flex items-center gap-1 text-[12px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]">
+          <details className="rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
+            <summary className="flex cursor-pointer items-center justify-between px-3 py-2 text-[12px] font-medium text-[color:var(--color-text-secondary)]">
+              Payload the server action would receive
+              <button type="button" onClick={copyPayload} className="inline-flex items-center gap-1 hover:text-[color:var(--color-text-primary)]">
                 <Copy className="h-3.5 w-3.5" /> {copied ? 'Copied' : 'Copy'}
               </button>
-            </div>
-            <pre className="overflow-x-auto p-3 text-[11.5px] leading-relaxed text-[color:var(--color-text-primary)]">{JSON.stringify(submitted, null, 2)}</pre>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={resetAll} className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] hover:bg-[color:var(--color-bg-secondary)]">
-              <RotateCcw className="h-3.5 w-3.5" /> Start another
-            </button>
-            <Link href="/scrape/today" className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2 text-[13px] hover:bg-[color:var(--color-bg-secondary)]">
-              My scraping list
-            </Link>
-            <Link href="/scrape" className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-[13px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]">
-              <ArrowLeft className="h-3.5 w-3.5" /> Back to Scrape
-            </Link>
-          </div>
+            </summary>
+            <pre className="overflow-x-auto border-t border-[color:var(--color-border)] p-3 text-[11.5px] leading-relaxed text-[color:var(--color-text-primary)]">{JSON.stringify(submitted, null, 2)}</pre>
+          </details>
+          <Link href="/scrape/today" className="inline-flex w-fit items-center gap-1.5 text-[12.5px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]">
+            <ArrowLeft className="h-3.5 w-3.5" /> My scraping list
+          </Link>
         </div>
       </div>
     )

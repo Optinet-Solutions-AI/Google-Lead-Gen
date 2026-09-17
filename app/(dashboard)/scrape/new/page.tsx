@@ -2,7 +2,8 @@ import { redirect } from 'next/navigation'
 import { requireAdmin } from '@/lib/auth/require-admin'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
-import { listActiveProfiles } from '../_lib/queries'
+import { getFleetQueueSnapshot, listActiveProfiles } from '../_lib/queries'
+import type { QueueEstimate } from './_components/queue-ticket'
 import { NewScrapeWizard } from './_components/new-scrape-wizard'
 import { engineDef, utcDay, type DayUsage, type QuotaPreview, type ScrapeDraft } from './_lib/wizard-helpers'
 
@@ -60,8 +61,9 @@ export default async function NewScrapePage({ searchParams }: { searchParams: Pr
   todayStart.setUTCHours(0, 0, 0, 0)
   const todayIso = todayStart.toISOString()
 
-  const [profiles, capRaw, bypassRow, usageRows, fromRow] = await Promise.all([
+  const [profiles, fleet, capRaw, bypassRow, usageRows, fromRow] = await Promise.all([
     listActiveProfiles(),
+    getFleetQueueSnapshot(),
     svc.rpc('get_system_setting', { p_key: 'daily_scrape_cap_per_user' }).then(r => r.data as unknown),
     user
       ? svc.from('user_profiles').select('bypass_scrape_cap').eq('id', user.id).maybeSingle().then(r => r.data as { bypass_scrape_cap: boolean | null } | null)
@@ -110,6 +112,18 @@ export default async function NewScrapePage({ searchParams }: { searchParams: Pr
   days.sort((a, b) => a.day.localeCompare(b.day))
   const quota: QuotaPreview = { cap, exempt, days }
 
+  // ----- live queue depth per country, for the ticket's position and wait -----
+  const queueByCountry: Record<string, QueueEstimate> = {}
+  for (const c of fleet.perCountry) {
+    queueByCountry[c.country_code] = {
+      pendingInCountry: c.pending,
+      runningInCountry: c.running,
+      capacity: c.capacity,
+      etaMinutes: c.etaMinutes,
+      totalPending: fleet.totalPending,
+    }
+  }
+
   // ----- prefill from "Edit" on the today's-queue page -----
   let prefill: Partial<ScrapeDraft> | null = null
   if (fromRow) {
@@ -143,6 +157,8 @@ export default async function NewScrapePage({ searchParams }: { searchParams: Pr
       quota={quota}
       userKey={userKey}
       prefill={prefill}
+      queueByCountry={queueByCountry}
+      totalPending={fleet.totalPending}
     />
   )
 }
