@@ -662,7 +662,6 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                         <span className="font-medium text-[color:var(--color-text-primary)]">{dayLabel(quotaDay)}</span>.
                       </p>
                     )}
-                    <QuotaStatus quota={quota} day={quotaDay} variant="full" />
                   </div>
                 )}
               </>
