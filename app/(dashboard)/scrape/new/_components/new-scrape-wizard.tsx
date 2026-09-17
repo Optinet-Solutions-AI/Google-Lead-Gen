@@ -129,8 +129,8 @@ function defaultDraft(): WizardDraft {
  * One option.
  *
  * `selected` means the operator actually picked this — it fills in and gets a
- * check. `isDefault` only suggests: a soft outline and a Default label, with no
- * check, so a step never looks answered before it is.
+ * check. `isDefault` only suggests, with a dashed outline and no check, so a
+ * step never looks answered before it is.
  */
 function Tile({
   selected,
@@ -172,11 +172,6 @@ function Tile({
       {selected && (
         <span className="absolute right-1.5 top-1.5 rounded-full bg-[color:var(--color-accent-hover)] p-0.5 text-white">
           <Check className="h-3 w-3" />
-        </span>
-      )}
-      {suggested && (
-        <span className="absolute left-1.5 top-1.5 rounded-full border border-[color:var(--color-accent-hover)] bg-[color:var(--color-bg-primary)] px-1.5 text-[9px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
-          Default
         </span>
       )}
       {children}

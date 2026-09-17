@@ -108,6 +108,23 @@ export function QueueTicket({ info, onCreateAnother }: { info: TicketInfo; onCre
             <span className={`h-1.5 w-1.5 rounded-full ${scheduled ? 'bg-sky-600' : 'bg-amber-600'}`} />
             {scheduled ? 'Scheduled' : 'Pending'}
           </span>
+
+          {/* Straight under the number, where the hand already is. */}
+          <div className="mt-5 flex w-full flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={onCreateAnother}
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-[color:var(--color-text-primary)] px-5 py-3.5 text-[14px] font-semibold text-white hover:opacity-90"
+            >
+              <Plus className="h-[18px] w-[18px]" /> Create another scrape
+            </button>
+            <Link
+              href="/scrape"
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-primary)] px-5 py-3.5 text-[14px] font-semibold text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)]"
+            >
+              <Table2 className="h-[18px] w-[18px]" /> View scraping table
+            </Link>
+          </div>
         </div>
 
         {/* Perforation */}
@@ -156,22 +173,6 @@ export function QueueTicket({ info, onCreateAnother }: { info: TicketInfo; onCre
             </ul>
           </div>
         )}
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onCreateAnother}
-          className="inline-flex items-center gap-1.5 rounded-md bg-[color:var(--color-text-primary)] px-4 py-2.5 text-[13px] font-medium text-white hover:opacity-90"
-        >
-          <Plus className="h-4 w-4" /> Create another scrape
-        </button>
-        <Link
-          href="/scrape"
-          className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-2.5 text-[13px] font-medium text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)]"
-        >
-          <Table2 className="h-4 w-4" /> View scraping table
-        </Link>
       </div>
     </div>
   )
