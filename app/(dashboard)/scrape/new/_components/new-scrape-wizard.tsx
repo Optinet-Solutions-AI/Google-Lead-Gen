@@ -90,6 +90,7 @@ type StepKey =
   | 'keywords'
   | 'enrichment'
   | 'topn'
+  | 'save'
   | 'review'
 
 const TOP_N_PRESETS = [10, 25, 50, 100] as const
@@ -291,13 +292,13 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
 
   const steps = useMemo<StepKey[]>(() => {
     const s: StepKey[] = ['start', 'config']
-    if (configChoice === 'saved') return [...s, 'keywords', 'review']
+    if (configChoice === 'saved') return [...s, 'keywords', 'save', 'review']
     s.push('source', 'country', 'language', 'pages')
     if (isSerp) s.push('view')
     s.push('keywords')
     if (isSerp) s.push('enrichment')
     if (isSocial) s.push('topn')
-    s.push('review')
+    s.push('save', 'review')
     return s
   }, [configChoice, isSerp, isSocial])
 
@@ -495,9 +496,9 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
   // draft cannot cause a mismatch.
   if (!isClient) {
     return (
-      <div className="mx-auto w-full max-w-6xl px-4 py-4 md:px-6 md:py-5">
+      <div className="mx-auto w-full max-w-4xl px-4 py-4 md:px-6 md:py-5">
         <Header quota={quota} day={today} />
-        <div className="mt-4 h-[360px] animate-pulse rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)]/40" />
+        <div className="mt-4 h-[400px] animate-pulse rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)]/40" />
       </div>
     )
   }
@@ -540,7 +541,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
   const progress = ((stepIndex + 1) / steps.length) * 100
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-4 md:px-6 md:py-5">
+    <div className="mx-auto w-full max-w-4xl px-4 py-4 md:px-6 md:py-5">
       <Header quota={quota} day={quotaDay} />
 
       {restored && !dismissedResume && (
@@ -564,9 +565,11 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
         <div className="h-full rounded-full bg-[color:var(--color-accent-hover)] transition-all duration-300" style={{ width: `${progress}%` }} />
       </div>
 
-      <div className="mt-4 lg:grid lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start lg:gap-5">
+      <div className="mt-4">
         <section className="flex flex-col rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
-          <div className="flex-1 p-4 md:p-5">
+          {/* A floor on the content height so short steps do not make the card
+              jump between one answer and the next. Tall steps still grow. */}
+          <div className="flex-1 p-4 md:p-5 min-h-[330px] sm:min-h-[360px]">
             {step === 'start' && (
               <>
                 <StepHeading title="When should this scrape run?">
@@ -960,6 +963,58 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
               </>
             )}
 
+            {step === 'save' && (
+              <>
+                <StepHeading title="Save this setup for next time?">
+                  A saved setup keeps the source, country, language, pages, device and enrichment stages, so your next scrape only
+                  needs keywords. It is stored in this browser under your account, never on the server, and replaces whatever you
+                  saved before. Keywords are never part of it.
+                </StepHeading>
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  <Tile selected={!saveConfig} isDefault onClick={() => pick(() => setSaveConfig(false))}>
+                    <X className="h-5 w-5" />
+                    <span className="text-[13.5px] font-medium">Do not save</span>
+                    <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Use it this once</span>
+                  </Tile>
+                  <Tile selected={saveConfig} onClick={() => pick(() => setSaveConfig(true))}>
+                    <Star className="h-5 w-5" />
+                    <span className="text-[13.5px] font-medium">Save this setup</span>
+                    <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">
+                      {savedConfig ? 'Replaces the one you saved before' : 'Offered on the next scrape'}
+                    </span>
+                  </Tile>
+                </div>
+                <div className="mt-3 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] p-3">
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--color-text-secondary)]">
+                    What would be saved
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] text-[color:var(--color-text-secondary)]">
+                    <span className="inline-flex items-center gap-1.5">
+                      <EngineMono engine={engine} size="sm" />
+                      {def?.label}
+                    </span>
+                    <span>{country ? `${flagEmoji(country)} ${profile?.country_name ?? country}` : 'no country yet'}</span>
+                    <span>{langName(language)}</span>
+                    <span>{pages} page{pages === 1 ? '' : 's'}</span>
+                    {isSerp && <span>{viewMode === 'both' ? 'desktop and mobile' : viewMode === 'desktop' ? 'desktop only' : 'mobile only'}</span>}
+                    {isSerp && (
+                      <span>
+                        {enrichChoice === 'stages' && stages.length > 0
+                          ? stages.map(k => ENRICHMENT_STAGES.find(s => s.key === k)?.label ?? k).join(', ')
+                          : 'no enrichment'}
+                      </span>
+                    )}
+                    {isSocial && <span>{topChoice === 'all' ? 'keep all' : `top ${topN} by followers`}</span>}
+                  </div>
+                  {savedConfig && (
+                    <p className="mt-2 text-[11.5px] text-[color:var(--color-text-secondary)]">
+                      You currently have a setup saved from {new Date(savedConfig.savedAt).toLocaleDateString()}.
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+
             {step === 'review' && (
               <>
                 <StepHeading title="Check and start">
@@ -982,13 +1037,6 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
                       <input id="run_anyway" type="checkbox" checked={runAnyway} onChange={e => setRunAnyway(e.target.checked)} className="h-4 w-4 accent-[color:var(--color-accent-hover)]" />
                       Run duplicates anyway
                     </label>
-                    <label className="mt-2 flex items-center gap-2 text-[13px]" htmlFor="save_config">
-                      <input id="save_config" type="checkbox" checked={saveConfig} onChange={e => setSaveConfig(e.target.checked)} className="h-4 w-4 accent-[color:var(--color-accent-hover)]" />
-                      Save this setup as my saved configuration
-                    </label>
-                    <p className="mt-1 pl-6 text-[11.5px] text-[color:var(--color-text-secondary)]">
-                      Stores everything except the keywords, in this browser, for your account only.
-                    </p>
                   </div>
                   <Note>Preview build: Submit shows the payload and queues nothing.</Note>
                 </div>
@@ -1029,15 +1077,6 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
             </div>
           )}
         </section>
-
-        <aside className="mt-4 lg:mt-0">
-          <div className="lg:sticky lg:top-4">
-            <div className="rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-4">
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--color-text-secondary)]/70">Your scrape</div>
-              <SummaryList draft={buildDraft()} profile={profile} onEdit={k => setStepIdx(Math.max(0, steps.indexOf(k)))} steps={steps} />
-            </div>
-          </div>
-        </aside>
       </div>
     </div>
   )
@@ -1062,8 +1101,8 @@ function Header({ quota, day }: { quota: QuotaPreview; day: string }) {
   )
 }
 
-type EditKey =
-  | 'start' | 'config' | 'source' | 'country' | 'language' | 'pages' | 'view' | 'keywords' | 'enrichment' | 'topn' | 'review'
+/** Steps a summary line can jump back to. Mirrors StepKey. */
+type EditKey = StepKey
 
 function SummaryList({
   draft,
