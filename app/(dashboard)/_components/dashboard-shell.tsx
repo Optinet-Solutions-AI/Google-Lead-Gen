@@ -22,7 +22,10 @@ import {
   LineChart,
   ListChecks,
   LogOut,
+  FileBarChart,
+  FlaskConical,
   Menu,
+  PlugZap,
   MessageCircle,
   Search,
   Settings,
@@ -100,7 +103,10 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Scrape',
         href: '/scrape',
         icon: Search,
-        match: (p: string) => p.startsWith('/scrape'),
+        // /scrape/new and /scrape/today belong to the "On Development"
+        // group below, so they must not light this entry up too.
+        match: (p: string) =>
+          p.startsWith('/scrape') && !p.startsWith('/scrape/new') && !p.startsWith('/scrape/today'),
       },
       {
         label: 'Leads',
@@ -142,6 +148,20 @@ const NAV_GROUPS: NavGroup[] = [
         href: '/activity',
         icon: Clock,
         match: (p: string) => p.startsWith('/activity'),
+      },
+    ],
+  },
+  {
+    // Features being built in the open. Admin-only while in preview; the
+    // pages themselves re-check admin status server-side.
+    label: 'On Development',
+    items: [
+      {
+        label: 'New Scrape',
+        href: '/scrape/new',
+        icon: FlaskConical,
+        match: (p: string) => p.startsWith('/scrape/new') || p.startsWith('/scrape/today'),
+        adminOnly: true,
       },
     ],
   },
@@ -196,6 +216,18 @@ const ADMIN_NAV_ITEMS: ReadonlyArray<NavItem> = [
     href: '/admin/users',
     icon: Users,
     match: (p: string) => p.startsWith('/admin/users'),
+  },
+  {
+    label: 'Integrations (Admin)',
+    href: '/admin/integrations',
+    icon: PlugZap,
+    match: (p: string) => p.startsWith('/admin/integrations'),
+  },
+  {
+    label: 'Reports (Admin)',
+    href: '/admin/reports',
+    icon: FileBarChart,
+    match: (p: string) => p.startsWith('/admin/reports'),
   },
   {
     label: 'Alert Recipients (Admin)',

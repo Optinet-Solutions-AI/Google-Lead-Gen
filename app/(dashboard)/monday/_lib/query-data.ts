@@ -25,6 +25,21 @@ function sanitizeSearchTerm(term: string): string {
   return term.replace(/[,()*]/g, '').trim()
 }
 
+/**
+ * Row count only — used by the search-first view, which shows how big a
+ * board is without pulling tens of thousands of rows into the browser.
+ */
+export async function countTable(config: TableConfig): Promise<number> {
+  const supabase = createServiceClient()
+  const { count, error } = await supabase
+    .from(config.sqlTable)
+    .select('*', { count: 'exact', head: true })
+  if (error) {
+    throw new Error(`Supabase count on ${config.sqlTable} failed: ${error.message}`)
+  }
+  return count ?? 0
+}
+
 /** Runs the query and returns the current page + total count. */
 export async function queryTable(
   config: TableConfig,

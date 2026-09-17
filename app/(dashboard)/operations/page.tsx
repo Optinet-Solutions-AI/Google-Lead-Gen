@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { Cpu, Loader2 } from 'lucide-react'
+import { Cpu, Loader2, UserRound } from 'lucide-react'
 import { requireAdmin } from '@/lib/auth/require-admin'
 import { AutoRefresh } from '../scrape/_components/auto-refresh'
 import {
@@ -199,6 +199,22 @@ function WorkerCard({ worker }: { worker: WorkerSlot }) {
       ].join(' ')}
     >
       <div className="flex items-center gap-2">
+        {/* Each bot reads as a person at a desk. Hidden on phones, where the
+            row is already tight and the badge carries the same meaning. */}
+        <span
+          aria-hidden="true"
+          className={[
+            'hidden h-6 w-6 shrink-0 items-center justify-center rounded-full ring-1 sm:inline-flex',
+            busy
+              ? 'bg-emerald-100 text-emerald-700 ring-emerald-300'
+              : kind === 'scrape'
+                ? 'bg-amber-50 text-amber-700 ring-amber-200'
+                : 'bg-sky-50 text-sky-700 ring-sky-200',
+          ].join(' ')}
+          title={`${label} — ${busy ? 'busy' : 'idle'}`}
+        >
+          <UserRound className="h-3.5 w-3.5" />
+        </span>
         <span
           className={['rounded-full px-2 py-0.5 text-[10px] font-medium', kindCls].join(' ')}
         >
