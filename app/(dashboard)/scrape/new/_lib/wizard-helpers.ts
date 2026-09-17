@@ -298,6 +298,9 @@ export type SavedConfig = {
 export type WizardDraft = {
   v: 1
   stepIndex: number
+  /** Steps the operator has actually answered. A default is only shown as
+   *  chosen once its step appears here, so nothing looks done before it is. */
+  touched: string[]
   mode: 'now' | 'schedule'
   scheduledAtLocal: string
   scheduleTz: string
@@ -374,6 +377,7 @@ export function parseDraft(v: unknown): WizardDraft | null {
   return {
     v: 1,
     stepIndex: typeof d.stepIndex === 'number' && d.stepIndex >= 0 ? d.stepIndex : 0,
+    touched: Array.isArray(d.touched) ? d.touched.filter((s): s is string => typeof s === 'string') : [],
     mode: d.mode === 'schedule' ? 'schedule' : 'now',
     scheduledAtLocal: typeof d.scheduledAtLocal === 'string' ? d.scheduledAtLocal : '',
     scheduleTz: typeof d.scheduleTz === 'string' ? d.scheduleTz : 'Europe/Malta',

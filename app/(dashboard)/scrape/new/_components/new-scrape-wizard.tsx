@@ -100,6 +100,7 @@ function defaultDraft(): WizardDraft {
   return {
     v: 1,
     stepIndex: 0,
+    touched: [],
     mode: 'now',
     scheduledAtLocal: '',
     scheduleTz: 'Europe/Malta',
@@ -121,6 +122,13 @@ function defaultDraft(): WizardDraft {
 
 // ---------------------------------------------------------------- UI bits ----
 
+/**
+ * One option.
+ *
+ * `selected` means the operator actually picked this — it fills in and gets a
+ * check. `isDefault` only suggests: a soft outline and a Default label, with no
+ * check, so a step never looks answered before it is.
+ */
 function Tile({
   selected,
   isDefault,
@@ -138,19 +146,22 @@ function Tile({
   className?: string | undefined
   title?: string | undefined
 }) {
+  const suggested = isDefault && !selected
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
       title={title}
-      aria-pressed={selected}
+      aria-pressed={selected ?? false}
       className={[
         'relative flex min-h-[58px] flex-col items-center justify-center gap-1 rounded-lg border px-3 py-2.5 text-center transition-colors',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent-hover)]',
         selected
           ? 'border-[color:var(--color-accent-hover)] bg-[color:var(--color-accent)]/25 text-[color:var(--color-text-primary)]'
-          : 'border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-primary)] hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-secondary)]',
+          : suggested
+            ? 'border-dashed border-[color:var(--color-accent-hover)] bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-bg-secondary)]'
+            : 'border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] text-[color:var(--color-text-primary)] hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-bg-secondary)]',
         disabled ? 'cursor-not-allowed opacity-40 hover:bg-[color:var(--color-bg-primary)]' : '',
         className,
       ].join(' ')}
@@ -160,8 +171,8 @@ function Tile({
           <Check className="h-3 w-3" />
         </span>
       )}
-      {isDefault && !selected && (
-        <span className="absolute left-1.5 top-1.5 rounded-full bg-[color:var(--color-bg-secondary)] px-1.5 text-[9px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+      {suggested && (
+        <span className="absolute left-1.5 top-1.5 rounded-full border border-[color:var(--color-accent-hover)] bg-[color:var(--color-bg-primary)] px-1.5 text-[9px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
           Default
         </span>
       )}
@@ -246,6 +257,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
   }
 
   const [stepIdx, setStepIdx] = useState(start.stepIndex)
+  const [touched, setTouched] = useState<string[]>(start.touched)
   const [mode, setMode] = useState(start.mode)
   const [scheduledAtLocal, setScheduledAtLocal] = useState(start.scheduledAtLocal)
   const [scheduleTz, setScheduleTz] = useState(start.scheduleTz)
@@ -312,6 +324,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
     const draft: WizardDraft = {
       v: 1,
       stepIndex,
+      touched,
       mode,
       scheduledAtLocal,
       scheduleTz,
@@ -331,20 +344,34 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
     }
     writeStored(draftKey(userKey), draft)
   }, [
-    submitted, userKey, stepIndex, mode, scheduledAtLocal, scheduleTz, configChoice, engine, country,
+    submitted, userKey, stepIndex, touched, mode, scheduledAtLocal, scheduleTz, configChoice, engine, country,
     language, pages, viewMode, keywords, enrichChoice, stages, topChoice, topN, runAnyway, saveConfig,
   ])
 
+  /** True once this step has been answered, which is what turns a Default
+   *  suggestion into a filled, checked choice. */
+  const answered = touched.includes(step)
+
+  function markAnswered() {
+    setTouched(prev => (prev.includes(step) ? prev : [...prev, step]))
+  }
   function go(delta: number) {
     setStepIdx(i => Math.max(0, Math.min(i + delta, steps.length - 1)))
   }
-  /** Single-choice steps advance as soon as something is picked. */
+  /** Picking an option on a single-choice step answers it and moves on. */
   function pick(fn: () => void) {
     fn()
+    markAnswered()
     go(1)
+  }
+  /** Answers the step without advancing, for steps that need a Continue. */
+  function choose(fn: () => void) {
+    fn()
+    markAnswered()
   }
 
   function applySaved(cfg: SavedConfig) {
+    markAnswered()
     setConfigChoice('saved')
     setEngine(cfg.search_engine)
     setCountry(cfg.country_code)
@@ -577,12 +604,12 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
                   day&rsquo;s quota the moment you submit, so different days can have different amounts left.
                 </StepHeading>
                 <div className="grid gap-2.5 sm:grid-cols-2">
-                  <Tile selected={mode === 'now'} isDefault onClick={() => pick(() => setMode('now'))} disabled={todayFull}>
+                  <Tile selected={answered && mode === 'now'} isDefault onClick={() => pick(() => setMode('now'))} disabled={todayFull}>
                     <ListPlus className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Add to queue now</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Starts when a worker is free</span>
                   </Tile>
-                  <Tile selected={mode === 'schedule'} onClick={() => setMode('schedule')}>
+                  <Tile selected={answered && mode === 'schedule'} onClick={() => choose(() => setMode('schedule'))}>
                     <CalendarClock className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Schedule for later</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Runs at a time you choose</span>
@@ -642,13 +669,13 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
                   time, so only the keywords change. You can save the current setup at the end of this form.
                 </StepHeading>
                 <div className="grid gap-2.5 sm:grid-cols-2">
-                  <Tile selected={configChoice === 'new'} isDefault={!savedConfig} onClick={() => pick(() => setConfigChoice('new'))}>
+                  <Tile selected={answered && configChoice === 'new'} isDefault={!savedConfig} onClick={() => pick(() => setConfigChoice('new'))}>
                     <Plus className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Set everything up</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Choose each option</span>
                   </Tile>
                   <Tile
-                    selected={configChoice === 'saved'}
+                    selected={answered && configChoice === 'saved'}
                     isDefault={!!savedConfig}
                     onClick={() => savedConfig && applySaved(savedConfig)}
                     disabled={!savedConfig}
@@ -696,7 +723,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
                   {ENGINES.map(e => (
                     <Tile
                       key={e.key}
-                      selected={engine === e.key}
+                      selected={answered && engine === e.key}
                       isDefault={e.key === DEFAULT_ENGINE}
                       onClick={() =>
                         pick(() => {
@@ -737,7 +764,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
                     return (
                       <Tile
                         key={p.country_code}
-                        selected={country === p.country_code}
+                        selected={answered && country === p.country_code}
                         disabled={bingOff}
                         onClick={() => pick(() => { setCountry(p.country_code); setLanguage('en') })}
                         title={
@@ -766,7 +793,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
                 </StepHeading>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                   {langOptions(profile?.languages).map(code => (
-                    <Tile key={code} selected={language === code} isDefault={code === 'en'} onClick={() => pick(() => setLanguage(code))}>
+                    <Tile key={code} selected={answered && language === code} isDefault={code === 'en'} onClick={() => pick(() => setLanguage(code))}>
                       <span className="text-[13.5px] font-medium">{langName(code)}</span>
                       <span className="text-[10.5px] uppercase text-[color:var(--color-text-secondary)]">{code}</span>
                     </Tile>
@@ -783,7 +810,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
                 </StepHeading>
                 <div className="grid grid-cols-5 gap-2 sm:grid-cols-10">
                   {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
-                    <Tile key={n} selected={pages === n} isDefault={n === 1} onClick={() => pick(() => setPages(n))} className="min-h-[48px]">
+                    <Tile key={n} selected={answered && pages === n} isDefault={n === 1} onClick={() => pick(() => setPages(n))} className="min-h-[48px]">
                       <span className="text-[16px] font-semibold tabular-nums">{n}</span>
                     </Tile>
                   ))}
@@ -798,17 +825,17 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
                   mobile only. Both runs the pages twice and merges them, which takes longer but misses less.
                 </StepHeading>
                 <div className="grid gap-2.5 sm:grid-cols-3">
-                  <Tile selected={viewMode === 'both'} isDefault onClick={() => pick(() => setViewMode('both'))}>
+                  <Tile selected={answered && viewMode === 'both'} isDefault onClick={() => pick(() => setViewMode('both'))}>
                     <MonitorSmartphone className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Both</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Two passes, merged</span>
                   </Tile>
-                  <Tile selected={viewMode === 'desktop'} onClick={() => pick(() => setViewMode('desktop'))}>
+                  <Tile selected={answered && viewMode === 'desktop'} onClick={() => pick(() => setViewMode('desktop'))}>
                     <Monitor className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Desktop only</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Fastest</span>
                   </Tile>
-                  <Tile selected={viewMode === 'mobile'} onClick={() => pick(() => setViewMode('mobile'))}>
+                  <Tile selected={answered && viewMode === 'mobile'} onClick={() => pick(() => setViewMode('mobile'))}>
                     <Smartphone className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Mobile only</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Mobile-only campaigns</span>
@@ -880,12 +907,12 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
                   Stages you choose are remembered for your next scrape.
                 </StepHeading>
                 <div className="grid gap-2.5 sm:grid-cols-2">
-                  <Tile selected={enrichChoice === 'none'} isDefault onClick={() => { setEnrichChoice('none'); setStages([]) }}>
+                  <Tile selected={answered && enrichChoice === 'none'} isDefault onClick={() => choose(() => { setEnrichChoice('none'); setStages([]) })}>
                     <X className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">No enrichment</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Just the results list</span>
                   </Tile>
-                  <Tile selected={enrichChoice === 'stages'} onClick={() => setEnrichChoice('stages')}>
+                  <Tile selected={answered && enrichChoice === 'stages'} onClick={() => choose(() => setEnrichChoice('stages'))}>
                     <FlaskConical className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Choose stages</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">
@@ -941,11 +968,11 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
                 </StepHeading>
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
                   {TOP_N_PRESETS.map(n => (
-                    <Tile key={n} selected={topChoice === 'n' && topN === n} onClick={() => pick(() => { setTopChoice('n'); setTopN(n) })} className="min-h-[48px]">
+                    <Tile key={n} selected={answered && topChoice === 'n' && topN === n} onClick={() => pick(() => { setTopChoice('n'); setTopN(n) })} className="min-h-[48px]">
                       <span className="text-[14.5px] font-semibold tabular-nums">Top {n}</span>
                     </Tile>
                   ))}
-                  <Tile selected={topChoice === 'all'} onClick={() => pick(() => setTopChoice('all'))} className="min-h-[48px]">
+                  <Tile selected={answered && topChoice === 'all'} onClick={() => pick(() => setTopChoice('all'))} className="min-h-[48px]">
                     <span className="text-[14.5px] font-semibold">All</span>
                   </Tile>
                 </div>
@@ -956,7 +983,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
                     type="number"
                     min={1}
                     value={topChoice === 'n' ? topN : ''}
-                    onChange={e => { setTopChoice('n'); setTopN(Number(e.target.value)) }}
+                    onChange={e => choose(() => { setTopChoice('n'); setTopN(Number(e.target.value)) })}
                     className="w-24 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2 py-1.5 text-[13px] text-[color:var(--color-text-primary)] focus:border-[color:var(--color-accent)] focus:outline-none"
                   />
                 </label>
@@ -971,12 +998,12 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
                   saved before. Keywords are never part of it.
                 </StepHeading>
                 <div className="grid gap-2.5 sm:grid-cols-2">
-                  <Tile selected={!saveConfig} isDefault onClick={() => pick(() => setSaveConfig(false))}>
+                  <Tile selected={answered && !saveConfig} isDefault onClick={() => pick(() => setSaveConfig(false))}>
                     <X className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Do not save</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Use it this once</span>
                   </Tile>
-                  <Tile selected={saveConfig} onClick={() => pick(() => setSaveConfig(true))}>
+                  <Tile selected={answered && saveConfig} onClick={() => pick(() => setSaveConfig(true))}>
                     <Star className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Save this setup</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">
@@ -1065,7 +1092,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill }: Props) {
               {needsContinue || isLast ? (
                 <button
                   type="button"
-                  onClick={() => (isLast ? submit() : go(1))}
+                  onClick={() => { markAnswered(); if (isLast) submit(); else go(1) }}
                   disabled={!current.ok}
                   className="inline-flex items-center gap-1 rounded-md bg-[color:var(--color-text-primary)] px-4 py-2 text-[13px] font-medium text-white disabled:opacity-40"
                 >
