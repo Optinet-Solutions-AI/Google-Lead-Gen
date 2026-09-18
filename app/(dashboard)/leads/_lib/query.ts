@@ -4,6 +4,7 @@ import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
 import type { Filter, Sort } from '@/lib/filters/types'
 import { applyShadowFilter, getShadowContext } from '@/lib/shadow-filter'
 import { createServiceClient } from '@/lib/supabase/service'
+import { DEFAULT_RECENCY_BANDS, recencyBand, type RecencyBand, type RecencyBands } from '@/lib/website-profiles/recency'
 
 // 0 is the sentinel for "All rows" — substituted with a soft cap
 // in queryLeads so a multi-thousand-row table doesn't lock up the
@@ -53,6 +54,15 @@ export type LeadRow = {
   s_tag_id: number | null
   created_at: string
   is_not_relevant: boolean
+  /** Obvious non-affiliate category set by the system (denylist, social host,
+   *  known list, OpenAI). Hidden by default like not-relevant rows. */
+  system_flag: string | null
+  // Website profile (one per website) — when the website was last seen on
+  // any scrape and how often, plus the colour band for the table dot.
+  profile_id: number | null
+  last_seen_at: string | null
+  appearance_count: number | null
+  recency_band: RecencyBand
   // Attribution — denormalized from scrape_queue at query time so the
   // table can show "by <display>" without an extra round-trip.
   created_by_username: string | null
@@ -84,6 +94,8 @@ export type LeadsQueryOptions = {
    *  are hidden from the default /leads view. Pass true to surface
    *  them (with the badge) e.g. for an admin "show hidden" toggle. */
   includeNotRelevant?: boolean
+  /** Recency colour bands (admin setting). Defaults to the seed values. */
+  recencyBands?: RecencyBands
 }
 
 export type LeadsQueryResult = {
@@ -118,7 +130,9 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
         'has_s_tags, is_stag_overridden_at',
         's_tags_checked_at, s_tag_id',
         'created_at',
-        'is_not_relevant',
+        'is_not_relevant, system_flag, profile_id',
+        // Website profile — FK google_lead_gen_table.profile_id → website_profiles(id).
+        'website_profiles:website_profiles!profile_id(last_seen_at, appearance_count)',
         // FK join — google_lead_gen_table.scrape_job_id → scrape_queue(id).
         // PostgREST flattens this into a nested object on the row.
         'scrape_queue:scrape_queue!scrape_job_id(created_by_username, created_by_display)',
@@ -133,7 +147,7 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
   // Default: hide not-relevant rows (Monday not_relevant board match
   // OR user-flagged). `?show_hidden=1` flips includeNotRelevant=true.
   if (!opts.includeNotRelevant) {
-    query = query.eq('is_not_relevant', false)
+    query = query.eq('is_not_relevant', false).is('system_flag', null)
   }
 
   if (opts.scrapeJobIds && opts.scrapeJobIds.length > 0) {
@@ -187,15 +201,22 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
   }
   // PostgREST returns the joined scrape_queue row as a nested object —
   // flatten it into the LeadRow shape callers expect.
+  const bands = opts.recencyBands ?? DEFAULT_RECENCY_BANDS
+  const nowMs = Date.now()
   const rows = (data ?? []).map(raw => {
     const r = raw as unknown as Record<string, unknown> & {
       scrape_queue: { created_by_username: string | null; created_by_display: string | null } | null
+      website_profiles: { last_seen_at: string | null; appearance_count: number | null } | null
     }
-    const { scrape_queue, ...rest } = r
+    const { scrape_queue, website_profiles, ...rest } = r
+    const lastSeen = website_profiles?.last_seen_at ?? null
     return {
       ...rest,
       created_by_username: scrape_queue?.created_by_username ?? null,
       created_by_display: scrape_queue?.created_by_display ?? null,
+      last_seen_at: lastSeen,
+      appearance_count: website_profiles?.appearance_count ?? null,
+      recency_band: recencyBand(lastSeen, bands, nowMs),
     }
   }) as unknown as LeadRow[]
   return { rows, total: count ?? 0 }

@@ -3,6 +3,7 @@ import { CronExpressionParser } from 'cron-parser'
 import { createServiceClient } from '@/lib/supabase/service'
 import { requireBearer } from '@/lib/auth/bearer'
 import { decodeAdUrl } from '@/lib/decode-ad-url'
+import { runSystemFlagLlmPass } from '@/lib/website-profiles/system-flag-llm'
 
 // Vercel cron sends GET — alias to the same handler as manual POSTs.
 export async function GET(request: NextRequest) {
@@ -310,6 +311,13 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // ----------------------------------------------------------------
+  // Website system flag — ask OpenAI about a handful of never-judged new
+  // websites (obvious non-affiliates skip enrichment). No-op unless the
+  // admin turned `system_flag_llm_enabled` on and a key is configured.
+  // ----------------------------------------------------------------
+  const systemFlagLlm = await runSystemFlagLlmPass(svc, { limit: 5, timeoutMs: 6_000 })
+
   return Response.json({
     ok: true,
     now: now.toISOString(),
@@ -317,6 +325,7 @@ export async function POST(request: NextRequest) {
     enrichment_advances: advances,
     ppc_screenshot_enqueued: ppcEnqueued,
     affiliate_scoring_enqueued: affEnqueued,
+    system_flag_llm: systemFlagLlm,
     orphan_checkpoints_cancelled: orphansCancelled,
     duplicate_scrapes_cancelled: dupesCancelled,
   })

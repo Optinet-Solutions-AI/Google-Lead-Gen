@@ -3,7 +3,8 @@
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
-import { Check, CheckSquare, ExternalLink, EyeOff, Link2, Send, Square, Zap } from 'lucide-react'
+import { Check, CheckSquare, ExternalLink, EyeOff, Link2, Send, ShieldAlert, Square, Zap } from 'lucide-react'
+import { RECENCY_DOT, RECENCY_LABEL, type RecencyBand } from '@/lib/website-profiles/recency'
 import { isInteractiveTarget } from '@/lib/dom/is-interactive-target'
 import { SortHeader } from '../../monday/_components/sort-header'
 import { RowContextMenu, type ContextMenuAction } from '../../_components/row-context-menu'
@@ -609,7 +610,7 @@ export function LeadsTable({
                 {jobContext ? (
                   <>
                     <Td className="max-w-[220px] truncate p-0" title={row.domain ?? ''}>
-                      <DomainButton domain={row.domain} onOpen={() => setOpenLeadId(row.id)} />
+                      <DomainButton domain={row.domain} band={row.recency_band} lastSeenAt={row.last_seen_at} appearanceCount={row.appearance_count} systemFlag={row.system_flag} onOpen={() => setOpenLeadId(row.id)} />
                     </Td>
                     <Td>
                       <TypeBadge type={row.result_type} />
@@ -644,7 +645,7 @@ export function LeadsTable({
                     </Td>
                     <Td>{row.overall_position ?? '—'}</Td>
                     <Td className="p-0">
-                      <DomainButton domain={row.domain} onOpen={() => setOpenLeadId(row.id)} />
+                      <DomainButton domain={row.domain} band={row.recency_band} lastSeenAt={row.last_seen_at} appearanceCount={row.appearance_count} systemFlag={row.system_flag} onOpen={() => setOpenLeadId(row.id)} />
                     </Td>
                   </>
                 )}
@@ -1010,19 +1011,48 @@ function NotRelevantPill() {
 
 function DomainButton({
   domain,
+  band,
+  lastSeenAt,
+  appearanceCount,
+  systemFlag,
   onOpen,
 }: {
   domain: string | null
+  band?: RecencyBand | undefined
+  lastSeenAt?: string | null | undefined
+  appearanceCount?: number | null | undefined
+  systemFlag?: string | null | undefined
   onOpen: () => void
 }) {
+  // Recency dot: colour = how recently this WEBSITE (not this row) was last
+  // seen on any scrape, from its profile. Title carries the plain words.
+  const dotTitle = band
+    ? `${RECENCY_LABEL[band]}${lastSeenAt ? ` · last seen ${new Date(lastSeenAt).toLocaleDateString()}` : ''}${
+        appearanceCount != null ? ` · seen ${appearanceCount}×` : ''
+      }`
+    : undefined
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="block w-full truncate px-3 py-2 text-left font-medium text-[color:var(--color-text-primary)] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[color:var(--color-accent)]"
+      className="flex w-full min-w-0 items-center gap-1.5 px-3 py-2 text-left font-medium text-[color:var(--color-text-primary)] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[color:var(--color-accent)]"
     >
-      {domain ?? '—'}
+      {band && <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${RECENCY_DOT[band]}`} title={dotTitle} />}
+      <span className="truncate" title={dotTitle}>{domain ?? '—'}</span>
+      {systemFlag && <SystemFlagPill flag={systemFlag} />}
     </button>
+  )
+}
+
+function SystemFlagPill({ flag }: { flag: string }) {
+  return (
+    <span
+      title={`System flag: ${flag.replace(/_/g, ' ')} — an obvious non-affiliate. Hidden from the default view, skipped by enrichment.`}
+      className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-700"
+    >
+      <ShieldAlert className="h-2.5 w-2.5" />
+      {flag.replace(/_/g, ' ')}
+    </span>
   )
 }
 

@@ -198,3 +198,67 @@ export async function setProxyBandwidthConfigAction(
     message: `Saved — plan size ${limitGb} GB, warns below ${thresholdGb} GB. The balance refreshes from GoLogin every 30 minutes.`,
   }
 }
+
+/**
+ * Website profile controls: verdict expiry per check, recency colour bands,
+ * one-row-per-website dedupe, and the OpenAI non-affiliate flag pass.
+ */
+export async function setWebsiteProfileConfigAction(
+  _prev: SettingState,
+  fd: FormData,
+): Promise<SettingState> {
+  const auth = await requireAdmin()
+  if (!auth.ok) return { status: 'error', error: auth.error }
+
+  const days = (name: string) => {
+    const n = Number(String(fd.get(name) ?? '').trim())
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : NaN
+  }
+  const ttl = {
+    affiliate: days('ttl_affiliate'),
+    rooster: days('ttl_rooster'),
+    contact: days('ttl_contact'),
+    stags: days('ttl_stags'),
+  }
+  const bands = { fresh: days('band_fresh'), recent: days('band_recent'), aging: days('band_aging') }
+
+  if (Object.values(ttl).some(Number.isNaN)) {
+    return { status: 'error', error: 'Every expiry must be a whole number of days, 1 or more.' }
+  }
+  if (Object.values(bands).some(Number.isNaN)) {
+    return { status: 'error', error: 'Every recency band must be a whole number of days, 1 or more.' }
+  }
+  if (!(bands.fresh < bands.recent && bands.recent < bands.aging)) {
+    return { status: 'error', error: 'Recency bands must increase: fresh < recent < aging.' }
+  }
+
+  const dedupe = fd.get('dedupe') === 'on'
+  const llmFlag = fd.get('llm_flag') === 'on'
+
+  const svc = createServiceClient()
+  const writes: Array<[string, unknown]> = [
+    ['verdict_ttl_days', ttl],
+    ['recency_bands_days', bands],
+    ['profile_dedupe_enabled', dedupe],
+    ['system_flag_llm_enabled', llmFlag],
+  ]
+  for (const [key, value] of writes) {
+    const { error } = await svc.rpc('set_system_setting', { p_key: key, p_value: value })
+    if (error) return { status: 'error', error: `${key}: ${error.message}` }
+  }
+
+  await logActivity({
+    action: 'system_settings.website_profile_config',
+    entity_type: 'system_setting',
+    entity_id: null,
+    details: { ttl, bands, dedupe, llm_flag: llmFlag },
+  })
+
+  revalidatePath('/admin/system')
+  revalidatePath('/leads')
+  revalidatePath('/monday/search')
+  return {
+    status: 'ok',
+    message: `Saved — affiliate ${ttl.affiliate}d, rooster ${ttl.rooster}d, contacts ${ttl.contact}d, s-tags ${ttl.stags}d; bands ${bands.fresh}/${bands.recent}/${bands.aging}; dedupe ${dedupe ? 'on' : 'off'}; OpenAI flag ${llmFlag ? 'on' : 'off'}.`,
+  }
+}

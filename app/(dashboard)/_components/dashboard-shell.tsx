@@ -28,6 +28,7 @@ import {
   PlugZap,
   MessageCircle,
   Search,
+  SearchCheck,
   Settings,
   Star,
   Users,
@@ -121,6 +122,14 @@ const NAV_GROUPS: NavGroup[] = [
         href: '/monday/leads',
         icon: Database,
         match: (p: string) => p.startsWith('/monday/leads') || p.startsWith('/monday/updates'),
+      },
+      {
+        // "Is this website already on Monday?" — searches our mirror of
+        // all four boards and shows our own website profile next to it.
+        label: 'Monday Search',
+        href: '/monday/search',
+        icon: SearchCheck,
+        match: (p: string) => p.startsWith('/monday/search'),
       },
       {
         // Open to all signed-in users so the whole ops team can clear
