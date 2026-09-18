@@ -247,16 +247,31 @@ async function enigmaApiGet<T>(path: string, key: string): Promise<T> {
   }
 }
 
+/** The Enigma Customer API key: the `enigma_api_key` system setting when an
+ *  admin has pasted one on /admin/integrations, else the env var. */
+async function readEnigmaKey(): Promise<string | null> {
+  try {
+    const { createServiceClient } = await import('@/lib/supabase/service')
+    const { data } = await createServiceClient().rpc('get_system_setting', { p_key: 'enigma_api_key' })
+    if (typeof data === 'string' && data.trim()) return data.trim()
+  } catch {
+    // Setting unavailable — fall through to the environment.
+  }
+  return process.env.ENIGMA_API_KEY?.trim() || null
+}
+
 /**
  * Read remaining proxy bandwidth from the Enigma Customer API. Throws (so
  * the poller reports it and skips writing a bogus snapshot) when the key is
  * missing/invalid or the API shape changed.
  */
-export async function fetchEnigmaBandwidth(): Promise<ProxyTraffic> {
-  const key = process.env.ENIGMA_API_KEY
+export async function fetchEnigmaBandwidth(overrideKey?: string): Promise<ProxyTraffic> {
+  // DB setting first (editable on /admin/integrations), env as the fallback,
+  // so the key can be rotated without a redeploy.
+  const key = overrideKey ?? (await readEnigmaKey())
   if (!key) {
     throw new Error(
-      'ENIGMA_API_KEY is not set — mint an epk_ key under the Enigma dashboard (Customer API) and add it to the env.',
+      'No Enigma API key — mint an epk_ key under the Enigma dashboard (Customer API) and paste it on /admin/integrations, or set ENIGMA_API_KEY.',
     )
   }
 

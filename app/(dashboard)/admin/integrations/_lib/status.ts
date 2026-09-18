@@ -1,5 +1,6 @@
 import 'server-only'
 import { createServiceClient } from '@/lib/supabase/service'
+import { fetchEnigmaBandwidth, BYTES_PER_GB } from '@/lib/proxy-bandwidth'
 import {
   ENABLED_SETTING_KEY,
   INTEGRATIONS,
@@ -245,8 +246,23 @@ export async function probeIntegration(key: IntegrationKey): Promise<ProbeResult
           ? { ok: true, detail: `Reachable (HTTP ${res.status}).` }
           : { ok: false, detail: `HTTP ${res.status} from PMS.` }
       }
-      case 'proxy':
-        return { ok: false, detail: 'Proxies are configured inside each GoLogin profile and cannot be tested from here.' }
+      case 'proxy': {
+        // Tests the Enigma Customer API key (the balance reading). It does NOT
+        // test whether the proxy itself is routable from the VMs — that runs
+        // inside the GoLogin profile and only a VM can prove it.
+        const token = await effectiveSecret(def)
+        if (!token) return { ok: false, detail: 'No Enigma API key configured. The proxy connection itself lives in each GoLogin profile.' }
+        try {
+          const traffic = await fetchEnigmaBandwidth(token)
+          const gb = (n: number | null) => (n === null ? '?' : (n / BYTES_PER_GB).toFixed(1))
+          return {
+            ok: true,
+            detail: `Key valid. ${gb(traffic.remainingBytes)} GB remaining. (Does not prove the proxy is reachable from the VMs.)`,
+          }
+        } catch (err) {
+          return { ok: false, detail: err instanceof Error ? err.message.slice(0, 200) : String(err) }
+        }
+      }
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)

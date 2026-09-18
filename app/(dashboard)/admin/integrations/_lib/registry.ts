@@ -125,12 +125,17 @@ export const INTEGRATIONS: ReadonlyArray<IntegrationDef> = [
   },
   {
     key: 'proxy',
-    name: 'Residential proxy',
-    purpose: 'Country-matched exit IPs for the VM browsers.',
-    breaks: 'Every VM scrape fails its proxy check; results are geographically wrong.',
-    usedBy: ['VM scrape workers', 'Captcha IP matching'],
-    secret: { kind: 'env', envNames: ['(configured inside each GoLogin profile)'] },
-    probeable: false,
+    name: 'Residential proxy (Enigma)',
+    purpose:
+      'Country-matched exit IPs for the VM browsers. The connection itself lives inside each ' +
+      'GoLogin profile; the key here is Enigma\u2019s Customer API key, used to read the remaining balance.',
+    breaks:
+      'Without the key the bandwidth reading stops updating. If the proxy ITSELF is down, every VM scrape ' +
+      'fails its proxy check \u2014 fix that in the GoLogin profile / Enigma account, not here.',
+    usedBy: ['VM scrape workers', 'Captcha IP matching', 'Bandwidth poller'],
+    secret: { kind: 'db', settingKey: 'enigma_api_key', envFallback: ['ENIGMA_API_KEY'] },
+    probeable: true,
+    docsUrl: 'https://enigmaproxy.net',
     critical: true,
   },
   {
