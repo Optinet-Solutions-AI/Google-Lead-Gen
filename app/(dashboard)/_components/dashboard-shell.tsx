@@ -104,10 +104,11 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Scrape',
         href: '/scrape',
         icon: Search,
-        // /scrape/new and /scrape/today belong to the "On Development"
-        // group below, so they must not light this entry up too.
-        match: (p: string) =>
-          p.startsWith('/scrape') && !p.startsWith('/scrape/new') && !p.startsWith('/scrape/today'),
+        // /scrape/new (the create-scrape wizard) is part of this same flow,
+        // reached via the "Create scrape" button on this page — light this
+        // entry up there too. /scrape/today is a separate admin preview
+        // under "On Development" below, so it's excluded.
+        match: (p: string) => p.startsWith('/scrape') && !p.startsWith('/scrape/today'),
       },
       {
         label: 'Leads',
@@ -166,10 +167,13 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'On Development',
     items: [
       {
-        label: 'New Scrape',
-        href: '/scrape/new',
+        // /scrape/new graduated to the real create-scrape flow (reached via
+        // the "Create scrape" button on /scrape) and is no longer listed
+        // here. This page is still UI-only — Remove/Edit don't do anything yet.
+        label: "Today's Queue",
+        href: '/scrape/today',
         icon: FlaskConical,
-        match: (p: string) => p.startsWith('/scrape/new') || p.startsWith('/scrape/today'),
+        match: (p: string) => p.startsWith('/scrape/today'),
         adminOnly: true,
       },
     ],

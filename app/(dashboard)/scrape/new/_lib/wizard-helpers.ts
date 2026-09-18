@@ -1,5 +1,5 @@
 /**
- * Shared helpers for the New Scrape wizard (UI preview, admin-only).
+ * Shared helpers for the New Scrape wizard.
  *
  * Pure functions only — safe to import from both server and client
  * components. Nothing here talks to the database.

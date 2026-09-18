@@ -1,22 +1,22 @@
 'use client'
 
 /**
- * New Scrape wizard — UI PREVIEW ONLY (admin-only, "On Development").
+ * New Scrape wizard — the real way to queue a scrape, replacing the old
+ * inline form on /scrape.
  *
  * Picking an option moves to the next step, so there is no Next button on
  * single-choice steps. Progress is written to this browser after every change,
- * so a refresh or an interruption resumes instead of starting over. Nothing
- * here calls the backend: Submit shows the payload the server action would get.
+ * so a refresh or an interruption resumes instead of starting over. Submit
+ * calls the same `enqueueScrape` server action the old form used.
  */
 
 import Link from 'next/link'
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from 'react'
 import {
   ArrowLeft,
   CalendarClock,
   Check,
   ChevronLeft,
-  Copy,
   FlaskConical,
   ListPlus,
   Monitor,
@@ -28,6 +28,8 @@ import {
   Star,
   X,
 } from 'lucide-react'
+import { enqueueScrape, type DuplicateHit } from '../../actions'
+import { DuplicateWarning } from '../../_components/duplicate-warning'
 import {
   ALL_STAGE_KEYS,
   BING_DISABLED_COUNTRIES,
@@ -277,7 +279,10 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
   const [countryQuery, setCountryQuery] = useState('')
   const [submitted, setSubmitted] = useState<ScrapeDraft | null>(null)
   const [ticketRef, setTicketRef] = useState('—')
-  const [copied, setCopied] = useState(false)
+  const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [duplicateWarning, setDuplicateWarning] = useState<{ duplicates: DuplicateHit[]; freshCount: number } | null>(null)
+  const [isPending, startTransition] = useTransition()
   const [dismissedResume, setDismissedResume] = useState(false)
   const keywordRef = useRef<HTMLInputElement>(null)
 
@@ -450,31 +455,68 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
     }
   }
 
-  function submit() {
+  /** Submits via the same `enqueueScrape` server action the old inline form
+   *  used. `forceOverride` lets the duplicate-warning panel resubmit with
+   *  `duplicate_override=1` immediately, without waiting on the `runAnyway`
+   *  checkbox state to flush through a re-render. */
+  function submit(forceOverride?: boolean) {
     const draft = buildDraft()
-    if (saveConfig) {
-      const cfg: SavedConfig = {
-        savedAt: new Date().toISOString(),
-        search_engine: draft.search_engine,
-        country_code: draft.country_code,
-        language: draft.language,
-        pages: draft.pages,
-        view_mode: draft.view_mode,
-        enrichment_stages: draft.enrichment_stages,
-        with_enrichment: draft.with_enrichment,
-        top_n_by_follower: draft.top_n_by_follower,
+    const override = forceOverride ?? draft.duplicate_override
+
+    const fd = new FormData()
+    fd.set('keyword', draft.keywords.join('\n'))
+    fd.set('country_code', draft.country_code)
+    fd.set('pages', String(draft.pages))
+    fd.set('language', draft.language)
+    fd.set('search_engine', draft.search_engine)
+    fd.set('view_mode', draft.view_mode)
+    if (draft.with_enrichment) fd.set('with_enrichment', 'on')
+    if (draft.scheduled_at) fd.set('scheduled_at', draft.scheduled_at)
+    if (draft.top_n_by_follower !== null) fd.set('top_n_by_follower', String(draft.top_n_by_follower))
+    if (override) fd.set('duplicate_override', '1')
+
+    setSubmitError(null)
+    setDuplicateWarning(null)
+
+    startTransition(async () => {
+      const result = await enqueueScrape(null, fd)
+      if (!result) return
+      if (result.status === 'error') {
+        setSubmitError(result.error)
+        return
       }
-      writeStored(savedConfigKey(userKey), cfg)
-      setSavedConfig(cfg)
-    }
-    if (stages.length > 0) writeStored(lastStagesKey(userKey), stages)
-    clearStored(draftKey(userKey))
-    // Stand-in reference until the server action returns a real batch number.
-    const stamp = new Date()
-    setTicketRef(
-      `${stamp.getUTCFullYear()}${String(stamp.getUTCMonth() + 1).padStart(2, '0')}${String(stamp.getUTCDate()).padStart(2, '0')}-${draft.country_code}-${String(stamp.getTime()).slice(-4)}`,
-    )
-    setSubmitted(draft)
+      if (result.status === 'duplicate_warning') {
+        setDuplicateWarning({ duplicates: result.duplicates, freshCount: result.freshCount })
+        return
+      }
+
+      // status === 'ok' — actually queued.
+      if (saveConfig) {
+        const cfg: SavedConfig = {
+          savedAt: new Date().toISOString(),
+          search_engine: draft.search_engine,
+          country_code: draft.country_code,
+          language: draft.language,
+          pages: draft.pages,
+          view_mode: draft.view_mode,
+          enrichment_stages: draft.enrichment_stages,
+          with_enrichment: draft.with_enrichment,
+          top_n_by_follower: draft.top_n_by_follower,
+        }
+        writeStored(savedConfigKey(userKey), cfg)
+        setSavedConfig(cfg)
+      }
+      if (stages.length > 0) writeStored(lastStagesKey(userKey), stages)
+      clearStored(draftKey(userKey))
+      // Display reference only — the real batch number is assigned when the
+      // job completes (batch_counter), not at enqueue time.
+      const stamp = new Date()
+      setTicketRef(
+        `${stamp.getUTCFullYear()}${String(stamp.getUTCMonth() + 1).padStart(2, '0')}${String(stamp.getUTCDate()).padStart(2, '0')}-${draft.country_code}-${String(stamp.getTime()).slice(-4)}`,
+      )
+      setSuccessMessage(result.message)
+      setSubmitted(draft)
+    })
   }
 
   function addKeywords(text: string) {
@@ -504,17 +546,9 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
     setRunAnyway(false)
     setSaveConfig(false)
     setDismissedResume(true)
-  }
-
-  async function copyPayload() {
-    if (!submitted) return
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(submitted, null, 2))
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      /* clipboard unavailable — the payload is on screen */
-    }
+    setSubmitError(null)
+    setDuplicateWarning(null)
+    setSuccessMessage(null)
   }
 
   const filteredProfiles = useMemo(() => {
@@ -550,21 +584,12 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
             onCreateAnother={resetAll}
           />
           <Note tone="ok">
-            <span className="font-medium">Preview only. Nothing was queued.</span> The position and wait above are the real queue for{' '}
+            {successMessage ?? 'Queued.'} The position and wait above are the live queue for{' '}
             {profile?.country_name ?? submitted.country_code} as of page load.
             {saveConfig && ' Your setup was saved to this browser and will be offered next time.'}
           </Note>
-          <details className="rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
-            <summary className="flex cursor-pointer items-center justify-between px-3 py-2 text-[12px] font-medium text-[color:var(--color-text-secondary)]">
-              Payload the server action would receive
-              <button type="button" onClick={copyPayload} className="inline-flex items-center gap-1 hover:text-[color:var(--color-text-primary)]">
-                <Copy className="h-3.5 w-3.5" /> {copied ? 'Copied' : 'Copy'}
-              </button>
-            </summary>
-            <pre className="overflow-x-auto border-t border-[color:var(--color-border)] p-3 text-[11.5px] leading-relaxed text-[color:var(--color-text-primary)]">{JSON.stringify(submitted, null, 2)}</pre>
-          </details>
-          <Link href="/scrape/today" className="inline-flex w-fit items-center gap-1.5 text-[12.5px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]">
-            <ArrowLeft className="h-3.5 w-3.5" /> My scraping list
+          <Link href="/scrape" className="inline-flex w-fit items-center gap-1.5 text-[12.5px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]">
+            <ArrowLeft className="h-3.5 w-3.5" /> View scraping table
           </Link>
         </div>
       </div>
@@ -1070,7 +1095,18 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                       Run duplicates anyway
                     </label>
                   </div>
-                  <Note>Preview build: Submit shows the payload and queues nothing.</Note>
+                  {submitError && <Note tone="error">{submitError}</Note>}
+                  {duplicateWarning && (
+                    <DuplicateWarning
+                      duplicates={duplicateWarning.duplicates}
+                      freshCount={duplicateWarning.freshCount}
+                      pending={isPending}
+                      onRunAnyway={() => {
+                        setRunAnyway(true)
+                        submit(true)
+                      }}
+                    />
+                  )}
                 </div>
               </>
             )}
@@ -1098,10 +1134,10 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                 <button
                   type="button"
                   onClick={() => { markAnswered(); if (isLast) submit(); else go(1) }}
-                  disabled={!current.ok}
+                  disabled={!current.ok || (isLast && isPending)}
                   className="inline-flex items-center gap-1 rounded-md bg-[color:var(--color-text-primary)] px-4 py-2 text-[13px] font-medium text-white disabled:opacity-40"
                 >
-                  {isLast ? (mode === 'schedule' ? 'Schedule scrape' : 'Start scraping') : 'Continue'}
+                  {isLast ? (isPending ? 'Queuing…' : mode === 'schedule' ? 'Schedule scrape' : 'Start scraping') : 'Continue'}
                 </button>
               ) : (
                 <span />
@@ -1120,12 +1156,9 @@ function Header({ quota, day }: { quota: QuotaPreview; day: string }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <div className="mb-1 inline-flex items-center gap-1.5 rounded-full bg-[color:var(--color-accent)]/25 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-text-primary)]">
-          <FlaskConical className="h-3 w-3" /> On development
-        </div>
         <h1 className="text-[17px] font-semibold text-[color:var(--color-text-primary)]">New scrape</h1>
         <p className="mt-0.5 text-[12.5px] text-[color:var(--color-text-secondary)]">
-          Preview build. Your progress is kept in this browser, so a refresh picks up where you left off.
+          Your progress is kept in this browser, so a refresh or an interruption picks up where you left off.
         </p>
       </div>
       <QuotaStatus quota={quota} day={day} />

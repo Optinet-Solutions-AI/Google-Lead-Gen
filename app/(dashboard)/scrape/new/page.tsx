@@ -1,5 +1,3 @@
-import { redirect } from 'next/navigation'
-import { requireAdmin } from '@/lib/auth/require-admin'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { getFleetQueueSnapshot, listActiveProfiles } from '../_lib/queries'
@@ -38,15 +36,15 @@ const ROW_COLS =
   'id, keyword, country_code, language, pages, view_mode, with_enrichment, search_engine, scheduled_at, created_at, top_n_by_follower, result_type_filter'
 
 /**
- * /scrape/new — admin-only UI preview of the step-by-step scrape wizard.
- * Read-only against the database: loads country profiles, the caller's
- * quota picture for the next days, and their last scrape to offer "use
- * last configuration". Nothing is written.
+ * /scrape/new — the step-by-step scrape wizard.
+ * Loads country profiles, the caller's quota picture for the next days,
+ * and their last scrape to offer "use last configuration", then hands
+ * off to the wizard, which queues the real scrape via `enqueueScrape`
+ * on submit. Open to every signed-in user (auth enforced by the
+ * dashboard layout's middleware) — this replaced the inline form on
+ * /scrape as the only way to queue a scrape.
  */
 export default async function NewScrapePage({ searchParams }: { searchParams: Promise<SearchParams> }) {
-  const admin = await requireAdmin()
-  if (!admin.ok) redirect('/scrape')
-
   const sp = await searchParams
   const fromId = typeof sp.from === 'string' ? sp.from : null
 

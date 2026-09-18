@@ -1,8 +1,9 @@
+import Link from 'next/link'
+import { Plus } from 'lucide-react'
 import { JOBS_COLUMNS } from '@/lib/filters/columns-jobs'
 import { parseFilters, parseSorts } from '@/lib/filters/serialize'
 import type { ColumnDef } from '@/lib/filters/types'
 import { clampPageSize } from '@/lib/page-size'
-import { getQuotaForCurrentUser } from '@/lib/scrape-quota'
 import { applyShadowFilter, getShadowContext } from '@/lib/shadow-filter'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { getUserPreferences } from '@/lib/user-preferences'
@@ -10,7 +11,6 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { AdvancedFilters } from '../_components/advanced-filters'
 import { Pagination } from '../monday/_components/pagination'
 import { AutoRefresh } from './_components/auto-refresh'
-import { EnqueueForm } from './_components/enqueue-form'
 import { JobsCardList, JobsTable } from './_components/jobs-table'
 import { OwnerScopeToggle } from './_components/owner-scope-toggle'
 import { getFleetQueueSnapshot, listActiveProfiles, queryJobs } from './_lib/queries'
@@ -54,7 +54,7 @@ export default async function ScrapePage({
   const restrictToOwnerEmail =
     ownerScope === 'mine' && callerEmail ? callerEmail : undefined
 
-  const [profiles, jobsResult, isAdmin, prefs, quotaSnap, fleet, mineCount, allCount] = await Promise.all([
+  const [profiles, jobsResult, isAdmin, prefs, fleet, mineCount, allCount] = await Promise.all([
     listActiveProfiles(),
     queryJobs({
       page,
@@ -71,7 +71,6 @@ export default async function ScrapePage({
       return data === true
     })(),
     getUserPreferences(),
-    getQuotaForCurrentUser(),
     getFleetQueueSnapshot(),
     // Independent counts for the toggle pills. Head-only queries; the
     // shadow filter still applies so the Mine / All numbers respect
@@ -105,12 +104,6 @@ export default async function ScrapePage({
       return count ?? 0
     })(),
   ])
-  // Pass through only non-exempt snapshots so the EnqueueForm
-  // doesn't render the badge for admins or when caps are disabled.
-  const quota =
-    !quotaSnap.exempt && quotaSnap.cap !== null && quotaSnap.remaining !== null
-      ? { cap: quotaSnap.cap, usedToday: quotaSnap.usedToday, remaining: quotaSnap.remaining }
-      : null
   const { rows, total } = jobsResult
 
   // Auto-refresh stays on while either the scrape itself OR a follow-on
@@ -145,17 +138,23 @@ export default async function ScrapePage({
 
   return (
     <div className="flex min-w-0 flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
-      <header>
-        <h1 className="text-[16px] font-semibold text-[color:var(--color-text-primary)]">
-          Scrape
-        </h1>
-        <p className="mt-0.5 text-[12px] text-[color:var(--color-text-secondary)]">
-          Queue a keyword for a country. A VM worker picks it up within ~5 seconds and
-          the results land in the Lead Generator table once complete.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-[16px] font-semibold text-[color:var(--color-text-primary)]">
+            Scrape
+          </h1>
+          <p className="mt-0.5 text-[12px] text-[color:var(--color-text-secondary)]">
+            Queue a keyword for a country. A VM worker picks it up within ~5 seconds and
+            the results land in the Lead Generator table once complete.
+          </p>
+        </div>
+        <Link
+          href="/scrape/new"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[color:var(--color-text-primary)] px-3.5 py-2 text-[13px] font-medium text-white hover:opacity-90"
+        >
+          <Plus className="h-4 w-4" /> Create scrape
+        </Link>
       </header>
-
-      <EnqueueForm profiles={profiles} quota={quota} fleet={fleet} />
 
       <section className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
