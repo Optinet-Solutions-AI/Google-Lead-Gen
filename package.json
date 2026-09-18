@@ -25,7 +25,8 @@
     "auth:seed-shadow-user": "tsx scripts/auth/seed-shadow-user.ts",
     "auth:reset-password": "tsx scripts/auth/reset-password.ts",
     "gologin:sync-profiles": "tsx scripts/gologin/sync-profiles.ts",
-    "gologin:set-sticky-proxy": "tsx scripts/gologin/set-sticky-proxy.ts"
+    "gologin:set-sticky-proxy": "tsx scripts/gologin/set-sticky-proxy.ts",
+    "gologin:set-proxy-endpoint": "tsx scripts/gologin/set-proxy-endpoint.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.2",
