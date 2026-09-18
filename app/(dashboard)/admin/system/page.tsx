@@ -37,6 +37,9 @@ export default async function AdminSystemPage() {
     { data: dedupeRaw },
     { data: llmFlagRaw },
     { data: openAiKeyRaw },
+    { data: aiEnabledRaw },
+    { data: aiCapRaw },
+    { data: aiBudgetRaw },
   ] = await Promise.all([
     svc.rpc('get_system_setting', { p_key: 'captcha_solver_enabled' }),
     svc.rpc('get_system_setting', { p_key: 'captcha_auto_solve' }),
@@ -54,6 +57,9 @@ export default async function AdminSystemPage() {
     svc.rpc('get_system_setting', { p_key: 'profile_dedupe_enabled' }),
     svc.rpc('get_system_setting', { p_key: 'system_flag_llm_enabled' }),
     svc.rpc('get_system_setting', { p_key: 'openai_api_key' }),
+    svc.rpc('get_system_setting', { p_key: 'ai_analysis_enabled' }),
+    svc.rpc('get_system_setting', { p_key: 'ai_crawl_daily_cap' }),
+    svc.rpc('get_system_setting', { p_key: 'ai_crawl_budget_usd' }),
   ])
 
   // Website profile controls. TTLs default to the migration seed.
@@ -68,6 +74,9 @@ export default async function AdminSystemPage() {
     // Dedupe defaults ON (the migration seeds true); only an explicit false turns it off.
     dedupeEnabled: dedupeRaw !== false,
     llmFlagEnabled: llmFlagRaw === true,
+    aiAnalysisEnabled: aiEnabledRaw === true,
+    aiDailyCap: typeof aiCapRaw === 'number' && aiCapRaw > 0 ? Math.floor(aiCapRaw) : 150,
+    aiBudgetUsd: typeof aiBudgetRaw === 'number' && aiBudgetRaw > 0 ? aiBudgetRaw : 5,
     hasOpenAiKey:
       (typeof openAiKeyRaw === 'string' && openAiKeyRaw.trim().length > 0) ||
       Boolean((process.env.OPENAI_API_KEY ?? process.env.OPENAI_APIKEY ?? '').trim()),

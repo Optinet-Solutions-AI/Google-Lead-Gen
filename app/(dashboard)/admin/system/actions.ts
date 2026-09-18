@@ -234,6 +234,15 @@ export async function setWebsiteProfileConfigAction(
 
   const dedupe = fd.get('dedupe') === 'on'
   const llmFlag = fd.get('llm_flag') === 'on'
+  const aiEnabled = fd.get('ai_enabled') === 'on'
+  const aiDailyCap = days('ai_daily_cap')
+  const aiBudget = Number(String(fd.get('ai_budget') ?? '').trim())
+  if (Number.isNaN(aiDailyCap)) {
+    return { status: 'error', error: 'AI sites per day must be a whole number, 1 or more.' }
+  }
+  if (!Number.isFinite(aiBudget) || aiBudget <= 0) {
+    return { status: 'error', error: 'AI spend per run must be a positive dollar amount.' }
+  }
 
   const svc = createServiceClient()
   const writes: Array<[string, unknown]> = [
@@ -241,6 +250,9 @@ export async function setWebsiteProfileConfigAction(
     ['recency_bands_days', bands],
     ['profile_dedupe_enabled', dedupe],
     ['system_flag_llm_enabled', llmFlag],
+    ['ai_analysis_enabled', aiEnabled],
+    ['ai_crawl_daily_cap', aiDailyCap],
+    ['ai_crawl_budget_usd', aiBudget],
   ]
   for (const [key, value] of writes) {
     const { error } = await svc.rpc('set_system_setting', { p_key: key, p_value: value })
@@ -251,7 +263,7 @@ export async function setWebsiteProfileConfigAction(
     action: 'system_settings.website_profile_config',
     entity_type: 'system_setting',
     entity_id: null,
-    details: { ttl, bands, dedupe, llm_flag: llmFlag },
+    details: { ttl, bands, dedupe, llm_flag: llmFlag, ai_enabled: aiEnabled, ai_daily_cap: aiDailyCap, ai_budget_usd: aiBudget },
   })
 
   revalidatePath('/admin/system')
@@ -259,6 +271,6 @@ export async function setWebsiteProfileConfigAction(
   revalidatePath('/monday/search')
   return {
     status: 'ok',
-    message: `Saved — affiliate ${ttl.affiliate}d, rooster ${ttl.rooster}d, contacts ${ttl.contact}d, s-tags ${ttl.stags}d; bands ${bands.fresh}/${bands.recent}/${bands.aging}; dedupe ${dedupe ? 'on' : 'off'}; OpenAI flag ${llmFlag ? 'on' : 'off'}.`,
+    message: `Saved — affiliate ${ttl.affiliate}d, rooster ${ttl.rooster}d, contacts ${ttl.contact}d, s-tags ${ttl.stags}d; bands ${bands.fresh}/${bands.recent}/${bands.aging}; dedupe ${dedupe ? 'on' : 'off'}; OpenAI flag ${llmFlag ? 'on' : 'off'}; AI analysis ${aiEnabled ? `on (max ${aiDailyCap}/day, $${aiBudget}/run)` : 'off'}.`,
   }
 }

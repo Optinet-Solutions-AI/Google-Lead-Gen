@@ -188,10 +188,19 @@ export default async function ScrapePage({
           infiniteScrollEnabled={prefs.infiniteScrollEnabled}
           pendingPositions={fleet.positionsByJobId}
         />
-        <JobsCardList jobs={rows} pendingPositions={fleet.positionsByJobId} />
+        <JobsCardList
+          jobs={rows}
+          pendingPositions={fleet.positionsByJobId}
+          pageInfo={{ page, size, total }}
+        />
       </section>
 
-      <Pagination page={page} size={size} total={total} pageSizeOptions={PAGE_SIZES} />
+      {/* Desktop pages via the chevrons; phones and tablets use the card
+          list's own "Load more" instead, so this would be a second,
+          contradictory control there. */}
+      <div className="hidden lg:block">
+        <Pagination page={page} size={size} total={total} pageSizeOptions={PAGE_SIZES} />
+      </div>
 
       <AutoRefresh enabled={hasActive} />
     </div>

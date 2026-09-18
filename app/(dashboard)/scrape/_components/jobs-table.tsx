@@ -891,7 +891,7 @@ export function JobsTable({
       {/* Admin-only: select-mode toggle + bulk-action bar. The toggle
        *  is hidden entirely for non-admins so the table looks clean. */}
       {isAdmin && (
-        <div className="hidden items-center justify-end md:flex">
+        <div className="hidden items-center justify-end lg:flex">
           <button
             type="button"
             onClick={() => {
@@ -926,7 +926,7 @@ export function JobsTable({
        *  — above the viewport. Letting the page own both axes keeps per-cell
        *  sticky pinned to the viewport. Wide tables fall back to page-level
        *  horizontal scroll. */}
-      <div className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
+      <div className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] lg:block">
         <table className="w-full border-collapse text-[11px]">
           {/* Sticky lives on each <th> below (not on <thead>). HTML
            *  table layout doesn't reliably honour position:sticky on
@@ -1186,12 +1186,87 @@ export function JobsTable({
   )
 }
 
-// Mobile card layout below — same data, stacked.
-export function JobsCardList({ jobs, pendingPositions }: Props) {
+// Card layout for phones AND tablets (everything below `lg`). Desktop keeps
+// the table. Cards page themselves 10 at a time rather than rendering whatever
+// the server sent: the job list runs to thousands of rows, and a tall stack of
+// cards is far heavier to scroll than a table. "Load more" and an
+// auto-loading sentinel both advance the same counter.
+const CARD_PAGE = 10
+
+export function JobsCardList({ jobs, pendingPositions, pageInfo }: Props) {
+  const sp = useSearchParams()
+  const [extraRows, setExtraRows] = useState<ScrapeJob[]>([])
+  const [visible, setVisible] = useState(CARD_PAGE)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [nextPage, setNextPage] = useState<number>(pageInfo ? pageInfo.page + 1 : 2)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+
+  // A new server render (filter, sort, page change) restarts the stack.
+  const idSig = jobs.length > 0 ? `${jobs.length}:${jobs[0]?.id ?? ''}:${jobs[jobs.length - 1]?.id ?? ''}` : 'empty'
+  const [seenSig, setSeenSig] = useState(idSig)
+  if (seenSig !== idSig) {
+    setSeenSig(idSig)
+    setExtraRows([])
+    setVisible(CARD_PAGE)
+    setNextPage(pageInfo ? pageInfo.page + 1 : 2)
+    setError(null)
+  }
+
+  const all = useMemo(() => (extraRows.length === 0 ? jobs : [...jobs, ...extraRows]), [jobs, extraRows])
+  const total = pageInfo?.total ?? all.length
+  const shown = all.slice(0, visible)
+  // More to show if we are still holding un-rendered rows, or the server has
+  // rows we have not fetched yet.
+  const canServerFetch = Boolean(pageInfo && pageInfo.size > 0 && all.length < pageInfo.total)
+  const hasMore = visible < all.length || canServerFetch
+
+  const loadMore = useCallback(async () => {
+    if (loading) return
+    // Reveal what we already hold before asking the server for more.
+    if (visible < all.length) {
+      setVisible(v => v + CARD_PAGE)
+      return
+    }
+    if (!pageInfo || !canServerFetch) return
+    setLoading(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams(sp.toString())
+      params.set('page', String(nextPage))
+      params.set('size', String(pageInfo.size))
+      const res = await fetch(`/api/jobs?${params.toString()}`, { cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = (await res.json()) as { rows: ScrapeJob[]; total: number }
+      if (!Array.isArray(data.rows)) throw new Error('Bad payload: rows is not an array.')
+      setExtraRows(prev => prev.concat(data.rows))
+      setNextPage(p => p + 1)
+      setVisible(v => v + CARD_PAGE)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [all.length, canServerFetch, loading, nextPage, pageInfo, sp, visible])
+
+  // Scroll-to-load. The button below stays regardless, so this is an
+  // accelerator rather than the only way forward.
+  useEffect(() => {
+    const node = sentinelRef.current
+    if (!node || !hasMore) return
+    const obs = new IntersectionObserver(
+      entries => { for (const e of entries) if (e.isIntersecting) { loadMore(); break } },
+      { root: null, rootMargin: '250px', threshold: 0 },
+    )
+    obs.observe(node)
+    return () => obs.disconnect()
+  }, [hasMore, loadMore])
+
   if (jobs.length === 0) return null
+
   return (
-    <div className="flex flex-col gap-2 md:hidden">
-      {jobs.map(job => (
+    <div className="flex flex-col gap-2 lg:hidden">
+      {shown.map(job => (
         <Link
           key={job.id}
           href={`/scrape/${job.id}`}
@@ -1245,9 +1320,31 @@ export function JobsCardList({ jobs, pendingPositions }: Props) {
           )}
         </Link>
       ))}
+
+      <div ref={sentinelRef} className="flex flex-col items-center gap-2 py-2">
+        <p className="text-[11px] text-[color:var(--color-text-secondary)]">
+          Showing {shown.length.toLocaleString()} of {total.toLocaleString()}
+        </p>
+        {error && (
+          <p className="rounded-md bg-red-50 px-2.5 py-1.5 text-[11px] text-red-700">
+            Could not load more: {error}
+          </p>
+        )}
+        {hasMore && (
+          <button
+            type="button"
+            onClick={loadMore}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-4 py-2 text-[12.5px] font-medium text-[color:var(--color-text-primary)] transition-colors hover:bg-[color:var(--color-bg-secondary)] disabled:opacity-50"
+          >
+            {loading ? 'Loading…' : `Load ${CARD_PAGE} more`}
+          </button>
+        )}
+      </div>
     </div>
   )
 }
+
 
 function Th({ children }: { children: React.ReactNode }) {
   return (

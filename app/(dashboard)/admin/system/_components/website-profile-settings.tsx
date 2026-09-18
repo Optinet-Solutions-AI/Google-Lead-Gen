@@ -11,6 +11,9 @@ export type WebsiteProfileConfig = {
   bands: { fresh: number; recent: number; aging: number }
   dedupeEnabled: boolean
   llmFlagEnabled: boolean
+  aiAnalysisEnabled: boolean
+  aiDailyCap: number
+  aiBudgetUsd: number
   hasOpenAiKey: boolean
 }
 
@@ -75,6 +78,29 @@ export function WebsiteProfileSettings({ config }: { config: WebsiteProfileConfi
             )}
           </span>
         </label>
+      </fieldset>
+
+      <fieldset className="flex flex-col gap-2">
+        <legend className="text-[12px] font-semibold text-[color:var(--color-text-primary)]">AI affiliate analysis</legend>
+        <p className="text-[11px] text-[color:var(--color-text-secondary)]">
+          For websites that survived the Monday / not-relevant / system-flag trim: a cheap screen picks which are worth
+          opening, we fetch the page ourselves, and the model judges whether it is an affiliate and which brands it
+          promotes. CTA links are extracted and resolved in code, then confirmed affiliates are queued for the
+          browser S-tag pass on the VM. Measured at roughly <strong>$0.002 per site</strong>.
+        </p>
+        <label className="flex items-start gap-2 text-[12px] text-[color:var(--color-text-primary)]">
+          <input type="checkbox" name="ai_enabled" defaultChecked={config.aiAnalysisEnabled} className="mt-0.5 h-3.5 w-3.5 accent-[color:var(--color-accent)]" />
+          <span>
+            <span className="font-medium">Run the AI analysis every 2 hours.</span>{' '}
+            <span className="text-[color:var(--color-text-secondary)]">
+              Off means nothing is spent. The two ceilings below apply whenever it is on.
+            </span>
+          </span>
+        </label>
+        <div className="flex flex-wrap items-end gap-3">
+          <Num label="Sites per day" name="ai_daily_cap" value={config.aiDailyCap} />
+          <Num label="Spend per run (USD)" name="ai_budget" value={config.aiBudgetUsd} />
+        </div>
       </fieldset>
 
       <div className="flex flex-wrap items-center gap-3">
