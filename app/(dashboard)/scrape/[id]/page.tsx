@@ -176,7 +176,6 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   }
   const isMergedBatch = batchJobIds.length > 1
   const ppcRunning = ppcSiblingStatus != null && ['pending', 'running', 'captcha', 'paused'].includes(ppcSiblingStatus)
-  const ppcDidNotFinish = ppcSiblingStatus === 'failed' || ppcSiblingStatus === 'cancelled'
 
   // Lazy backfill: jobs queued before the translation feature shipped
   // have keyword_en = null. Translate on first non-English view and
@@ -310,25 +309,6 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   // Result-type filter chips (All / Organic / PPC). A split batch merges
   // its Organic (Apify) + PPC (VM) halves into one table, which confused
   // operators ("PPC scrape shows organic results"). These chips narrow the
-  // merged table to one half. Clone the current params, drop `page` so the
-  // filter resets to page 1, and set (or clear, for "All") result_type.
-  const resultTypeHref = (value: string) => {
-    const next = new URLSearchParams()
-    for (const [k, v] of Object.entries(sp)) {
-      if (k === 'result_type' || k === 'page') continue
-      if (typeof v === 'string') next.set(k, v)
-      else if (Array.isArray(v)) for (const item of v) next.append(k, item)
-    }
-    if (value) next.set('result_type', value)
-    const qs = next.toString()
-    return qs ? `/scrape/${id}?${qs}` : `/scrape/${id}`
-  }
-  const RESULT_TYPE_CHIPS = [
-    { value: '', label: 'All' },
-    { value: 'Organic', label: 'Organic' },
-    { value: 'PPC', label: 'PPC' },
-  ] as const
-
   // Country and batch are constant for one job, so drop them from the
   // filter dropdowns; URL is constant so omitting them keeps the picker tidy.
   const columns = LEADS_COLUMNS.filter(
@@ -409,27 +389,13 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
 
       <JobMeta job={job} />
 
-      {isMergedBatch && (
-        <div className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-[11px] text-[color:var(--color-text-secondary)]">
-          This batch combines{' '}
-          <span className="font-medium text-[color:var(--color-text-primary)]">Organic</span> (search
-          results) and{' '}
-          <span className="font-medium text-[color:var(--color-text-primary)]">PPC</span> (paid ads).
-          The table below shows leads from both, so you&rsquo;re seeing the full batch even if one half
-          found nothing.
-          {ppcRunning && (
-            <span className="mt-1 block font-medium text-amber-700">
-              ✓ Organic results are ready. The PPC ads are still being fetched by the VM browser in
-              the background — this batch is not on hold; refresh in a moment to see them.
-            </span>
-          )}
-          {ppcDidNotFinish && (
-            <span className="mt-1 block">
-              The organic results are complete; the background PPC pass didn&rsquo;t finish. Use{' '}
-              <span className="font-medium text-[color:var(--color-text-primary)]">Re-run PPC</span> if
-              you need the ads.
-            </span>
-          )}
+      {/* The "this batch combines Organic and PPC" explainer is gone — the
+          merge is just how batches work now. Only the one actionable case
+          survives: ads still arriving. */}
+      {isMergedBatch && ppcRunning && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-800">
+          Organic results are ready. The paid ads are still being fetched in the background — refresh
+          in a moment to see them.
         </div>
       )}
 
@@ -493,29 +459,6 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
           just render an empty "No rows" block — hide them for those engines. */}
       {!noLeadsEngine && (
         <>
-          {/* Result-type filter chips — narrow the merged Organic + PPC table
-              to one half so a "PPC" batch no longer appears to show organic
-              results (and vice versa). '' = All. */}
-          <div className="flex flex-wrap items-center gap-1 pt-2">
-            {RESULT_TYPE_CHIPS.map(chip => {
-              const active = resultType === chip.value
-              return (
-                <Link
-                  key={chip.value || 'all'}
-                  href={resultTypeHref(chip.value)}
-                  className={[
-                    'rounded-full border px-3 py-1 text-[12px] font-medium transition-colors',
-                    active
-                      ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/10 text-[color:var(--color-text-primary)]'
-                      : 'border-[color:var(--color-border)] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]',
-                  ].join(' ')}
-                >
-                  {chip.label}
-                </Link>
-              )
-            })}
-          </div>
-
           <div className="pt-2">
             <AdvancedFilters columns={columns} preserve={['show_hidden']} />
           </div>
@@ -616,13 +559,12 @@ function ViewModeBadge({ mode }: { mode: 'desktop' | 'mobile' | 'both' | null })
 }
 
 function JobMeta({ job }: { job: Job }) {
+  // Which worker ran it, the exact start/finish stamps and the attempt count
+  // are operational detail nobody reads on this page — duration already says
+  // how long it took. Still in the database for debugging.
   const fields: Array<{ label: string; value: string | null }> = [
     { label: 'Job ID', value: job.id },
-    { label: 'Worker', value: job.claimed_by },
-    { label: 'Started', value: formatTs(job.started_at) },
-    { label: 'Completed', value: formatTs(job.completed_at) },
     { label: 'Duration', value: formatDuration(job.started_at, job.completed_at) },
-    { label: 'Attempts', value: String(job.attempts) },
   ].filter(f => f.value)
 
   const mobileSkipped = mobilePassSkippedReason(job.result_summary)
@@ -674,23 +616,6 @@ function mobileSkippedExplanation(reason: string): string {
   return reason
 }
 
-function formatTs(iso: string | null): string | null {
-  if (!iso) return null
-  try {
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return iso
-    return d.toLocaleString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    })
-  } catch {
-    return iso
-  }
-}
 
 function formatDuration(startedAt: string | null, completedAt: string | null): string | null {
   if (!startedAt || !completedAt) return null
