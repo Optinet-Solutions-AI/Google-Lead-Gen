@@ -3,10 +3,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   audit,
   auditInstructions,
+  brandFromLabel,
   brandSlug,
   contactPageCandidate,
   ctaCandidates,
   fetchPage,
+  hostOf,
+  isOutboundCta,
   triage,
   unmask,
   type Brand,
@@ -285,9 +288,14 @@ export async function runAiAnalysis(svc: SupabaseClient, opts: AiRunOptions = {}
     cost += auditCost
 
     // ---- stage 3: CTA links, extracted and resolved in code ----
+    // A candidate only counts once we know where it lands: anything that
+    // resolves back to the site itself (an internal category page) or to a
+    // payment / games-supplier host is not a brand CTA.
+    const selfHost = hostOf(page.finalUrl)
     const cands = ctaCandidates(page)
-    const resolved = await pool(cands, 4, async l => ({ l, u: await unmask(l.href, page.finalUrl) }))
-    ctaLinks += cands.length
+    const walked = await pool(cands, 4, async l => ({ l, u: await unmask(l.href, page.finalUrl) }))
+    const resolved = walked.filter(({ u }) => isOutboundCta(u, selfHost))
+    ctaLinks += resolved.length
 
     const modelBrands = verdict?.brands ?? []
     if (!dry && resolved.length > 0) {
@@ -296,9 +304,7 @@ export async function runAiAnalysis(svc: SupabaseClient, opts: AiRunOptions = {}
         const hay = brandSlug(`${l.href} ${u.resolved ?? ''}`)
         const brand =
           modelBrands.find(n => n.length >= 4 && hay.includes(brandSlug(n))) ??
-          (l.label && !/^(hent|get|claim|play|visit|spill|besøk|bonus|spela|gioca|jouer|mehr|read)/i.test(l.label)
-            ? l.label.slice(0, 80)
-            : null)
+          brandFromLabel(l.label)
         const { error: ctaErr } = await svc.from('website_cta_links').upsert({
           profile_id: c.profile_id,
           brand_name: brand,
@@ -326,7 +332,7 @@ export async function runAiAnalysis(svc: SupabaseClient, opts: AiRunOptions = {}
     const newBrands = modelBrands.filter(n => !roosterNames.has(n.toLowerCase()))
     // Hand off to the VM's browser S-tag stage only when there is something
     // to click and it really is an affiliate.
-    const handOff = isAffiliate && cands.length > 0
+    const handOff = isAffiliate && resolved.length > 0
     if (handOff && c.country_code && c.url.startsWith('http')) {
       stagLeads.push({ lead_id: c.lead_id, country_code: c.country_code, url: c.url })
     }
@@ -340,7 +346,7 @@ export async function runAiAnalysis(svc: SupabaseClient, opts: AiRunOptions = {}
         ai_affiliate_reason: (verdict?.affiliate_reasoning ?? error ?? '').slice(0, 1000),
         ai_brands: modelBrands,
         ai_brand_count: modelBrands.length,
-        ai_cta_count: cands.length,
+        ai_cta_count: resolved.length,
         ai_rooster_brands: verdict?.rooster_brands_found ?? [],
         ai_new_brands: newBrands,
         ai_emails: verdict?.emails ?? [],
@@ -354,7 +360,7 @@ export async function runAiAnalysis(svc: SupabaseClient, opts: AiRunOptions = {}
     }
 
     log(
-      `${c.normalized_domain}: aff=${verdict?.is_affiliate ?? '?'} brands=${modelBrands.length} cta=${cands.length}` +
+      `${c.normalized_domain}: aff=${verdict?.is_affiliate ?? '?'} brands=${modelBrands.length} cta=${resolved.length}` +
       (foundRooster ? ` rooster=${verdict?.rooster_brands_found.join(',')}` : ''),
     )
   }

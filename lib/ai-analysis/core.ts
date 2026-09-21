@@ -128,14 +128,27 @@ export async function fetchPage(url: string, timeoutMs = 25_000): Promise<PageFe
 
 // ------------------------------------------------------------------ CTA ----
 
-/** Same-host paths that are outbound redirects in disguise. */
+/** Same-host paths that are outbound redirects in disguise.
+ *
+ *  Deliberately narrow. An earlier, broader list included content words like
+ *  `bonus`, `offers` and `play`, which matched ordinary category pages
+ *  (`/bonuses/free-spins/`) and inflated the CTA count on review sites. Only
+ *  prefixes that exist to bounce a visitor somewhere else belong here, and
+ *  they must be followed by a single slug — `/go/leovegas`, not `/go/uk/best`. */
 export const CTA_CLOAK =
-  /\/(go|goto|to|out|visit|link|links|redirect|redir|rd|play|playnow|bonus|bonuses|claim|offer|offers|promo|partner|partners|aff|affiliate|track|click|join|signup|register|spielen|besuchen|spill|spela|gioca|jouer|jugar|anbieter|weiter|ext|external|away|ref|urid)(\/|\?|$)/i
+  /\/(go|goto|out|visit|redirect|redir|rd|aff|affiliate|partner|partners|track|click|away|ext|external|ref|urid|link)\/[^/?#]+\/?(\?|#|$)/i
 
 /** Outbound hosts that are never a casino CTA: social, regulators,
- *  responsible-gambling bodies, testing labs, ordinary page furniture. */
+ *  responsible-gambling bodies, testing labs, payment providers, software
+ *  vendors and ordinary page furniture. */
 export const NOISE_HOST =
   /(facebook|instagram|twitter|x\.com|linkedin|youtube|youtu\.be|tiktok|pinterest|reddit|t\.me|telegram|whatsapp|wa\.me|threads|vk\.com|trustpilot|wikipedia|wikimedia|browsehappy|gravatar|googleapis|gstatic|google\.|bing\.|cloudflare|jquery|w3\.org|schema\.org|addtoany|sharethis|gambleaware|begambleaware|gamcare|gamstop|gamblingtherapy|hjelpelinjen|spelpaus|pgf\.nz|jocresponsabil|responsiblegambling|gamblingcommission|mga\.org\.mt|curacao-egaming|onjn\.gov|spelinspektionen|kansspelautoriteit|adm\.gov|anj\.fr|spillemyndigheden|ecogra|itechlabs|gaminglabs|legislation\.govt|dia\.govt|\.gov(\.|$)|europa\.eu|casinomeister|askgamblers|apple\.com|play\.google|assetcdn|cdn\.)/i
+
+/** Payment, KYC and games-supplier hosts. Affiliates link to these as trust
+ *  signals ("we accept Trustly", "games by Pragmatic Play") — they are not
+ *  brand CTAs and they were padding the counts. */
+export const NOISE_VENDOR_HOST =
+  /(trustly|skrill|neteller|paysafecard|paysafe|paypal|visa\.|mastercard|maestro|revolut|klarna|zimpler|mifinity|jeton|ecopayz|astropay|interac|muchbetter|boku|sofort|giropay|ideal\.|bankid|stripe|adyen|worldpay|nuvei|coinbase|binance|blockchain\.com|pragmaticplay|playngo|netent|evolution(gaming)?\.|microgaming|yggdrasil|redtiger|nolimitcity|betsoft|quickspin|playtech|isoftbet|relaxgaming|thunderkick|bigtimegaming|push-?gaming|hacksaw)/i
 
 /** Hostnames that prove the click runs through a Rooster tracker. */
 export const ROOSTER_TRACKER = /(rooster-partner|roosters-partner|roosterspartners|rooster-partners)\./i
@@ -148,8 +161,44 @@ export function ctaCandidates(page: PageFetch): PageLink[] {
     try { abs = new URL(l.href, page.finalUrl).toString() } catch { return false }
     const h = hostOf(abs)
     if (h === selfHost) return CTA_CLOAK.test(l.href)
-    return !NOISE_HOST.test(h)
+    return !NOISE_HOST.test(h) && !NOISE_VENDOR_HOST.test(h)
   })
+}
+
+/** A CTA has to leave the site. If the redirect chain lands back on the
+ *  affiliate's own host it was an internal page, not an outbound brand link —
+ *  the single most effective filter against inflated CTA counts. */
+export function isOutboundCta(u: Unmasked, selfHost: string): boolean {
+  const dest = u.host ?? ''
+  if (!dest) return true // unresolved: keep it, the browser pass can decide
+  if (dest === selfHost) return false
+  // A site's own locale siblings (casinoble.ro -> casinoble.cz/.bg/.ee) are
+  // language switchers, not brand CTAs.
+  if (siteLabel(dest) === siteLabel(selfHost)) return false
+  return !NOISE_HOST.test(dest) && !NOISE_VENDOR_HOST.test(dest)
+}
+
+/** The name part of a host, without subdomains or TLD: `casinoble.co.uk` and
+ *  `www.casinoble.ro` both give `casinoble`. */
+export function siteLabel(host: string): string {
+  const parts = host.toLowerCase().replace(/^www\./, '').split('.').filter(Boolean)
+  if (parts.length <= 1) return parts[0] ?? ''
+  // Drop a trailing multi-part TLD (.co.uk, .com.au) then take the last label.
+  const tail = parts.slice(-2).join('.')
+  const isCompound = /^(co|com|net|org|gov|ac|edu)\.[a-z]{2}$/.test(tail)
+  const idx = isCompound ? parts.length - 3 : parts.length - 2
+  return parts[Math.max(0, idx)] ?? ''
+}
+
+/** Anchor text is only usable as a brand name when it reads like one. Review
+ *  sites wrap CTAs in whole sentences ("See a list of bonus spins offers…"),
+ *  which is not a brand. */
+export function brandFromLabel(label: string | undefined): string | null {
+  const t = (label ?? '').trim()
+  if (!t || t.length > 40) return null
+  if (t.split(/\s+/).length > 4) return null
+  if (/^(hent|get|claim|play|visit|spill|besøk|bonus|spela|gioca|jouer|jugar|mehr|read|see|view|more|here|click|sign ?up|join|review)\b/i.test(t)) return null
+  return t
 }
 
 export type Unmasked = {

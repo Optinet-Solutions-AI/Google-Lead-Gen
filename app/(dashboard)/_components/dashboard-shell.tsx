@@ -29,6 +29,7 @@ import {
   MessageCircle,
   Search,
   SearchCheck,
+  Sparkles,
   Settings,
   Star,
   Users,
@@ -123,6 +124,14 @@ const NAV_GROUPS: NavGroup[] = [
         href: '/monday/leads',
         icon: Database,
         match: (p: string) => p.startsWith('/monday/leads') || p.startsWith('/monday/updates'),
+      },
+      {
+        // What the AI analysis found: confirmed affiliates, the brands they
+        // promote, their CTA links, and the manual S-tag worklist.
+        label: 'Affiliates (AI)',
+        href: '/affiliates',
+        icon: Sparkles,
+        match: (p: string) => p.startsWith('/affiliates'),
       },
       {
         // "Is this website already on Monday?" — searches our mirror of
