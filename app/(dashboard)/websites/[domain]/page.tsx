@@ -10,6 +10,38 @@ export const dynamic = 'force-dynamic'
 
 type Props = {
   params: Promise<{ domain: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}
+
+/**
+ * Where "Back" goes.
+ *
+ * You almost always arrive here from a batch, so returning to /leads
+ * dropped you somewhere you had not been. The table hands us the page
+ * you left in `?from=`; failing that (a pasted link, a bookmark) we send
+ * you to the batch that produced the newest appearance, which is the
+ * closest thing to "where this came from". /leads is the last resort.
+ *
+ * Only same-origin paths are honoured — an absolute URL in `from` would
+ * turn this into an open redirect.
+ */
+function backTarget(
+  fromParam: string | string[] | undefined,
+  newestJobId: string | null,
+): { href: string; label: string } {
+  const raw = typeof fromParam === 'string' ? fromParam : null
+  if (raw && raw.startsWith('/') && !raw.startsWith('//')) {
+    return {
+      href: raw,
+      label: raw.startsWith('/scrape/')
+        ? 'Back to batch'
+        : raw.startsWith('/leads')
+          ? 'Back to leads'
+          : 'Back',
+    }
+  }
+  if (newestJobId) return { href: `/scrape/${newestJobId}`, label: 'Back to batch' }
+  return { href: '/leads', label: 'Back to leads' }
 }
 
 /**
@@ -21,8 +53,9 @@ type Props = {
  * width — an operator opens this on a wide screen and the old narrow
  * column wasted most of it.
  */
-export default async function WebsitePage({ params }: Props) {
+export default async function WebsitePage({ params, searchParams }: Props) {
   const { domain: raw } = await params
+  const sp = await searchParams
   const site = await loadWebsiteDetail(raw)
   const { profile, domain, appearances, leadIds, detail, recency, lastSeenAt } = site
 
@@ -30,16 +63,17 @@ export default async function WebsitePage({ params }: Props) {
   if (!domain || (!profile && appearances.length === 0)) notFound()
 
   const count = profile?.appearance_count ?? appearances.length
+  const back = backTarget(sp.from, appearances[0]?.scrape_job_id ?? null)
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-5 px-4 py-4 md:px-6 md:py-6">
       <div>
         <Link
-          href="/leads"
+          href={back.href}
           className="inline-flex items-center gap-1 text-[11px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
         >
           <ArrowLeft className="h-3 w-3" />
-          Back to leads
+          {back.label}
         </Link>
       </div>
 

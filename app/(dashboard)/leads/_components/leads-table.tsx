@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { Check, CheckSquare, ExternalLink, EyeOff, Link2, Send, ShieldAlert, Square, Zap } from 'lucide-react'
 import { RECENCY_DOT, RECENCY_LABEL, type RecencyBand } from '@/lib/website-profiles/recency'
@@ -67,17 +67,28 @@ export function LeadsTable({
   )
 
   const router = useRouter()
+  const pathname = usePathname()
   const sp = useSearchParams()
+
+  // Where "Back" on the website page should return to. Carried in the
+  // URL because the website page has no other way to know whether you
+  // arrived from a batch, from /leads, or from a pasted link — and
+  // landing back on /leads after opening a domain from a batch was the
+  // wrong answer every time.
+  const from = useMemo(() => {
+    const qs = sp.toString()
+    return qs ? `${pathname}?${qs}` : pathname
+  }, [pathname, sp])
 
   // A domain opens its WEBSITE. The old per-lead drawer answered
   // questions about a site while pretending to be about a row; the
   // website page is the honest version of the same information.
   const openWebsite = useCallback(
     (domain: string | null) => {
-      const host = websiteHref(domain)
+      const host = websiteHref(domain, from)
       if (host) router.push(host)
     },
-    [router],
+    [router, from],
   )
 
   const [selectMode, setSelectMode] = useState(false)
@@ -558,7 +569,7 @@ export function LeadsTable({
                 {jobContext ? (
                   <>
                     <Td className="max-w-[220px] truncate p-0" title={row.domain ?? ''}>
-                      <DomainButton domain={row.domain} band={row.recency_band} lastSeenAt={row.last_seen_at} appearanceCount={row.appearance_count} systemFlag={row.system_flag} />
+                      <DomainButton domain={row.domain} band={row.recency_band} lastSeenAt={row.last_seen_at} appearanceCount={row.appearance_count} systemFlag={row.system_flag} from={from} />
                     </Td>
                     <Td>
                       <TypeBadge type={row.result_type} />
@@ -593,7 +604,7 @@ export function LeadsTable({
                     </Td>
                     <Td>{row.overall_position ?? '—'}</Td>
                     <Td className="p-0">
-                      <DomainButton domain={row.domain} band={row.recency_band} lastSeenAt={row.last_seen_at} appearanceCount={row.appearance_count} systemFlag={row.system_flag} />
+                      <DomainButton domain={row.domain} band={row.recency_band} lastSeenAt={row.last_seen_at} appearanceCount={row.appearance_count} systemFlag={row.system_flag} from={from} />
                     </Td>
                   </>
                 )}
@@ -988,8 +999,11 @@ function NotRelevantPill() {
   )
 }
 
-/** The domain's page URL, or null when the row has no usable domain. */
-function websiteHref(domain: string | null): string | null {
+/** The domain's page URL, or null when the row has no usable domain.
+ *  `from` is where the website page's Back link should return to; it is
+ *  left off links meant to be shared, which should not carry the
+ *  sender's position in a table. */
+function websiteHref(domain: string | null, from?: string): string | null {
   const host = (domain ?? '')
     .trim()
     .toLowerCase()
@@ -997,7 +1011,9 @@ function websiteHref(domain: string | null): string | null {
     .replace(/^www\./, '')
     .replace(/[/?#].*$/, '')
     .replace(/\.+$/, '')
-  return host ? `/websites/${encodeURIComponent(host)}` : null
+  if (!host) return null
+  const base = `/websites/${encodeURIComponent(host)}`
+  return from ? `${base}?from=${encodeURIComponent(from)}` : base
 }
 
 function DomainButton({
@@ -1006,12 +1022,14 @@ function DomainButton({
   lastSeenAt,
   appearanceCount,
   systemFlag,
+  from,
 }: {
   domain: string | null
   band?: RecencyBand | undefined
   lastSeenAt?: string | null | undefined
   appearanceCount?: number | null | undefined
   systemFlag?: string | null | undefined
+  from?: string | undefined
 }) {
   // Recency dot: colour = how recently this WEBSITE (not this row) was last
   // seen on any scrape, from its profile. Title carries the plain words.
@@ -1020,7 +1038,7 @@ function DomainButton({
         appearanceCount != null ? ` · seen ${appearanceCount}×` : ''
       }`
     : undefined
-  const href = websiteHref(domain)
+  const href = websiteHref(domain, from)
   const inner = (
     <>
       {band && <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${RECENCY_DOT[band]}`} title={dotTitle} />}

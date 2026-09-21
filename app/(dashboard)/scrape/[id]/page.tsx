@@ -123,7 +123,12 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const leadParam = typeof sp.lead === 'string' ? Number(sp.lead) : NaN
   if (Number.isInteger(leadParam) && leadParam > 0) {
     const leadDomain = await domainForLead(leadParam)
-    if (leadDomain) redirect(`/websites/${encodeURIComponent(leadDomain)}`)
+    // Carry the batch through so Back returns here, not to /leads.
+    if (leadDomain) {
+      redirect(
+        `/websites/${encodeURIComponent(leadDomain)}?from=${encodeURIComponent(`/scrape/${id}`)}`,
+      )
+    }
   }
 
   const svc = createServiceClient()
