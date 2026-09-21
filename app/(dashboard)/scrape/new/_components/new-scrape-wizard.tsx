@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import { enqueueScrape, type DuplicateHit } from '../../actions'
 import { DuplicateWarning } from '../../_components/duplicate-warning'
+import { Modal } from '../../../_components/modal'
 import {
   ALL_STAGE_KEYS,
   BING_DISABLED_COUNTRIES,
@@ -1121,17 +1122,6 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                     </label>
                   </div>
                   {submitError && <Note tone="error">{submitError}</Note>}
-                  {duplicateWarning && (
-                    <DuplicateWarning
-                      duplicates={duplicateWarning.duplicates}
-                      freshCount={duplicateWarning.freshCount}
-                      pending={isPending}
-                      onRunAnyway={() => {
-                        setRunAnyway(true)
-                        submit(true)
-                      }}
-                    />
-                  )}
                 </div>
               </>
   )
@@ -1215,17 +1205,6 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
           </div>
         </div>
 
-        {duplicateWarning && (
-          <DuplicateWarning
-            duplicates={duplicateWarning.duplicates}
-            freshCount={duplicateWarning.freshCount}
-            pending={isPending}
-            onRunAnyway={() => {
-              setRunAnyway(true)
-              submit(true)
-            }}
-          />
-        )}
       </div>
 
       )}
@@ -1297,6 +1276,26 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
         </section>
       </div>
       )}
+
+      {/* Both layouts share one modal. Inline, this answer landed below the
+          fold on a long form and read as "nothing happened". */}
+      <Modal
+        open={duplicateWarning !== null}
+        onClose={() => setDuplicateWarning(null)}
+        title="Already scraped before"
+      >
+        {duplicateWarning && (
+          <DuplicateWarning
+            duplicates={duplicateWarning.duplicates}
+            freshCount={duplicateWarning.freshCount}
+            pending={isPending}
+            onRunAnyway={() => {
+              setRunAnyway(true)
+              submit(true)
+            }}
+          />
+        )}
+      </Modal>
     </div>
   )
 }

@@ -28,7 +28,7 @@ export function DuplicateWarning({
     return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
   }
   return (
-    <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-[12px] text-amber-900">
+    <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-[12px] text-amber-900">
       <p className="font-semibold">
         {duplicates.length} of these {duplicates.length === 1 ? 'keyword has' : 'keywords have'} already
         been scraped before — nothing was queued.
