@@ -615,7 +615,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
   if (submitted) {
     const estimate = queueByCountry[submitted.country_code] ?? null
     return (
-      <div className="mx-auto w-full max-w-2xl px-4 py-4 md:px-6 md:py-5 lg:max-w-5xl lg:px-8">
+      <div className="mx-auto w-full max-w-2xl px-4 py-4 md:px-6 md:py-5 lg:max-w-none lg:px-8">
         <Header quota={quota} day={quotaDay} />
         <div className="mt-4 flex flex-col gap-3">
           <QueueTicket

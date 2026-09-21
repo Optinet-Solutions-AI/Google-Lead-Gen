@@ -8,6 +8,18 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/admin/reports/[slug]": ["./reports/**"],
   },
+
+  experimental: {
+    // Every dashboard page is force-dynamic, and Next defaults dynamic
+    // segments to a 0s client cache — so going Scrape -> Leads -> Scrape
+    // re-renders on the server all three times. These keep a just-visited
+    // page instant on return while still being short enough that queue
+    // status does not look stale (the scrape list also auto-refreshes).
+    staleTimes: {
+      dynamic: 30,
+      static: 180,
+    },
+  },
 };
 
 export default nextConfig;
