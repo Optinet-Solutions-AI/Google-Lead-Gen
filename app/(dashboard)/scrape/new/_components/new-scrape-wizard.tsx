@@ -1171,12 +1171,14 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
             <FormRow title="Source">{renderSource(true)}</FormRow>
             <FormRow title="Country">{renderCountry(true)}</FormRow>
             <FormRow title="Language">{renderLanguage(true)}</FormRow>
-            <FormRow title="Pages per keyword">{renderPages(true)}</FormRow>
-            {isSerp && <FormRow title="Device">{renderView(true)}</FormRow>}
-            {isSocial && <FormRow title="How many to keep">{renderTopn(true)}</FormRow>}
           </div>
 
           <div className="divide-y divide-[color:var(--color-border)] rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
+            {/* How each keyword is run sits directly above the keywords it
+                applies to, rather than across the page in the setup column. */}
+            <FormRow title="Pages per keyword">{renderPages(true)}</FormRow>
+            {isSerp && <FormRow title="Device">{renderView(true)}</FormRow>}
+            {isSocial && <FormRow title="How many to keep">{renderTopn(true)}</FormRow>}
             <FormRow title="Keywords">{renderKeywords(true)}</FormRow>
             {isSerp && <FormRow title="Enrichment">{renderEnrichment(true)}</FormRow>}
             <FormRow title="Save this setup">{renderSave(true)}</FormRow>
