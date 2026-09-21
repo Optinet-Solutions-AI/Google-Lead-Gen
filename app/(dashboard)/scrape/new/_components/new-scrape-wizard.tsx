@@ -101,6 +101,17 @@ type StepKey =
 const TOP_N_PRESETS = [10, 25, 50, 100] as const
 const emptySubscribe = () => () => {}
 
+/** True from the `lg` breakpoint up. Used to render EITHER the desktop form
+ *  or the stepper — never both. Rendering both and hiding one with CSS would
+ *  duplicate every element id and ref in the DOM, which breaks
+ *  label-to-input association and sends focus() to the hidden copy. */
+const DESKTOP_QUERY = '(min-width: 1024px)'
+const subscribeDesktop = (cb: () => void) => {
+  const m = window.matchMedia(DESKTOP_QUERY)
+  m.addEventListener('change', cb)
+  return () => m.removeEventListener('change', cb)
+}
+
 function defaultDraft(): WizardDraft {
   return {
     v: 1,
@@ -181,11 +192,43 @@ function Tile({
   )
 }
 
+/** A titled card in the desktop form. The stepper supplies its own heading
+ *  per step; here the section label carries it, and the step's explainer text
+ *  is hidden (see StepHeading). */
+function FormSection({
+  title,
+  className,
+  children,
+}: {
+  title: string
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <section
+      className={[
+        'flex min-w-0 flex-col rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-4',
+        className ?? '',
+      ].join(' ')}
+    >
+      <h2 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--color-text-secondary)]">
+        {title}
+      </h2>
+      <div className="min-w-0 flex-1">{children}</div>
+    </section>
+  )
+}
+
 function StepHeading({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
     <div className="mb-3">
-      <h2 className="text-[17px] font-semibold text-[color:var(--color-text-primary)]">{title}</h2>
-      {children && <div className="mt-1 text-[13px] leading-relaxed text-[color:var(--color-text-secondary)]">{children}</div>}
+      {/* The desktop form shows every section at once and labels them in its
+          own headers, so the stepper's big title + explainer would be noise
+          there. Both are hidden from `lg` up. */}
+      <h2 className="text-[17px] font-semibold text-[color:var(--color-text-primary)] lg:hidden">{title}</h2>
+      {children && (
+        <div className="mt-1 text-[13px] leading-relaxed text-[color:var(--color-text-secondary)] lg:hidden">{children}</div>
+      )}
     </div>
   )
 }
@@ -222,6 +265,11 @@ function EngineMono({ engine, size = 'md' }: { engine: EngineKey; size?: 'sm' | 
 
 export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCountry, totalPending }: Props) {
   const isClient = useSyncExternalStore(emptySubscribe, () => true, () => false)
+  const isDesktop = useSyncExternalStore(
+    subscribeDesktop,
+    () => window.matchMedia(DESKTOP_QUERY).matches,
+    () => false,
+  )
   const today = utcDay(new Date())
 
   // Restored once, during the first client render — never in an effect.
@@ -596,51 +644,32 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
     )
   }
 
-  const progress = ((stepIndex + 1) / steps.length) * 100
+  // The desktop form submits in one go, so it needs the first blocking
+  // problem across every step this engine uses — the stepper gets the same
+  // answer one step at a time via `validate(step)`.
+  const firstProblem: string | null = (() => {
+    for (const k of steps) {
+      if (k === 'review' || k === 'save' || k === 'config') continue
+      const v = validate(k)
+      if (!v.ok) return v.message ?? 'Something above still needs an answer.'
+    }
+    return null
+  })()
 
-  return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-4 md:px-6 md:py-5">
-      <Header quota={quota} day={quotaDay} />
-
-      {restored && !dismissedResume && (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-[12.5px]">
-          <span className="text-[color:var(--color-text-secondary)]">
-            Picked up where you left off. {keywords.length > 0 ? `${keywords.length} keyword${keywords.length === 1 ? '' : 's'} still here.` : ''}
-          </span>
-          <span className="flex gap-2">
-            <button type="button" onClick={() => setDismissedResume(true)} className="text-[color:var(--color-text-secondary)] underline hover:text-[color:var(--color-text-primary)]">
-              Keep going
-            </button>
-            <button type="button" onClick={resetAll} className="text-[color:var(--color-text-secondary)] underline hover:text-[color:var(--color-text-primary)]">
-              Start over
-            </button>
-          </span>
-        </div>
-      )}
-
-      {/* Progress: a bar, not a numbered strip */}
-      <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-[color:var(--color-bg-secondary)]" role="presentation">
-        <div className="h-full rounded-full bg-[color:var(--color-accent-hover)] transition-all duration-300" style={{ width: `${progress}%` }} />
-      </div>
-
-      <div className="mt-4">
-        <section className="flex flex-col rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
-          {/* A floor on the content height so short steps do not make the card
-              jump between one answer and the next. Tall steps still grow. */}
-          <div className="flex-1 p-4 md:p-5 min-h-[330px] sm:min-h-[360px]">
-            {step === 'start' && (
+  // ---- step bodies, shared by the mobile stepper and the desktop form ----
+  const renderStart = (ans: boolean) => (
               <>
                 <StepHeading title="When should this scrape run?">
                   A scrape spends one keyword of your daily quota per keyword and country. Scheduling for a later day spends that
                   day&rsquo;s quota the moment you submit, so different days can have different amounts left.
                 </StepHeading>
                 <div className="grid gap-2.5 sm:grid-cols-2">
-                  <Tile selected={answered && mode === 'now'} isDefault onClick={() => pick(() => setMode('now'))} disabled={todayFull}>
+                  <Tile selected={ans && mode === 'now'} isDefault onClick={() => pick(() => setMode('now'))} disabled={todayFull}>
                     <ListPlus className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Add to queue now</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Starts when a worker is free</span>
                   </Tile>
-                  <Tile selected={answered && mode === 'schedule'} onClick={() => choose(() => setMode('schedule'))}>
+                  <Tile selected={ans && mode === 'schedule'} onClick={() => choose(() => setMode('schedule'))}>
                     <CalendarClock className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Schedule for later</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Runs at a time you choose</span>
@@ -690,22 +719,22 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                   </div>
                 )}
               </>
-            )}
+  )
 
-            {step === 'config' && (
+  const renderConfig = (ans: boolean) => (
               <>
                 <StepHeading title="How do you want to start?">
                   A saved configuration keeps the source, country, language, pages, device and enrichment stages you chose last
                   time, so only the keywords change. You can save the current setup at the end of this form.
                 </StepHeading>
                 <div className="grid gap-2.5 sm:grid-cols-2">
-                  <Tile selected={answered && configChoice === 'new'} isDefault={!savedConfig} onClick={() => pick(() => setConfigChoice('new'))}>
+                  <Tile selected={ans && configChoice === 'new'} isDefault={!savedConfig} onClick={() => pick(() => setConfigChoice('new'))}>
                     <Plus className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Set everything up</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Choose each option</span>
                   </Tile>
                   <Tile
-                    selected={answered && configChoice === 'saved'}
+                    selected={ans && configChoice === 'saved'}
                     isDefault={!!savedConfig}
                     onClick={() => savedConfig && applySaved(savedConfig)}
                     disabled={!savedConfig}
@@ -741,9 +770,9 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                   </div>
                 )}
               </>
-            )}
+  )
 
-            {step === 'source' && (
+  const renderSource = (ans: boolean) => (
               <>
                 <StepHeading title="Which source should we search?">
                   Google and Bing return websites, which become leads and can be enriched. The rest return accounts on a platform:
@@ -753,7 +782,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                   {ENGINES.map(e => (
                     <Tile
                       key={e.key}
-                      selected={answered && engine === e.key}
+                      selected={ans && engine === e.key}
                       isDefault={e.key === DEFAULT_ENGINE}
                       onClick={() =>
                         pick(() => {
@@ -770,9 +799,9 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                 </div>
                 {def && <p className="mt-3 text-[12.5px] leading-relaxed text-[color:var(--color-text-secondary)]">{def.detail}</p>}
               </>
-            )}
+  )
 
-            {step === 'country' && (
+  const renderCountry = (ans: boolean) => (
               <>
                 <StepHeading title="Which country?">
                   The scrape runs through that country&rsquo;s browser profile and residential proxy, so results match what someone
@@ -794,7 +823,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                     return (
                       <Tile
                         key={p.country_code}
-                        selected={answered && country === p.country_code}
+                        selected={ans && country === p.country_code}
                         disabled={bingOff}
                         onClick={() => pick(() => { setCountry(p.country_code); setLanguage('en') })}
                         title={
@@ -813,9 +842,9 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                   )}
                 </div>
               </>
-            )}
+  )
 
-            {step === 'language' && (
+  const renderLanguage = (ans: boolean) => (
               <>
                 <StepHeading title="Which language?">
                   This sets the search language, not the country. Only languages configured for {profile?.country_name ?? 'this country'} are
@@ -823,16 +852,16 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                 </StepHeading>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                   {langOptions(profile?.languages).map(code => (
-                    <Tile key={code} selected={answered && language === code} isDefault={code === 'en'} onClick={() => pick(() => setLanguage(code))}>
+                    <Tile key={code} selected={ans && language === code} isDefault={code === 'en'} onClick={() => pick(() => setLanguage(code))}>
                       <span className="text-[13.5px] font-medium">{langName(code)}</span>
                       <span className="text-[10.5px] uppercase text-[color:var(--color-text-secondary)]">{code}</span>
                     </Tile>
                   ))}
                 </div>
               </>
-            )}
+  )
 
-            {step === 'pages' && (
+  const renderPages = (ans: boolean) => (
               <>
                 <StepHeading title="How many result pages?">
                   Each page is about 10 results, so 3 pages is roughly 30 leads per keyword. Paid ads only ever appear on page one.
@@ -840,41 +869,41 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                 </StepHeading>
                 <div className="grid grid-cols-5 gap-2 sm:grid-cols-10">
                   {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
-                    <Tile key={n} selected={answered && pages === n} isDefault={n === 1} onClick={() => pick(() => setPages(n))} className="min-h-[48px]">
+                    <Tile key={n} selected={ans && pages === n} isDefault={n === 1} onClick={() => pick(() => setPages(n))} className="min-h-[48px]">
                       <span className="text-[16px] font-semibold tabular-nums">{n}</span>
                     </Tile>
                   ))}
                 </div>
               </>
-            )}
+  )
 
-            {step === 'view' && (
+  const renderView = (ans: boolean) => (
               <>
                 <StepHeading title="Desktop, mobile, or both?">
                   Google returns different results and different ads to a phone than to a desktop, and many casino campaigns run
                   mobile only. Both runs the pages twice and merges them, which takes longer but misses less.
                 </StepHeading>
                 <div className="grid gap-2.5 sm:grid-cols-3">
-                  <Tile selected={answered && viewMode === 'both'} isDefault onClick={() => pick(() => setViewMode('both'))}>
+                  <Tile selected={ans && viewMode === 'both'} isDefault onClick={() => pick(() => setViewMode('both'))}>
                     <MonitorSmartphone className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Both</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Two passes, merged</span>
                   </Tile>
-                  <Tile selected={answered && viewMode === 'desktop'} onClick={() => pick(() => setViewMode('desktop'))}>
+                  <Tile selected={ans && viewMode === 'desktop'} onClick={() => pick(() => setViewMode('desktop'))}>
                     <Monitor className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Desktop only</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Fastest</span>
                   </Tile>
-                  <Tile selected={answered && viewMode === 'mobile'} onClick={() => pick(() => setViewMode('mobile'))}>
+                  <Tile selected={ans && viewMode === 'mobile'} onClick={() => pick(() => setViewMode('mobile'))}>
                     <Smartphone className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Mobile only</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Mobile-only campaigns</span>
                   </Tile>
                 </div>
               </>
-            )}
+  )
 
-            {step === 'keywords' && (
+  const renderKeywords = (_ans: boolean) => (
               <>
                 <StepHeading title={configChoice === 'saved' ? 'Which keywords this time?' : 'What should we search for?'}>
                   One search runs per keyword, and each keyword and country pair costs one of your daily quota. Press Enter to add
@@ -928,21 +957,21 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                   </div>
                 )}
               </>
-            )}
+  )
 
-            {step === 'enrichment' && (
+  const renderEnrichment = (ans: boolean) => (
               <>
                 <StepHeading title="What should run on the results?">
                   Enrichment opens each lead&rsquo;s page after the scrape. Every stage costs worker time, so pick only what you need.
                   Stages you choose are remembered for your next scrape.
                 </StepHeading>
                 <div className="grid gap-2.5 sm:grid-cols-2">
-                  <Tile selected={answered && enrichChoice === 'none'} isDefault onClick={() => choose(() => { setEnrichChoice('none'); setStages([]) })}>
+                  <Tile selected={ans && enrichChoice === 'none'} isDefault onClick={() => choose(() => { setEnrichChoice('none'); setStages([]) })}>
                     <X className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">No enrichment</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Just the results list</span>
                   </Tile>
-                  <Tile selected={answered && enrichChoice === 'stages'} onClick={() => choose(() => setEnrichChoice('stages'))}>
+                  <Tile selected={ans && enrichChoice === 'stages'} onClick={() => choose(() => setEnrichChoice('stages'))}>
                     <FlaskConical className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Choose stages</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">
@@ -988,9 +1017,9 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                   </>
                 )}
               </>
-            )}
+  )
 
-            {step === 'topn' && (
+  const renderTopn = (ans: boolean) => (
               <>
                 <StepHeading title="How many accounts should we keep?">
                   {def?.label} discovery can return hundreds of accounts. Keeping the largest by follower count trims the list to the
@@ -998,11 +1027,11 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                 </StepHeading>
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
                   {TOP_N_PRESETS.map(n => (
-                    <Tile key={n} selected={answered && topChoice === 'n' && topN === n} onClick={() => pick(() => { setTopChoice('n'); setTopN(n) })} className="min-h-[48px]">
+                    <Tile key={n} selected={ans && topChoice === 'n' && topN === n} onClick={() => pick(() => { setTopChoice('n'); setTopN(n) })} className="min-h-[48px]">
                       <span className="text-[14.5px] font-semibold tabular-nums">Top {n}</span>
                     </Tile>
                   ))}
-                  <Tile selected={answered && topChoice === 'all'} onClick={() => pick(() => setTopChoice('all'))} className="min-h-[48px]">
+                  <Tile selected={ans && topChoice === 'all'} onClick={() => pick(() => setTopChoice('all'))} className="min-h-[48px]">
                     <span className="text-[14.5px] font-semibold">All</span>
                   </Tile>
                 </div>
@@ -1018,9 +1047,9 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                   />
                 </label>
               </>
-            )}
+  )
 
-            {step === 'save' && (
+  const renderSave = (ans: boolean) => (
               <>
                 <StepHeading title="Save this setup for next time?">
                   A saved setup keeps the source, country, language, pages, device and enrichment stages, so your next scrape only
@@ -1028,12 +1057,12 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                   saved before. Keywords are never part of it.
                 </StepHeading>
                 <div className="grid gap-2.5 sm:grid-cols-2">
-                  <Tile selected={answered && !saveConfig} isDefault onClick={() => pick(() => setSaveConfig(false))}>
+                  <Tile selected={ans && !saveConfig} isDefault onClick={() => pick(() => setSaveConfig(false))}>
                     <X className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Do not save</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">Use it this once</span>
                   </Tile>
-                  <Tile selected={answered && saveConfig} onClick={() => pick(() => setSaveConfig(true))}>
+                  <Tile selected={ans && saveConfig} onClick={() => pick(() => setSaveConfig(true))}>
                     <Star className="h-5 w-5" />
                     <span className="text-[13.5px] font-medium">Save this setup</span>
                     <span className="text-[11.5px] text-[color:var(--color-text-secondary)]">
@@ -1070,9 +1099,9 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                   )}
                 </div>
               </>
-            )}
+  )
 
-            {step === 'review' && (
+  const renderReview = (_ans: boolean) => (
               <>
                 <StepHeading title="Check and start">
                   Everything below is what gets queued. Select any line to change it.
@@ -1109,7 +1138,128 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                   )}
                 </div>
               </>
+  )
+
+  const progress = ((stepIndex + 1) / steps.length) * 100
+
+  return (
+    <div className="mx-auto w-full max-w-4xl px-4 py-4 md:px-6 md:py-5 lg:max-w-none lg:px-8">
+      <Header quota={quota} day={quotaDay} />
+
+      {restored && !dismissedResume && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-[12.5px]">
+          <span className="text-[color:var(--color-text-secondary)]">
+            Picked up where you left off. {keywords.length > 0 ? `${keywords.length} keyword${keywords.length === 1 ? '' : 's'} still here.` : ''}
+          </span>
+          <span className="flex gap-2">
+            <button type="button" onClick={() => setDismissedResume(true)} className="text-[color:var(--color-text-secondary)] underline hover:text-[color:var(--color-text-primary)]">
+              Keep going
+            </button>
+            <button type="button" onClick={resetAll} className="text-[color:var(--color-text-secondary)] underline hover:text-[color:var(--color-text-primary)]">
+              Start over
+            </button>
+          </span>
+        </div>
+      )}
+
+      {/* Progress: a bar, not a numbered strip. Stepper only. */}
+      <div className="mt-3 h-1 w-full overflow-hidden rounded-full bg-[color:var(--color-bg-secondary)] lg:hidden" role="presentation">
+        <div className="h-full rounded-full bg-[color:var(--color-accent-hover)] transition-all duration-300" style={{ width: `${progress}%` }} />
+      </div>
+
+      {/* ---------------- desktop: every input at once ---------------- */}
+      {isDesktop && (
+      <div className="mt-4">
+        <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
+          <FormSection title="When">{renderStart(true)}</FormSection>
+          <FormSection title="Start from">{renderConfig(true)}</FormSection>
+          <FormSection title="Source">{renderSource(true)}</FormSection>
+          <FormSection title="Country">{renderCountry(true)}</FormSection>
+          <FormSection title="Language">{renderLanguage(true)}</FormSection>
+          <FormSection title="Pages per keyword">{renderPages(true)}</FormSection>
+          {isSerp && <FormSection title="Device">{renderView(true)}</FormSection>}
+          {isSocial && <FormSection title="How many to keep">{renderTopn(true)}</FormSection>}
+          {isSerp && (
+            <FormSection title="Enrichment" className="col-span-2 xl:col-span-1">
+              {renderEnrichment(true)}
+            </FormSection>
+          )}
+          <FormSection title="Keywords" className="col-span-2 xl:col-span-2">
+            {renderKeywords(true)}
+          </FormSection>
+          <FormSection title="Save this setup">{renderSave(true)}</FormSection>
+        </div>
+
+        <div className="sticky bottom-0 z-10 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]/95 px-4 py-3 backdrop-blur">
+          <div className="min-w-0 text-[12.5px] text-[color:var(--color-text-secondary)]">
+            {firstProblem ? (
+              <span className="text-amber-800">{firstProblem}</span>
+            ) : (
+              <>
+                {distinctKeywords} {distinctKeywords === 1 ? 'keyword' : 'keywords'} ·{' '}
+                {country ? `${profile?.country_name ?? country}` : 'no country yet'} · {def?.label ?? engine}
+                {remaining !== null && !quota.exempt && ` · ${remaining} left ${dayLabel(quotaDay).toLowerCase()}`}
+              </>
             )}
+          </div>
+          <div className="flex items-center gap-2">
+            {submitError && <span className="text-[12.5px] text-red-700">{submitError}</span>}
+            <button
+              type="button"
+              onClick={() => submit()}
+              disabled={firstProblem !== null || isPending}
+              className="inline-flex items-center gap-2 rounded-lg bg-[color:var(--color-text-primary)] px-5 py-2.5 text-[14px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              {isPending ? 'Queuing…' : mode === 'schedule' ? 'Schedule scrape' : 'Start scraping'}
+            </button>
+          </div>
+        </div>
+
+        {duplicateWarning && (
+          <DuplicateWarning
+            duplicates={duplicateWarning.duplicates}
+            freshCount={duplicateWarning.freshCount}
+            pending={isPending}
+            onRunAnyway={() => {
+              setRunAnyway(true)
+              submit(true)
+            }}
+          />
+        )}
+      </div>
+
+      )}
+
+      {/* ---------------- phone + tablet: one step at a time ---------------- */}
+      {!isDesktop && (
+      <div className="mt-4">
+        <section className="flex flex-col rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
+          {/* A floor on the content height so short steps do not make the card
+              jump between one answer and the next. Tall steps still grow. */}
+          <div className="flex-1 p-4 md:p-5 min-h-[330px] sm:min-h-[360px]">
+            {step === 'start' && renderStart(answered)}
+
+            {step === 'config' && renderConfig(answered)}
+
+            {step === 'source' && renderSource(answered)}
+
+            {step === 'country' && renderCountry(answered)}
+
+            {step === 'language' && renderLanguage(answered)}
+
+            {step === 'pages' && renderPages(answered)}
+
+            {step === 'view' && renderView(answered)}
+
+            {step === 'keywords' && renderKeywords(answered)}
+
+            {step === 'enrichment' && renderEnrichment(answered)}
+
+            {step === 'topn' && renderTopn(answered)}
+
+            {step === 'save' && renderSave(answered)}
+
+            {step === 'review' && renderReview(answered)}
           </div>
 
           {/* Nav bar: Back only after step one; Continue only where a step
@@ -1146,6 +1296,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
           )}
         </section>
       </div>
+      )}
     </div>
   )
 }
