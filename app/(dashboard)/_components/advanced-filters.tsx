@@ -288,7 +288,7 @@ function FilterPanel({
   }
 
   return (
-    <div className="flex w-[440px] flex-col gap-3">
+    <div className="flex w-[min(27.5rem,calc(100vw-2rem))] flex-col gap-3">
       <header className="flex items-center justify-between">
         <h3 className="text-[12px] font-semibold text-[color:var(--color-text-primary)]">
           Filters
@@ -528,7 +528,7 @@ function SortPanel({
     setDraft(prev => prev.filter((_, ix) => ix !== i))
   }
   return (
-    <div className="flex w-[360px] flex-col gap-3">
+    <div className="flex w-[min(22.5rem,calc(100vw-2rem))] flex-col gap-3">
       <header className="flex items-center justify-between">
         <h3 className="text-[12px] font-semibold text-[color:var(--color-text-primary)]">
           Sort
@@ -716,7 +716,7 @@ function Popover({
     <div ref={ref} className="relative">
       <div onClick={() => setOpen(!open)}>{trigger}</div>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 shadow-xl">
+        <div className="absolute right-0 top-full z-30 mt-1 max-w-[calc(100vw-2rem)] rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-3 shadow-xl sm:left-0 sm:right-auto">
           {children}
         </div>
       )}

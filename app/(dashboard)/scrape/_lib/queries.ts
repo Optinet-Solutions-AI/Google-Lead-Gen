@@ -1602,9 +1602,17 @@ export type JobsQueryOptions = {
   filters?: Filter[]
   sorts?: Sort[]
   /** When set (lowercase email), restrict results to scrapes whose
-   *  created_by_email matches. Powers the "Mine / All" toggle on
-   *  /scrape — default "mine" so operators land on their own work. */
+   *  created_by_email matches. Powers the owner toggle on /scrape —
+   *  default the caller's own email so operators land on their own work,
+   *  or another user's email when one is picked in the filter bar. */
   restrictToOwnerEmail?: string
+  /** Inclusive UTC day (YYYY-MM-DD) to restrict `created_at` to. /scrape
+   *  defaults to today so the list opens on what is happening now; the
+   *  date picker in the filter bar widens it. */
+  onDay?: string
+  /** Inclusive UTC day range, used when the picker holds two dates. */
+  fromDay?: string
+  toDay?: string
 }
 
 export type JobsQueryResult = {
@@ -1689,6 +1697,17 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
   // own work; flip to All via the toggle in the page header.
   if (opts.restrictToOwnerEmail && opts.restrictToOwnerEmail.length > 0) {
     query = query.eq('created_by_email', opts.restrictToOwnerEmail.toLowerCase())
+  }
+
+  // Day window on created_at. A single day is the common case (the default
+  // "Today" chip); from/to covers a range chosen in the date picker.
+  const dayStart = (d: string) => `${d}T00:00:00.000Z`
+  const dayEnd = (d: string) => `${d}T23:59:59.999Z`
+  if (opts.onDay) {
+    query = query.gte('created_at', dayStart(opts.onDay)).lte('created_at', dayEnd(opts.onDay))
+  } else {
+    if (opts.fromDay) query = query.gte('created_at', dayStart(opts.fromDay))
+    if (opts.toDay) query = query.lte('created_at', dayEnd(opts.toDay))
   }
 
   // Free-text search across a small set of columns.

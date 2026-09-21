@@ -40,6 +40,7 @@ import {
   RowContextMenu,
   type ContextMenuAction,
 } from '../../_components/row-context-menu'
+import { Flag, FlagLabel } from '../../_components/flag'
 import { BulkScrapeActionsBar } from './bulk-actions-bar'
 import { JobActionsButton } from './job-row-actions'
 import { ReviewedCheckbox } from './reviewed-checkbox'
@@ -1064,7 +1065,7 @@ export function JobsTable({
                     </span>
                   )}
                 </LinkTd>
-                <LinkTd href={href}>{job.country_code}</LinkTd>
+                <LinkTd href={href}><FlagLabel code={job.country_code} /></LinkTd>
                 <LinkTd href={href}>
                   <span className="inline-flex items-center gap-1">
                     <EngineBadge engine={job.search_engine} />
@@ -1290,7 +1291,7 @@ export function JobsCardList({ jobs, pendingPositions, pageInfo }: Props) {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[color:var(--color-text-secondary)]">
-            <span>{job.country_code}</span>
+            <span className="inline-flex items-center gap-1"><Flag code={job.country_code} className="h-3 w-[1.125rem]" />{job.country_code}</span>
             <EngineBadge engine={job.search_engine} />
             <ViewModeBadge mode={job.view_mode} />
             <span>{job.pages} {job.pages === 1 ? 'page' : 'pages'}</span>

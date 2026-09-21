@@ -30,13 +30,18 @@ export async function GET(req: NextRequest) {
   const q = sp.get('q') ?? ''
   const filters = parseFilters(sp.get('f') ?? undefined)
   const sorts = parseSorts(sp.get('s') ?? undefined)
-  // Mirror the /scrape page: default Mine (own scrapes), All when
-  // ?owner=all. Infinite-scroll on /scrape calls /api/jobs with the
-  // current URL params verbatim, so the same gate applies here.
-  const ownerScope: 'mine' | 'all' = sp.get('owner') === 'all' ? 'all' : 'mine'
+  // Mirror the /scrape page exactly: "Load more" and infinite scroll call
+  // this with the current URL params verbatim, so the day and owner scope
+  // have to resolve the same way or the extra pages would ignore them.
+  const ownerParam = (sp.get('owner') ?? '').toLowerCase()
+  const ownerScope = ownerParam === 'all' ? 'all' : ownerParam.includes('@') ? ownerParam : 'mine'
   const callerEmail = (user.email ?? '').toLowerCase() || null
   const restrictToOwnerEmail =
-    ownerScope === 'mine' && callerEmail ? callerEmail : undefined
+    ownerScope === 'mine' ? (callerEmail ?? undefined) : ownerScope === 'all' ? undefined : ownerScope
+
+  const today = new Date().toISOString().slice(0, 10)
+  const dayParam = sp.get('day') ?? ''
+  const day = dayParam === 'all' ? 'all' : /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam : today
 
   try {
     const result = await queryJobs({
@@ -46,6 +51,7 @@ export async function GET(req: NextRequest) {
       filters,
       sorts,
       ...(restrictToOwnerEmail ? { restrictToOwnerEmail } : {}),
+      ...(day !== 'all' ? { onDay: day } : {}),
     })
     return NextResponse.json(result, {
       headers: {
