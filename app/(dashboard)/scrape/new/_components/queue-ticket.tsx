@@ -70,8 +70,11 @@ export function QueueTicket({ info, onCreateAnother }: { info: TicketInfo; onCre
           <span className="font-mono text-[11px] text-[color:var(--color-text-secondary)]">{reference}</span>
         </div>
 
+        {/* Stacked on a phone; from `lg` the stub sits beside the detail so a
+            wide screen is not mostly empty either side of a narrow column. */}
+        <div className="lg:grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:items-stretch">
         {/* The number */}
-        <div className="flex flex-col items-center gap-1 px-5 pb-5 pt-6 text-center">
+        <div className="flex flex-col items-center gap-1 px-5 pb-5 pt-6 text-center lg:justify-center lg:border-r lg:border-dashed lg:border-[color:var(--color-border-strong)]">
           <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--color-text-secondary)]">
             {scheduled ? 'Scheduled' : 'Queue position'}
           </span>
@@ -127,14 +130,15 @@ export function QueueTicket({ info, onCreateAnother }: { info: TicketInfo; onCre
           </div>
         </div>
 
-        {/* Perforation */}
-        <div className="relative h-0 border-t border-dashed border-[color:var(--color-border-strong)]">
+        {/* Perforation — the lg layout uses the vertical rule instead. */}
+        <div className="relative h-0 border-t border-dashed border-[color:var(--color-border-strong)] lg:hidden">
           <span className="absolute -left-2 -top-2 h-4 w-4 rounded-full bg-[color:var(--color-bg-secondary)]" />
           <span className="absolute -right-2 -top-2 h-4 w-4 rounded-full bg-[color:var(--color-bg-secondary)]" />
         </div>
 
         {/* Stub detail */}
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 px-5 py-4 text-[12.5px] sm:grid-cols-3">
+        <div className="min-w-0">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 px-5 py-4 text-[12.5px] sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3">
           <Field label="Estimated wait" value={scheduled ? 'Starts at the scheduled time' : formatWait(estimate?.etaMinutes ?? null)} />
           <Field label="Keywords queued" value={`${draft.keywords.length}`} />
           <Field label="Source" value={def?.label ?? draft.search_engine} />
@@ -173,6 +177,8 @@ export function QueueTicket({ info, onCreateAnother }: { info: TicketInfo; onCre
             </ul>
           </div>
         )}
+        </div>
+        </div>
       </div>
     </div>
   )
