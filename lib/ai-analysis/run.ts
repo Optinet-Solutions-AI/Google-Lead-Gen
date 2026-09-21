@@ -15,6 +15,7 @@ import {
   type Brand,
   type PageLink,
 } from './core'
+import { runRelevanceForJobs, type RelevanceRunResult } from './relevance'
 
 /**
  * Orchestrates the AI stage for websites that survived the trim
@@ -50,6 +51,8 @@ export type AiRunOptions = {
 export type AiRunResult = {
   ok: boolean
   skipped?: string
+  /** Stage 0: how many SERP results were judged against their keyword. */
+  relevance?: RelevanceRunResult
   candidates: number
   screened: number
   shortlisted: number
@@ -158,6 +161,17 @@ export async function runAiAnalysis(svc: SupabaseClient, opts: AiRunOptions = {}
   }
   if (jobIds.length === 0) return { ok: true, skipped: 'no completed jobs in window', ...empty, ms: Date.now() - started }
 
+  // ---- stage 0: is each result relevant to the keyword that found it? ----
+  // Runs first and gates everything after it: a YouTube video or a Wikipedia
+  // article that ranked for a casino keyword is never opened or charged for.
+  let relevance: RelevanceRunResult | undefined
+  if (!dry) {
+    relevance = await runRelevanceForJobs(svc, key, triageModel, jobIds, { limit: 300 })
+    if (relevance.checked > 0) {
+      log(`relevance: ${relevance.checked} judged, ${relevance.rejected} rejected as off-keyword`)
+    }
+  }
+
   const { data: candRows, error: candErr } = await svc.rpc('ai_candidates_for_job', { p_job_ids: jobIds })
   if (candErr) return { ok: false, ...empty, ms: Date.now() - started, errors: [candErr.message] }
   const candidates = (candRows ?? []) as Candidate[]
@@ -229,7 +243,7 @@ export async function runAiAnalysis(svc: SupabaseClient, opts: AiRunOptions = {}
 
   if (toAudit.length === 0) {
     return {
-      ok: true, candidates: candidates.length, screened: needTriage.length, shortlisted,
+      ok: true, ...(relevance ? { relevance } : {}), candidates: candidates.length, screened: needTriage.length, shortlisted,
       audited: 0, fetchOk: 0, affiliates: 0, ctaLinks: 0, ctaViaRoosterTracker: 0, roosterSites: 0,
       stagQueued: 0, contactPages: 0, costUsd: Number(cost.toFixed(5)), ms: Date.now() - started,
       ...(errors.length ? { errors } : {}),
@@ -394,6 +408,7 @@ export async function runAiAnalysis(svc: SupabaseClient, opts: AiRunOptions = {}
 
   return {
     ok: true,
+    ...(relevance ? { relevance } : {}),
     candidates: candidates.length,
     screened: needTriage.length,
     shortlisted,

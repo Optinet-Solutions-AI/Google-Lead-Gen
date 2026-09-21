@@ -2469,6 +2469,10 @@ def _apify_parse_organic(items: list[Any], engine: str, keyword: str) -> list[di
             seen.add(url)
             results.append({
                 "url": url, "full_url": full, "title": o.get("title") or "",
+                # Apify returns the SERP snippet; complete_scrape_job stores it
+                # as serp_description and the relevance check reads it. Actor
+                # versions have called it description or snippet.
+                "description": (o.get("description") or o.get("snippet") or ""),
                 "resultType": "Organic", "page": page_idx + 1,
                 "position": len(results) + 1, "overall_position": len(results) + 1,
                 "keyword": keyword, "seen_on": "desktop",
@@ -2511,6 +2515,7 @@ def _apify_parse_paid(items: list[Any], engine: str, keyword: str) -> list[dict[
             seen.add(key)
             results.append({
                 "url": full, "full_url": full, "title": o.get("title") or "",
+                "description": (o.get("description") or o.get("snippet") or ""),
                 "resultType": "PPC", "page": page_idx + 1,
                 "position": len(results) + 1, "overall_position": len(results) + 1,
                 "keyword": keyword, "seen_on": "desktop",
