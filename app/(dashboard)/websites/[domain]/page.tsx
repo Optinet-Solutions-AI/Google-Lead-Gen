@@ -1,8 +1,13 @@
+import { Suspense } from 'react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ArrowLeft, ExternalLink } from 'lucide-react'
 import { RECENCY_DOT, RECENCY_LABEL } from '@/lib/website-profiles/recency'
-import { loadWebsiteDetail, type WebsiteDetail } from '../_lib/query'
+import {
+  loadWebsiteEnrichment,
+  loadWebsiteSummary,
+  type WebsiteSummary,
+} from '../_lib/query'
 import { WebsiteActions, WebsiteFacts } from '../_components/website-detail'
 import { Appearances } from '../_components/appearances'
 
@@ -56,8 +61,8 @@ function backTarget(
 export default async function WebsitePage({ params, searchParams }: Props) {
   const { domain: raw } = await params
   const sp = await searchParams
-  const site = await loadWebsiteDetail(raw)
-  const { profile, domain, appearances, leadIds, detail, recency, lastSeenAt } = site
+  const site = await loadWebsiteSummary(raw)
+  const { profile, domain, appearances, leadIds, primaryLeadId, recency, lastSeenAt } = site
 
   // Nothing at all — no profile row AND no lead has ever mentioned it.
   if (!domain || (!profile && appearances.length === 0)) notFound()
@@ -125,8 +130,11 @@ export default async function WebsitePage({ params, searchParams }: Props) {
         </div>
 
         {/* The actions belong beside the identity, not stacked above the
-            content as three panels of explanatory prose. */}
-        {detail && <WebsiteActions detail={detail} leadIds={leadIds} domain={domain} />}
+            content as three panels of explanatory prose. They need the
+            enriched lead, so they stream in with it. */}
+        <Suspense fallback={<ActionsSkeleton />}>
+          <ActionsSlot primaryLeadId={primaryLeadId} leadIds={leadIds} domain={domain} />
+        </Suspense>
       </header>
 
       <Verdicts site={site} />
@@ -149,13 +157,9 @@ export default async function WebsitePage({ params, searchParams }: Props) {
         <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
           Details
         </h2>
-        {detail ? (
-          <WebsiteFacts detail={detail} />
-        ) : (
-          <p className="text-[12px] text-[color:var(--color-text-secondary)]">
-            No enrichment has run for this website yet.
-          </p>
-        )}
+        <Suspense fallback={<FactsSkeleton />}>
+          <FactsSlot primaryLeadId={primaryLeadId} />
+        </Suspense>
       </section>
     </div>
   )
@@ -168,14 +172,17 @@ export default async function WebsitePage({ params, searchParams }: Props) {
  * whether it is on keyword, and the four enrichment verdicts. An
  * unanswered question says so rather than showing a bare dash.
  */
-function Verdicts({ site }: { site: WebsiteDetail }) {
-  const { profile, detail, appearances } = site
-  const lead = detail?.lead ?? null
+function Verdicts({ site }: { site: WebsiteSummary }) {
+  const { profile, appearances } = site
+  // Every verdict below is denormalized onto the profile, so the tiles
+  // paint with the first two queries rather than waiting on enrichment.
+  const isAffiliate = profile?.is_affiliate ?? null
+  const isRooster = profile?.is_rooster_partner ?? null
 
   // "Already exists" reads the same way it does on the batch table:
   // Monday wins because it names the board, otherwise our own history.
-  const onMonday = profile?.is_on_monday === true || lead?.is_on_monday === true
-  const board = profile?.monday_board ?? lead?.monday_board ?? null
+  const onMonday = profile?.is_on_monday === true
+  const board = profile?.monday_board ?? null
   const seenBefore = appearances.length > 1
   const exists = onMonday
     ? { label: board ? `Monday · ${board}` : 'On Monday', tone: 'muted' as const }
@@ -192,10 +199,6 @@ function Verdicts({ site }: { site: WebsiteDetail }) {
         ? { label: 'Off keyword', tone: 'bad' as const }
         : { label: 'On keyword', tone: 'good' as const }
 
-  const stagCount = detail?.stags.length ?? 0
-  const contact = detail?.contact ?? null
-  const contactCount =
-    (contact?.emails?.length ?? 0) + (contact?.phones?.length ?? 0)
 
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
@@ -203,30 +206,90 @@ function Verdicts({ site }: { site: WebsiteDetail }) {
       <Tile label="Relevant?" value={relevance.label} tone={relevance.tone} />
       <Tile
         label="Affiliate?"
-        value={lead?.is_affiliate === null || lead === null ? 'Unchecked' : lead.is_affiliate ? 'Yes' : 'No'}
-        tone={lead?.is_affiliate === true ? 'good' : lead?.is_affiliate === false ? 'muted' : 'idle'}
+        value={isAffiliate === null ? 'Unchecked' : isAffiliate ? 'Yes' : 'No'}
+        tone={isAffiliate === true ? 'good' : isAffiliate === false ? 'muted' : 'idle'}
       />
       <Tile
         label="Rooster brand?"
         value={
-          lead?.is_rooster_partner === true
-            ? (lead.brand ?? 'Yes')
-            : lead?.is_rooster_partner === false
-              ? 'No'
-              : 'Unchecked'
+          isRooster === true ? (profile?.brand ?? 'Yes') : isRooster === false ? 'No' : 'Unchecked'
         }
-        tone={lead?.is_rooster_partner === true ? 'good' : lead?.is_rooster_partner === false ? 'muted' : 'idle'}
+        tone={isRooster === true ? 'good' : isRooster === false ? 'muted' : 'idle'}
       />
       <Tile
         label="Contacts"
-        value={contactCount > 0 ? String(contactCount) : contact ? 'None found' : 'Unchecked'}
-        tone={contactCount > 0 ? 'good' : 'idle'}
+        value={
+          profile?.has_contact_details === true
+            ? 'Found'
+            : profile?.has_contact_details === false
+              ? 'None found'
+              : 'Unchecked'
+        }
+        tone={profile?.has_contact_details === true ? 'good' : 'idle'}
       />
       <Tile
         label="S-tags"
-        value={stagCount > 0 ? String(stagCount) : 'None'}
-        tone={stagCount > 0 ? 'good' : 'idle'}
+        value={profile?.has_s_tags === true ? 'Found' : profile?.has_s_tags === false ? 'None' : 'Unchecked'}
+        tone={profile?.has_s_tags === true ? 'good' : 'idle'}
       />
+    </div>
+  )
+}
+
+/**
+ * The streamed half.
+ *
+ * loadLeadDetail is three round trips, a cohort RPC, a Monday-candidate
+ * search and a signed URL per screenshot. Held in front of the page that
+ * was ~3.6s to first byte; behind a boundary the header, tiles and
+ * appearances paint straight away and these fill in.
+ */
+async function ActionsSlot({
+  primaryLeadId,
+  leadIds,
+  domain,
+}: {
+  primaryLeadId: number | null
+  leadIds: number[]
+  domain: string
+}) {
+  const detail = await loadWebsiteEnrichment(primaryLeadId)
+  if (!detail) return null
+  return <WebsiteActions detail={detail} leadIds={leadIds} domain={domain} />
+}
+
+async function FactsSlot({ primaryLeadId }: { primaryLeadId: number | null }) {
+  const detail = await loadWebsiteEnrichment(primaryLeadId)
+  if (!detail) {
+    return (
+      <p className="text-[12px] text-[color:var(--color-text-secondary)]">
+        No enrichment has run for this website yet.
+      </p>
+    )
+  }
+  return <WebsiteFacts detail={detail} />
+}
+
+function ActionsSkeleton() {
+  return (
+    <div className="flex gap-2" aria-hidden>
+      <div className="h-8 w-32 animate-pulse rounded-md bg-[color:var(--color-bg-secondary)]" />
+      <div className="h-8 w-36 animate-pulse rounded-md bg-[color:var(--color-bg-secondary)]" />
+      <div className="h-8 w-32 animate-pulse rounded-md bg-[color:var(--color-bg-secondary)]" />
+    </div>
+  )
+}
+
+function FactsSkeleton() {
+  return (
+    <div className="columns-1 gap-4 lg:columns-2 2xl:columns-3 [&>*]:mb-4" aria-hidden>
+      {[28, 20, 24].map((h, i) => (
+        <div
+          key={i}
+          className="animate-pulse rounded-md bg-[color:var(--color-bg-secondary)]"
+          style={{ height: `${h * 4}px` }}
+        />
+      ))}
     </div>
   )
 }

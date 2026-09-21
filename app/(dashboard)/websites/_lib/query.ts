@@ -1,4 +1,5 @@
 import 'server-only'
+import { cache } from 'react'
 import { getShadowContext } from '@/lib/shadow-filter'
 import { applyShadowFilter } from '@/lib/shadow-filter'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -37,6 +38,14 @@ export type WebsiteProfile = {
   ai_contact_page_url: string | null
   ai_cta_count: number | null
   ai_brand_count: number | null
+  // The enrichment verdicts, denormalized onto the profile. Having them
+  // here is what lets the summary tiles paint without waiting on the
+  // per-lead enrichment fetch.
+  is_affiliate: boolean | null
+  is_rooster_partner: boolean | null
+  brand: string | null
+  has_contact_details: boolean | null
+  has_s_tags: boolean | null
 }
 
 /** One SERP appearance of this website — the genuinely per-row facts. */
@@ -58,6 +67,14 @@ export type Appearance = {
   queued_by_display: string | null
 }
 
+/** The cheap half: two indexed queries, enough to paint the whole page
+ *  except the evidence cards. */
+export type WebsiteSummary = Omit<WebsiteDetail, 'detail'> & {
+  /** The lead whose enrichment to load, resolved here so the streamed
+   *  half doesn't have to re-query for it. */
+  primaryLeadId: number | null
+}
+
 export type WebsiteDetail = {
   profile: WebsiteProfile | null
   /** The domain as asked for, normalized — shown even when no profile row
@@ -77,6 +94,16 @@ export type WebsiteDetail = {
   lastSeenAt: string | null
 }
 
+/**
+ * How many appearances to fetch.
+ *
+ * Was 500, which cost ~2.3s of the page's time to first byte on a site
+ * like gambling.com for rows nobody sees — the table scrolls in a 560px
+ * box. The header still reports the true total from the profile, so
+ * capping here understates nothing.
+ */
+const APPEARANCE_LIMIT = 100
+
 /** Strip scheme, www and any path so a pasted URL resolves like a domain. */
 export function normalizeDomain(raw: string): string {
   return decodeURIComponent(raw)
@@ -88,7 +115,16 @@ export function normalizeDomain(raw: string): string {
     .replace(/\.+$/, '')
 }
 
-export async function loadWebsiteDetail(rawDomain: string): Promise<WebsiteDetail> {
+/**
+ * Everything the page can show without waiting on enrichment.
+ *
+ * loadLeadDetail costs three more round trips plus a cohort RPC, a
+ * Monday-candidate search and a signed URL per screenshot — around three
+ * seconds before anything reached the browser. The header, the verdict
+ * tiles and the appearances table need none of it, so they come from
+ * here and the rest streams in behind a Suspense boundary.
+ */
+export async function loadWebsiteSummary(rawDomain: string): Promise<WebsiteSummary> {
   const domain = normalizeDomain(rawDomain)
   if (!domain) {
     return {
@@ -96,7 +132,7 @@ export async function loadWebsiteDetail(rawDomain: string): Promise<WebsiteDetai
       domain: '',
       appearances: [],
       leadIds: [],
-      detail: null,
+      primaryLeadId: null,
       recency: recencyBand(null, DEFAULT_RECENCY_BANDS, Date.now()),
       lastSeenAt: null,
     }
@@ -118,6 +154,7 @@ export async function loadWebsiteDetail(rawDomain: string): Promise<WebsiteDetai
         'ai_site_description, ai_site_category',
         'ai_is_affiliate, ai_affiliate_reason, ai_contact_page_url',
         'ai_cta_count, ai_brand_count',
+        'is_affiliate, is_rooster_partner, brand, has_contact_details, has_s_tags',
       ].join(', '),
     )
     .eq('normalized_domain', domain)
@@ -144,7 +181,7 @@ export async function loadWebsiteDetail(rawDomain: string): Promise<WebsiteDetai
     )
     .eq('profile_id', profileRow?.id ?? -1)
     .order('created_at', { ascending: false })
-    .limit(500)
+    .limit(APPEARANCE_LIMIT)
   leadsQ = applyShadowFilter(leadsQ, shadowCtx) as typeof leadsQ
 
   const leadsRes = profileRow ? await leadsQ : { data: [], error: null }
@@ -182,13 +219,6 @@ export async function loadWebsiteDetail(rawDomain: string): Promise<WebsiteDetai
   const enriched = rawLeads.find(r => r.has_s_tags === true || r.has_contact_details === true)
   const primary = enriched ?? rawLeads[0]
 
-  const detail = primary
-    ? await loadLeadDetail(primary.id).catch(e => {
-        console.error(`[loadWebsiteDetail/${domain}]`, e)
-        return null
-      })
-    : null
-
   const lastSeenAt = profileRow?.last_seen_at ?? appearances[0]?.created_at ?? null
 
   return {
@@ -196,11 +226,29 @@ export async function loadWebsiteDetail(rawDomain: string): Promise<WebsiteDetai
     domain,
     appearances,
     leadIds: rawLeads.map(r => r.id),
-    detail,
+    primaryLeadId: primary?.id ?? null,
     recency: recencyBand(lastSeenAt, DEFAULT_RECENCY_BANDS, Date.now()),
     lastSeenAt,
   }
 }
+
+/** The expensive half — contacts, s-tags, owner network, screenshots.
+ *  Streamed, so a slow cohort RPC never holds up the page.
+ *
+ *  Wrapped in React's `cache` because the page awaits it from two
+ *  Suspense boundaries (the actions and the evidence cards); without it
+ *  they would each pay the full cost. */
+export const loadWebsiteEnrichment = cache(
+  async (primaryLeadId: number | null): Promise<LeadDetail | null> => {
+    if (!primaryLeadId) return null
+    try {
+      return await loadLeadDetail(primaryLeadId)
+    } catch (e) {
+      console.error('[loadWebsiteEnrichment]', e)
+      return null
+    }
+  },
+)
 
 /** Resolve a lead id to its website, so old `?lead=<id>` permalinks still
  *  land somewhere useful now that the per-lead drawer is gone. */

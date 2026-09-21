@@ -59,7 +59,7 @@ export function Modal({
         aria-label={title}
         tabIndex={-1}
         style={{ maxWidth: width }}
-        className="my-auto flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-primary)] shadow-2xl outline-none sm:rounded-2xl"
+        className="my-auto flex max-h-[92vh] min-h-0 w-full flex-col overflow-hidden rounded-t-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-bg-primary)] shadow-2xl outline-none sm:rounded-2xl"
       >
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[color:var(--color-border)] px-4 py-3">
           <h2 className="text-[14px] font-semibold text-[color:var(--color-text-primary)]">{title}</h2>

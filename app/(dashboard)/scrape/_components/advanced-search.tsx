@@ -115,7 +115,7 @@ export function AdvancedSearch({ facets }: { facets: SearchFacets }) {
         Advanced search
       </button>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Advanced search" width="64rem">
+      <Modal open={open} onClose={() => setOpen(false)} title="Advanced search" width="min(96rem, 95vw)">
         <div className="flex flex-col gap-3">
           {/* Query */}
           <div className="relative">
@@ -138,7 +138,7 @@ export function AdvancedSearch({ facets }: { facets: SearchFacets }) {
           </p>
 
           {/* Filters */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             <Multi label="Country" options={facets.countries.map(x => ({ value: x.code, label: x.name ?? x.code }))}
                    selected={c.countries} onChange={v => setC({ ...c, countries: v })} flags />
             <Multi label="Source" options={facets.engines.map(e => ({ value: e, label: e }))}
