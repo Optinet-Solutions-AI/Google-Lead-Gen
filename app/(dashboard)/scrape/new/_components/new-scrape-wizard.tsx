@@ -346,16 +346,21 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
   const distinctKeywords = useMemo(() => new Set(keywords.map(k => k.toLowerCase())).size, [keywords])
 
   const steps = useMemo<StepKey[]>(() => {
-    const s: StepKey[] = ['start', 'config']
+    const s: StepKey[] = ['start']
+    // "Start from" only makes sense once this person has actually saved a
+    // setup. Saved setups live in their own browser under their user id, so a
+    // first-time user has nothing to choose between.
+    if (savedConfig) s.push('config')
     if (configChoice === 'saved') return [...s, 'keywords', 'save', 'review']
-    s.push('source', 'country', 'language', 'pages')
+    s.push('source', 'country', 'language')
+    // Keywords first, then how each one is run.
+    s.push('keywords', 'pages')
     if (isSerp) s.push('view')
-    s.push('keywords')
-    if (isSerp) s.push('enrichment')
     if (isSocial) s.push('topn')
+    if (isSerp) s.push('enrichment')
     s.push('save', 'review')
     return s
-  }, [configChoice, isSerp, isSocial])
+  }, [configChoice, isSerp, isSocial, savedConfig])
 
   const stepIndex = Math.min(stepIdx, steps.length - 1)
   const step: StepKey = steps[stepIndex] ?? 'start'
@@ -1167,19 +1172,19 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
         <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
           <div className="divide-y divide-[color:var(--color-border)] rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
             <FormRow title="When">{renderStart(true)}</FormRow>
-            <FormRow title="Start from">{renderConfig(true)}</FormRow>
+            {savedConfig && <FormRow title="Start from">{renderConfig(true)}</FormRow>}
             <FormRow title="Source">{renderSource(true)}</FormRow>
             <FormRow title="Country">{renderCountry(true)}</FormRow>
             <FormRow title="Language">{renderLanguage(true)}</FormRow>
           </div>
 
           <div className="divide-y divide-[color:var(--color-border)] rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
-            {/* How each keyword is run sits directly above the keywords it
-                applies to, rather than across the page in the setup column. */}
+            {/* Keywords first, then how each one is run — same order as the
+                stepper on a phone. */}
+            <FormRow title="Keywords">{renderKeywords(true)}</FormRow>
             <FormRow title="Pages per keyword">{renderPages(true)}</FormRow>
             {isSerp && <FormRow title="Device">{renderView(true)}</FormRow>}
             {isSocial && <FormRow title="How many to keep">{renderTopn(true)}</FormRow>}
-            <FormRow title="Keywords">{renderKeywords(true)}</FormRow>
             {isSerp && <FormRow title="Enrichment">{renderEnrichment(true)}</FormRow>}
             <FormRow title="Save this setup">{renderSave(true)}</FormRow>
           </div>
