@@ -6,7 +6,8 @@ import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { QuotaStatus } from '../new/_components/quota-status'
 import { RemoveFromQueueButton } from './_components/remove-from-queue-button'
-import { dayLabel, engineDef, flagEmoji, langName, utcDay, type DayUsage, type QuotaPreview } from '../new/_lib/wizard-helpers'
+import { Flag } from '../../_components/flag'
+import { dayLabel, engineDef, langName, utcDay, type DayUsage, type QuotaPreview } from '../new/_lib/wizard-helpers'
 
 export const dynamic = 'force-dynamic'
 
@@ -172,7 +173,7 @@ export default async function TodayScrapesPage() {
                             {r.keyword_en && r.keyword_en !== r.keyword && <div className="text-[11px] text-[color:var(--color-text-secondary)]">{r.keyword_en}</div>}
                           </td>
                           <td className="px-3 py-2">{engineDef(r.search_engine)?.label ?? r.search_engine ?? 'Google'}</td>
-                          <td className="px-3 py-2">{flagEmoji(r.country_code)} {r.country_code}</td>
+                          <td className="px-3 py-2"><span className="inline-flex items-center gap-1.5"><Flag code={r.country_code} />{r.country_code}</span></td>
                           <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">{setupLabel(r)}</td>
                           <td className="px-3 py-2"><StatusPill status={r.status} /></td>
                           <td className="px-3 py-2 text-[color:var(--color-text-secondary)]">{whenLabel(r)}</td>
@@ -193,7 +194,7 @@ export default async function TodayScrapesPage() {
                           <div className="truncate text-[13px] font-medium text-[color:var(--color-text-primary)]">{r.keyword}</div>
                           <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-[color:var(--color-text-secondary)]">
                             <span>{engineDef(r.search_engine)?.label ?? 'Google'}</span>
-                            <span>{flagEmoji(r.country_code)} {r.country_code}</span>
+                            <span className="inline-flex items-center gap-1.5"><Flag code={r.country_code} />{r.country_code}</span>
                             <span>{setupLabel(r)}</span>
                           </div>
                         </div>

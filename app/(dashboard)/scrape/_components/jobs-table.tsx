@@ -41,6 +41,7 @@ import {
   type ContextMenuAction,
 } from '../../_components/row-context-menu'
 import { Flag, FlagLabel } from '../../_components/flag'
+import { SourceIcon } from '../../_components/source-icon'
 import { BulkScrapeActionsBar } from './bulk-actions-bar'
 import { JobActionsButton } from './job-row-actions'
 import { ReviewedCheckbox } from './reviewed-checkbox'
@@ -389,8 +390,9 @@ function EngineBadge({ engine }: { engine: ScrapeJob['search_engine'] }) {
   return (
     <span
       title={`Scraped on ${label}`}
-      className={['inline-block rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide', styles].join(' ')}
+      className={['inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide', styles].join(' ')}
     >
+      <SourceIcon engine={e} className="h-2.5 w-2.5" tinted={false} />
       {label}
     </span>
   )

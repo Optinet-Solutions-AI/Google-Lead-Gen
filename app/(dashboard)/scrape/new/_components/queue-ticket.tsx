@@ -2,11 +2,11 @@
 
 import Link from 'next/link'
 import { CalendarClock, Plus, Table2, Ticket } from 'lucide-react'
+import { Flag } from '../../../_components/flag'
 import {
   ENRICHMENT_STAGES,
   dayLabel,
   engineDef,
-  flagEmoji,
   langName,
   utcDay,
   type ScrapeDraft,
@@ -138,7 +138,7 @@ export function QueueTicket({ info, onCreateAnother }: { info: TicketInfo; onCre
           <Field label="Estimated wait" value={scheduled ? 'Starts at the scheduled time' : formatWait(estimate?.etaMinutes ?? null)} />
           <Field label="Keywords queued" value={`${draft.keywords.length}`} />
           <Field label="Source" value={def?.label ?? draft.search_engine} />
-          <Field label="Country" value={`${flagEmoji(draft.country_code)} ${countryName}`} />
+          <Field label="Country" value={<span className="inline-flex items-center gap-1.5"><Flag code={draft.country_code} />{countryName}</span>} />
           <Field label="Language" value={langName(draft.language)} />
           <Field label="Pages" value={`${draft.pages} per keyword`} />
           {def?.kind === 'serp' && (
@@ -178,7 +178,7 @@ export function QueueTicket({ info, onCreateAnother }: { info: TicketInfo; onCre
   )
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="min-w-0">
       <dt className="text-[10.5px] font-semibold uppercase tracking-wider text-[color:var(--color-text-secondary)]">{label}</dt>

@@ -26,6 +26,7 @@ import {
   FlaskConical,
   Menu,
   PlugZap,
+  Plus,
   MessageCircle,
   Search,
   SearchCheck,
@@ -102,6 +103,13 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Tools',
     items: [
       {
+        // The action people come here to do, above the list it produces.
+        label: 'New scrape',
+        href: '/scrape/new',
+        icon: Plus,
+        match: (p: string) => p.startsWith('/scrape/new'),
+      },
+      {
         label: 'Scrape',
         href: '/scrape',
         icon: Search,
@@ -109,7 +117,8 @@ const NAV_GROUPS: NavGroup[] = [
         // reached via the "Create scrape" button on this page — light this
         // entry up there too. /scrape/today is a separate admin preview
         // under "On Development" below, so it's excluded.
-        match: (p: string) => p.startsWith('/scrape') && !p.startsWith('/scrape/today'),
+        match: (p: string) =>
+          p.startsWith('/scrape') && !p.startsWith('/scrape/new') && !p.startsWith('/scrape/today'),
       },
       {
         label: 'Leads',

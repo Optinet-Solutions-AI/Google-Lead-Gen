@@ -43,7 +43,6 @@ import {
   dayLabel,
   draftKey,
   engineDef,
-  flagEmoji,
   langName,
   langOptions,
   lastStagesKey,
@@ -62,6 +61,8 @@ import {
   type ScrapeDraft,
   type WizardDraft,
 } from '../_lib/wizard-helpers'
+import { Flag } from '../../../_components/flag'
+import { SourceIcon } from '../../../_components/source-icon'
 import { QuotaStatus, remainingFor, useResetCountdown } from './quota-status'
 import { QueueTicket, type QueueEstimate } from './queue-ticket'
 
@@ -192,29 +193,17 @@ function Tile({
   )
 }
 
-/** A titled card in the desktop form. The stepper supplies its own heading
- *  per step; here the section label carries it, and the step's explainer text
- *  is hidden (see StepHeading). */
-function FormSection({
-  title,
-  className,
-  children,
-}: {
-  title: string
-  className?: string
-  children: React.ReactNode
-}) {
+/** One labelled band inside a desktop column. Bands share a card and are
+ *  separated by a rule, rather than each floating in its own box. The
+ *  stepper supplies its own heading per step; here the band label carries
+ *  it, and the step's explainer text is hidden (see StepHeading). */
+function FormRow({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section
-      className={[
-        'flex min-w-0 flex-col rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-4',
-        className ?? '',
-      ].join(' ')}
-    >
+    <section className="flex min-w-0 flex-col p-4">
       <h2 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-[color:var(--color-text-secondary)]">
         {title}
       </h2>
-      <div className="min-w-0 flex-1">{children}</div>
+      <div className="min-w-0">{children}</div>
     </section>
   )
 }
@@ -248,15 +237,17 @@ function Note({ tone = 'info', children }: { tone?: 'info' | 'warn' | 'error' | 
 function EngineMono({ engine, size = 'md' }: { engine: EngineKey; size?: 'sm' | 'md' }) {
   const def = engineDef(engine)
   if (!def) return null
+  // Real brand marks where Simple Icons has one; the tinted ring keeps the
+  // shape consistent for Bing, which has no icon.
   return (
     <span
       className={[
-        'inline-flex items-center justify-center rounded-full font-semibold ring-1',
-        size === 'sm' ? 'h-5 w-5 text-[9px]' : 'h-8 w-8 text-[11px]',
+        'inline-flex items-center justify-center rounded-full ring-1',
+        size === 'sm' ? 'h-5 w-5' : 'h-8 w-8',
         def.tone,
       ].join(' ')}
     >
-      {def.mono}
+      <SourceIcon engine={engine} className={size === 'sm' ? 'h-3 w-3' : 'h-4 w-4'} tinted={false} />
     </span>
   )
 }
@@ -757,7 +748,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                         <EngineMono engine={savedConfig.search_engine} size="sm" />
                         {engineDef(savedConfig.search_engine)?.label}
                       </span>
-                      <span>{flagEmoji(savedConfig.country_code)} {profiles.find(p => p.country_code === savedConfig.country_code)?.country_name ?? savedConfig.country_code}</span>
+                      <span className="inline-flex items-center gap-1.5"><Flag code={savedConfig.country_code} />{profiles.find(p => p.country_code === savedConfig.country_code)?.country_name ?? savedConfig.country_code}</span>
                       <span>{langName(savedConfig.language)}</span>
                       <span>{savedConfig.pages} page{savedConfig.pages === 1 ? '' : 's'}</span>
                       <span>{savedConfig.view_mode === 'both' ? 'desktop and mobile' : savedConfig.view_mode}</span>
@@ -832,7 +823,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                             : `${p.country_name} (${p.country_code})${p.requires_google_login ? (p.is_google_logged_in ? ' · Google login active' : ' · needs a Google login') : ''}`
                         }
                       >
-                        <span className="text-2xl leading-none">{flagEmoji(p.country_code)}</span>
+                        <Flag code={p.country_code} className="h-6 w-9" />
                         <span className="text-[12.5px] font-medium">{p.country_name}</span>
                       </Tile>
                     )
@@ -1079,7 +1070,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
                       <EngineMono engine={engine} size="sm" />
                       {def?.label}
                     </span>
-                    <span>{country ? `${flagEmoji(country)} ${profile?.country_name ?? country}` : 'no country yet'}</span>
+                    <span className="inline-flex items-center gap-1.5">{country ? <><Flag code={country} />{profile?.country_name ?? country}</> : 'no country yet'}</span>
                     <span>{langName(language)}</span>
                     <span>{pages} page{pages === 1 ? '' : 's'}</span>
                     {isSerp && <span>{viewMode === 'both' ? 'desktop and mobile' : viewMode === 'desktop' ? 'desktop only' : 'mobile only'}</span>}
@@ -1146,7 +1137,7 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
     <div className="mx-auto w-full max-w-4xl px-4 py-4 md:px-6 md:py-5 lg:max-w-none lg:px-8">
       <Header quota={quota} day={quotaDay} />
 
-      {restored && !dismissedResume && (
+      {!isDesktop && restored && !dismissedResume && (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-3 py-2 text-[12.5px]">
           <span className="text-[color:var(--color-text-secondary)]">
             Picked up where you left off. {keywords.length > 0 ? `${keywords.length} keyword${keywords.length === 1 ? '' : 's'} still here.` : ''}
@@ -1170,24 +1161,26 @@ export function NewScrapeWizard({ profiles, quota, userKey, prefill, queueByCoun
       {/* ---------------- desktop: every input at once ---------------- */}
       {isDesktop && (
       <div className="mt-4">
-        <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
-          <FormSection title="When">{renderStart(true)}</FormSection>
-          <FormSection title="Start from">{renderConfig(true)}</FormSection>
-          <FormSection title="Source">{renderSource(true)}</FormSection>
-          <FormSection title="Country">{renderCountry(true)}</FormSection>
-          <FormSection title="Language">{renderLanguage(true)}</FormSection>
-          <FormSection title="Pages per keyword">{renderPages(true)}</FormSection>
-          {isSerp && <FormSection title="Device">{renderView(true)}</FormSection>}
-          {isSocial && <FormSection title="How many to keep">{renderTopn(true)}</FormSection>}
-          {isSerp && (
-            <FormSection title="Enrichment" className="col-span-2 xl:col-span-1">
-              {renderEnrichment(true)}
-            </FormSection>
-          )}
-          <FormSection title="Keywords" className="col-span-2 xl:col-span-2">
-            {renderKeywords(true)}
-          </FormSection>
-          <FormSection title="Save this setup">{renderSave(true)}</FormSection>
+        {/* Two columns rather than a field of separate boxes: setup on the
+            left, and the right column led by the keywords, which is the part
+            that changes every time. */}
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+          <div className="divide-y divide-[color:var(--color-border)] rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
+            <FormRow title="When">{renderStart(true)}</FormRow>
+            <FormRow title="Start from">{renderConfig(true)}</FormRow>
+            <FormRow title="Source">{renderSource(true)}</FormRow>
+            <FormRow title="Country">{renderCountry(true)}</FormRow>
+            <FormRow title="Language">{renderLanguage(true)}</FormRow>
+            <FormRow title="Pages per keyword">{renderPages(true)}</FormRow>
+            {isSerp && <FormRow title="Device">{renderView(true)}</FormRow>}
+            {isSocial && <FormRow title="How many to keep">{renderTopn(true)}</FormRow>}
+          </div>
+
+          <div className="divide-y divide-[color:var(--color-border)] rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]">
+            <FormRow title="Keywords">{renderKeywords(true)}</FormRow>
+            {isSerp && <FormRow title="Enrichment">{renderEnrichment(true)}</FormRow>}
+            <FormRow title="Save this setup">{renderSave(true)}</FormRow>
+          </div>
         </div>
 
         <div className="sticky bottom-0 z-10 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)]/95 px-4 py-3 backdrop-blur">
@@ -1308,9 +1301,6 @@ function Header({ quota, day }: { quota: QuotaPreview; day: string }) {
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <h1 className="text-[17px] font-semibold text-[color:var(--color-text-primary)]">New scrape</h1>
-        <p className="mt-0.5 text-[12.5px] text-[color:var(--color-text-secondary)]">
-          Your progress is kept in this browser, so a refresh or an interruption picks up where you left off.
-        </p>
       </div>
       <QuotaStatus quota={quota} day={day} />
     </div>
@@ -1335,7 +1325,7 @@ function SummaryList({
   const rows: Array<[string, React.ReactNode, EditKey]> = [
     ['When', draft.mode === 'schedule' ? (draft.scheduled_at ? new Date(draft.scheduled_at).toLocaleString() : 'Scheduled') : 'Now', 'start'],
     ['Source', def ? <span className="inline-flex items-center gap-1.5"><EngineMono engine={def.key} size="sm" />{def.label}</span> : '—', 'source'],
-    ['Country', draft.country_code ? `${flagEmoji(draft.country_code)} ${profile?.country_name ?? draft.country_code}` : '—', 'country'],
+    ['Country', draft.country_code ? <span className="inline-flex items-center gap-1.5"><Flag code={draft.country_code} />{profile?.country_name ?? draft.country_code}</span> : '—', 'country'],
     ['Language', draft.language ? langName(draft.language) : '—', 'language'],
     ['Pages', String(draft.pages), 'pages'],
   ]
