@@ -54,19 +54,14 @@ function cleanDomain(raw: string | null): string {
 }
 
 /**
- * Everything we know about one website, as a page rather than a drawer.
+ * The operator actions, as a toolbar rather than a stack.
  *
- * This is the drawer's body with its chrome removed. The verdicts it shows
- * — affiliate, Rooster, contacts, s-tags, the Monday match — were always
- * facts about the website that happened to be stored on a lead row, so a
- * page keyed on the domain is where they belonged; the per-appearance
- * detail (which keyword found it, at what position) lives in the
- * appearances table alongside.
- *
- * The operator actions act on every lead row for the website, not just the
- * one whose enrichment we happen to be displaying — see WebsiteActions.
+ * On the old drawer these sat at the top as three panels of explanatory
+ * prose, so you read three paragraphs about what the buttons do before
+ * learning anything about the website. Each one is now a button that
+ * expands only when you mean to use it.
  */
-export function WebsiteDetailBody({
+export function WebsiteActions({
   detail,
   leadIds,
   domain,
@@ -77,41 +72,10 @@ export function WebsiteDetailBody({
   leadIds: number[]
   domain: string
 }) {
-  return <DetailBody detail={detail} leadIds={leadIds} domain={domain} />
-}
-
-function DetailBody({
-  detail,
-  leadIds,
-  domain,
-}: {
-  detail: Detail
-  leadIds: number[]
-  domain: string
-}) {
   const lead = detail.lead
-  if (!lead) {
-    return (
-      <div className="text-[12px] text-[color:var(--color-text-secondary)]">
-        No enrichment has run for this website yet.
-      </div>
-    )
-  }
-
+  if (!lead) return null
   return (
-    <div className="flex flex-col gap-4 text-[12px]">
-      {lead.inherited_from_lead_id !== null && (
-        <MemoryPanel
-          leadId={lead.id}
-          inheritedFromLeadId={lead.inherited_from_lead_id}
-          inheritedAt={lead.inherited_at}
-          isOnMonday={lead.is_on_monday === true}
-          mondayBoard={lead.monday_board}
-          isNotRelevant={lead.is_not_relevant}
-          forceEnrich={lead.force_enrich}
-        />
-      )}
-
+    <div className="flex flex-wrap items-start gap-2 text-[12px]">
       <NotRelevantPanel
         leadId={lead.id}
         leadIds={leadIds}
@@ -131,6 +95,46 @@ function DetailBody({
         pushedItemId={lead.monday_pushed_item_id}
         pushedBy={lead.monday_pushed_by}
       />
+    </div>
+  )
+}
+
+/**
+ * The evidence, as cards that flow across the full width.
+ *
+ * Sections with nothing in them are left out entirely — a column of "—"
+ * told you nothing and pushed the real content off the screen.
+ */
+export function WebsiteFacts({ detail }: { detail: Detail }) {
+  const lead = detail.lead
+  if (!lead) {
+    return (
+      <div className="text-[12px] text-[color:var(--color-text-secondary)]">
+        No enrichment has run for this website yet.
+      </div>
+    )
+  }
+
+  const showAffiliate = lead.is_affiliate !== null || lead.affiliate_score != null
+  const showRooster =
+    lead.is_rooster_partner !== null || (lead.rooster_brands?.length ?? 0) > 0
+  const showContacts = Boolean(detail.contact)
+  const showStags = detail.stags.length > 0
+  const showCohort = detail.cohort.length > 0
+
+  return (
+    <div className="columns-1 gap-4 text-[12px] lg:columns-2 2xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
+      {lead.inherited_from_lead_id !== null && (
+        <MemoryPanel
+          leadId={lead.id}
+          inheritedFromLeadId={lead.inherited_from_lead_id}
+          inheritedAt={lead.inherited_at}
+          isOnMonday={lead.is_on_monday === true}
+          mondayBoard={lead.monday_board}
+          isNotRelevant={lead.is_not_relevant}
+          forceEnrich={lead.force_enrich}
+        />
+      )}
 
       {/* Which appearance the enrichment below actually ran against —
           contacts and s-tags are stored per lead row, so saying so keeps
@@ -238,6 +242,7 @@ function DetailBody({
         />
       )}
 
+      {showAffiliate && (
       <Section title="Affiliate detection">
         <KV
           label="Is affiliate?"
@@ -260,11 +265,17 @@ function DetailBody({
         )}
         {lead.affiliate_indicators && lead.affiliate_indicators.length > 0 && (
           <ul className="mt-1 list-disc space-y-0.5 pl-5 text-[11px] text-[color:var(--color-text-secondary)]">
-            {lead.affiliate_indicators.map((ind, i) => <li key={i}>{ind}</li>)}
+            {lead.affiliate_indicators.map((ind, i) => (
+              <li key={i}>
+                <Indicator text={ind} />
+              </li>
+            ))}
           </ul>
         )}
       </Section>
+      )}
 
+      {showRooster && (
       <Section title="Rooster brand check">
         <KV
           label="Rooster partner?"
@@ -290,6 +301,7 @@ function DetailBody({
           </ul>
         )}
       </Section>
+      )}
 
       {/* Positive callout: promotes one of our brands (Rooster partner) but
           isn't recorded on Monday yet — i.e. a fresh affiliate to onboard.
@@ -308,14 +320,13 @@ function DetailBody({
         </section>
       )}
 
-      <Section title="Contacts">
-        {!detail.contact ? (
-          <p className="text-[color:var(--color-text-secondary)]">Not yet extracted.</p>
-        ) : (
-          <ContactsBody contact={detail.contact} />
-        )}
-      </Section>
+      {showContacts && (
+        <Section title="Contacts">
+          <ContactsBody contact={detail.contact!} />
+        </Section>
+      )}
 
+      {showStags && (
       <Section title={`S-tags (${detail.stags.length})`}>
         {detail.stags.length === 0 ? (
           <p className="text-[color:var(--color-text-secondary)]">None extracted.</p>
@@ -404,18 +415,14 @@ function DetailBody({
           </ul>
         )}
       </Section>
+      )}
 
+      {showCohort && (
       <Section
         title={`Owner network (${detail.cohort.length})`}
-        subtitle="Other affiliate sites that share at least one s-tag value with this lead — strong signal of common operator."
+        subtitle="Other sites sharing at least one s-tag value — a strong signal of a common operator."
       >
-        {detail.cohort.length === 0 ? (
-          <p className="text-[color:var(--color-text-secondary)]">
-            {detail.stags.length === 0
-              ? 'No s-tags collected yet — owner network unavailable until enrichment completes.'
-              : 'No other lead shares any s-tag with this one yet.'}
-          </p>
-        ) : (
+        {detail.cohort.length === 0 ? null : (
           <ul className="space-y-1.5">
             {detail.cohort.map(sib => {
               const display = sib.domain || sib.url || `lead #${sib.lead_id}`
@@ -454,7 +461,31 @@ function DetailBody({
           </ul>
         )}
       </Section>
+      )}
     </div>
+  )
+}
+
+/**
+ * One affiliate-detection indicator.
+ *
+ * Some of these are a scraper stack trace rather than a finding — a
+ * multi-line SOCKS proxy error was rendering in full and swamping the
+ * card. Long ones collapse to a summary you can open.
+ */
+function Indicator({ text }: { text: string }) {
+  const long = text.length > 140 || /[\r\n]/.test(text)
+  if (!long) return <>{text}</>
+  const head = text.split(/[\r\n]/)[0]!.slice(0, 120)
+  return (
+    <details>
+      <summary className="cursor-pointer marker:text-[color:var(--color-text-secondary)]">
+        {head}…
+      </summary>
+      <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-[color:var(--color-bg-secondary)] p-2 text-[10px]">
+        {text}
+      </pre>
+    </details>
   )
 }
 
@@ -1177,23 +1208,28 @@ function NotRelevantPanel({
     )
   }
 
+  // Collapsed, this is one button. The explanation appears only once the
+  // operator has said they mean it — reading three paragraphs about what
+  // the buttons do before seeing the website was the old drawer's problem.
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        title={`Hides this website from /leads across all ${n} appearance${n === 1 ? '' : 's'}, cancels in-flight enrichment, and stops future passes picking it up. Reversible.`}
+        className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1.5 text-[11px] font-medium text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]"
+      >
+        <EyeOff className="h-3 w-3" />
+        Mark not relevant
+      </button>
+    )
+  }
+
   return (
-    <section className="flex flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
-          Not relevant?
-        </p>
-        {!confirming && (
-          <button
-            type="button"
-            onClick={() => setConfirming(true)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]"
-          >
-            <EyeOff className="h-3 w-3" />
-            Mark as not relevant
-          </button>
-        )}
-      </div>
+    <section className="flex w-full max-w-[520px] flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+        Not relevant?
+      </p>
       <p className="text-[10px] text-[color:var(--color-text-secondary)]">
         Hides this website from /leads across all {n} appearance{n === 1 ? '' : 's'},
         cancels in-flight enrichment, and stops future passes picking it up.
@@ -1301,8 +1337,25 @@ function PushNotRelevantButton({ leadId }: { leadId: number }) {
     if (state?.status === 'ok') invalidateLeadDetailCache(leadId)
   }, [state, leadId])
 
+  // Collapsed to a button; the explanation lives in the tooltip until the
+  // operator opens the form.
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        disabled={pending}
+        title="Adds the domain to Monday's Not Relevant board (status 'Not relevant', assigned to you) and marks it not-relevant locally. Future scrapes of the same domain auto-skip."
+        className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <Send className="h-3 w-3" />
+        Push to Not Relevant
+      </button>
+    )
+  }
+
   return (
-    <section className="rounded-md border border-amber-200 bg-amber-50/40 px-3 py-2.5">
+    <section className="w-full max-w-[520px] rounded-md border border-amber-200 bg-amber-50/40 px-3 py-2.5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[12px] font-semibold text-amber-900">
@@ -1315,17 +1368,6 @@ function PushNotRelevantButton({ leadId }: { leadId: number }) {
             auto-skip.
           </p>
         </div>
-        {!confirming && (
-          <button
-            type="button"
-            onClick={() => setConfirming(true)}
-            disabled={pending}
-            className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Send className="h-3 w-3" />
-            Push & mark
-          </button>
-        )}
       </div>
 
       {confirming && (
@@ -1429,23 +1471,27 @@ function PushToMondayPanel({
     )
   }
 
+  // Collapsed to a button, like the other two — the detail of what gets
+  // written to Monday appears with the form.
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        title="Creates a new item on the Leads board with this lead's keyword, country, URL, source, primary contact email, and (if present) attaches the screenshot + posts s-tags as an item update."
+        className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/15 px-2.5 py-1.5 text-[11px] font-semibold text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent)]/30"
+      >
+        <Send className="h-3 w-3" />
+        Push to Monday
+      </button>
+    )
+  }
+
   return (
-    <section className="flex flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
-          Push to Monday
-        </p>
-        {!confirming && (
-          <button
-            type="button"
-            onClick={() => setConfirming(true)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/15 px-2.5 py-1 text-[11px] font-semibold text-[color:var(--color-text-primary)] hover:bg-[color:var(--color-accent)]/30"
-          >
-            <Send className="h-3 w-3" />
-            Push to Monday
-          </button>
-        )}
-      </div>
+    <section className="flex w-full max-w-[520px] flex-col gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] px-3 py-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-text-secondary)]">
+        Push to Monday
+      </p>
       <p className="text-[10px] text-[color:var(--color-text-secondary)]">
         Creates a new item on the <em>Leads</em> board with this lead&apos;s
         keyword, country, URL, source, primary contact email, and (if

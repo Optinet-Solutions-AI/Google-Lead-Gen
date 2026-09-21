@@ -19,10 +19,12 @@ export function Appearances({ rows }: { rows: Appearance[] }) {
     )
   }
 
+  // 500 rows would bury everything below it, so the list scrolls in place
+  // with a stuck header instead of running down the page.
   return (
-    <div className="overflow-x-auto rounded-md border border-[color:var(--color-border)]">
+    <div className="max-h-[560px] overflow-auto rounded-md border border-[color:var(--color-border)]">
       <table className="w-full border-collapse text-[12px]">
-        <thead className="bg-[color:var(--color-border-strong)]">
+        <thead className="sticky top-0 z-10 bg-[color:var(--color-border-strong)]">
           <tr>
             <Th>Keyword</Th>
             <Th>Country</Th>
