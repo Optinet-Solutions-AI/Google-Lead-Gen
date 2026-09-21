@@ -1614,6 +1614,9 @@ export type JobsQueryOptions = {
   /** Inclusive UTC day range, used when the picker holds two dates. */
   fromDay?: string
   toDay?: string
+  /** Restrict to these job ids. Used by advanced search, which ranks in SQL
+   *  and then reuses this function purely for row hydration. */
+  restrictToIds?: string[]
 }
 
 export type JobsQueryResult = {
@@ -1704,6 +1707,11 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
   } else {
     if (opts.fromDay) query = query.gte('created_at', dayStart(opts.fromDay))
     if (opts.toDay) query = query.lte('created_at', dayEnd(opts.toDay))
+  }
+
+  if (opts.restrictToIds) {
+    if (opts.restrictToIds.length === 0) return { rows: [], total: 0 }
+    query = query.in('id', opts.restrictToIds)
   }
 
   // Advanced search — see lib/job-search.ts. Every word must match somewhere

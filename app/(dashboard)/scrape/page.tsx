@@ -13,6 +13,7 @@ import { JobsCardList, JobsTable } from './_components/jobs-table'
 import { ScopeBar, type ScopeUser } from './_components/scope-bar'
 import { CreateScrapeFab, CreateScrapeHeaderButton } from './_components/create-scrape-button'
 import { EmptyDay } from './_components/empty-day'
+import { AdvancedSearch, type SearchFacets } from './_components/advanced-search'
 import { getFleetQueueSnapshot, listActiveProfiles, queryJobs } from './_lib/queries'
 
 type SearchParams = Record<string, string | string[] | undefined>
@@ -69,7 +70,7 @@ export default async function ScrapePage({
   const restrictToOwnerEmail =
     ownerScope === 'mine' ? (callerEmail ?? undefined) : ownerScope === 'all' ? undefined : ownerScope
 
-  const [profiles, jobsResult, isAdmin, prefs, fleet, scopeUsers] = await Promise.all([
+  const [profiles, jobsResult, isAdmin, prefs, fleet, scopeUsers, searchFacets] = await Promise.all([
     listActiveProfiles(),
     queryJobs({
       page,
@@ -114,6 +115,12 @@ export default async function ScrapePage({
         })
       }
       return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label))
+    })(),
+    // Options for the advanced-search panel, in one round trip.
+    (async () => {
+      const svc = createServiceClient()
+      const { data } = await svc.rpc('job_search_facets')
+      return (data ?? { countries: [], engines: [], statuses: [], sources: [], owners: [] }) as SearchFacets
     })(),
   ])
   const { rows, total, searchNotes } = jobsResult
@@ -182,7 +189,10 @@ export default async function ScrapePage({
         <CreateScrapeHeaderButton />
       </header>
 
-      <ScopeBar today={today} day={day} owner={ownerScope} meEmail={callerEmail} users={scopeUsers} />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <ScopeBar today={today} day={day} owner={ownerScope} meEmail={callerEmail} users={scopeUsers} />
+        <AdvancedSearch facets={searchFacets} />
+      </div>
 
       <section className="flex flex-col gap-3">
         <AdvancedFilters columns={columns} />
