@@ -28,7 +28,11 @@ export const LEADS_COLUMNS: ReadonlyArray<ColumnDef> = [
   { key: 'overall_position', label: 'Position', type: 'number', filterable: true, sortable: true },
   { key: 'page_number', label: 'Page #', type: 'number', filterable: true, sortable: true },
   { key: 'batch_id', label: 'Batch', type: 'number', filterable: true, sortable: true },
-  { key: 'is_on_monday', label: 'Is on Monday?', type: 'boolean', filterable: true, sortable: false },
+  // The table shows one merged "Already exists?" badge, but the two facts
+  // behind it stay separately filterable — "on Monday" is a match against
+  // their boards, not against our own history.
+  { key: 'is_on_monday', label: 'On Monday?', type: 'boolean', filterable: true, sortable: false },
+  { key: 'is_relevant', label: 'Relevant to keyword?', type: 'boolean', filterable: true, sortable: false, options: [...BOOL_THREE_OPTIONS] },
   { key: 'is_affiliate', label: 'Is affiliate?', type: 'boolean', filterable: true, sortable: false, options: [...BOOL_THREE_OPTIONS] },
   { key: 'is_rooster_partner', label: 'Rooster brand?', type: 'boolean', filterable: true, sortable: false },
   { key: 'has_contact_details', label: 'Has contacts?', type: 'boolean', filterable: true, sortable: false },

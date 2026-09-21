@@ -63,6 +63,17 @@ export type LeadRow = {
   last_seen_at: string | null
   appearance_count: number | null
   recency_band: RecencyBand
+  /** What the website IS, in a dozen words, from the SERP screen. Lives on
+   *  the profile because it describes the site, not this one appearance. */
+  ai_site_description: string | null
+  /** Where this domain already exists. 'monday' — it matched a Monday
+   *  board. 'system' — our own database saw it on an earlier scrape.
+   *  'new' — a genuinely new lead, which is the one we want. */
+  existing_state: 'monday' | 'system' | 'new'
+  // Relevance to the keyword, screened off the SERP before any crawl.
+  is_relevant: boolean | null
+  relevance_reason: string | null
+  relevance_overridden_at: string | null
   // Attribution — denormalized from scrape_queue at query time so the
   // table can show "by <display>" without an extra round-trip.
   created_by_username: string | null
@@ -131,8 +142,9 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
         's_tags_checked_at, s_tag_id',
         'created_at',
         'is_not_relevant, system_flag, profile_id',
+        'is_relevant, relevance_reason, relevance_overridden_at',
         // Website profile — FK google_lead_gen_table.profile_id → website_profiles(id).
-        'website_profiles:website_profiles!profile_id(last_seen_at, appearance_count)',
+        'website_profiles:website_profiles!profile_id(last_seen_at, first_seen_at, appearance_count, ai_site_description)',
         // FK join — google_lead_gen_table.scrape_job_id → scrape_queue(id).
         // PostgREST flattens this into a nested object on the row.
         'scrape_queue:scrape_queue!scrape_job_id(created_by_username, created_by_display)',
@@ -206,7 +218,12 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
   const rows = (data ?? []).map(raw => {
     const r = raw as unknown as Record<string, unknown> & {
       scrape_queue: { created_by_username: string | null; created_by_display: string | null } | null
-      website_profiles: { last_seen_at: string | null; appearance_count: number | null } | null
+      website_profiles: {
+        last_seen_at: string | null
+        first_seen_at: string | null
+        appearance_count: number | null
+        ai_site_description: string | null
+      } | null
     }
     const { scrape_queue, website_profiles, ...rest } = r
     const lastSeen = website_profiles?.last_seen_at ?? null
@@ -217,9 +234,39 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
       last_seen_at: lastSeen,
       appearance_count: website_profiles?.appearance_count ?? null,
       recency_band: recencyBand(lastSeen, bands, nowMs),
+      ai_site_description: website_profiles?.ai_site_description ?? null,
+      existing_state: existingState(
+        r.is_on_monday as boolean | null,
+        website_profiles?.first_seen_at ?? null,
+        r.created_at as string,
+      ),
     }
   }) as unknown as LeadRow[]
   return { rows, total: count ?? 0 }
+}
+
+/**
+ * Monday and our own database are one merged corpus now, so a lead does not
+ * need two "have we seen this before?" columns — it needs one that says
+ * WHERE.
+ *
+ * The profile's first sighting is the test for our own history: if the
+ * website was first seen more than a minute before this lead was written,
+ * an earlier scrape already found it. The minute of slack stops the rows of
+ * a single batch from marking each other as pre-existing.
+ */
+function existingState(
+  isOnMonday: boolean | null,
+  profileFirstSeen: string | null,
+  leadCreatedAt: string,
+): 'monday' | 'system' | 'new' {
+  if (isOnMonday === true) return 'monday'
+  if (profileFirstSeen) {
+    const first = Date.parse(profileFirstSeen)
+    const lead = Date.parse(leadCreatedAt)
+    if (Number.isFinite(first) && Number.isFinite(lead) && first < lead - 60_000) return 'system'
+  }
+  return 'new'
 }
 
 export async function listCountryFilters(): Promise<Array<{ code: string; name: string }>> {

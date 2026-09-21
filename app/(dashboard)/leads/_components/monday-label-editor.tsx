@@ -51,9 +51,14 @@ type Props = {
   isOnMonday: boolean | null
   board: string | null
   isOverridden: boolean
+  /** Where the domain already exists. Monday and our own database are one
+   *  merged corpus, so the badge answers "where?" rather than "yes/no" —
+   *  the menu behind it still edits the Monday side, the only part that is
+   *  a judgement call rather than a fact about our history. */
+  existing?: 'monday' | 'system' | 'new'
 }
 
-export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden }: Props) {
+export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden, existing }: Props) {
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
@@ -118,7 +123,7 @@ export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden }: P
     })
   }
 
-  const current = badgeFor(isOnMonday, board)
+  const current = existing ? existsBadgeFor(isOnMonday, board, existing) : badgeFor(isOnMonday, board)
   const currentValue: CategoryKey | 'unset' =
     isOnMonday === null ? 'unset' : isOnMonday === false ? 'no' : (board as CategoryKey | null) ?? 'unset'
 
@@ -234,6 +239,29 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
       {children}
     </p>
   )
+}
+
+/**
+ * "Already exists?" — one badge that says where, not whether.
+ *
+ * Monday wins when it matched, because the board is the more specific
+ * answer and it names the table. Otherwise our own history decides, and
+ * "New" is the outcome the team is actually hunting for, so it gets the
+ * green.
+ */
+function existsBadgeFor(
+  isOnMonday: boolean | null,
+  board: string | null,
+  existing: 'monday' | 'system' | 'new',
+): CategoryMeta {
+  if (existing === 'monday' || isOnMonday === true) {
+    const meta = board && board in CATEGORY_META ? CATEGORY_META[board as CategoryKey] : FALLBACK_BADGE
+    return { label: `Monday · ${meta.label}`, cls: meta.cls }
+  }
+  if (existing === 'system') {
+    return { label: 'In system', cls: 'bg-amber-100 text-amber-800' }
+  }
+  return { label: 'New', cls: 'bg-emerald-100 text-emerald-800' }
 }
 
 function badgeFor(isOnMonday: boolean | null, board: string | null): CategoryMeta {

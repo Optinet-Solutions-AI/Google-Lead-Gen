@@ -562,7 +562,8 @@ export function LeadsTable({
                 </>
               )}
               <Th>{jobContext ? 'Full URL' : 'URL'}</Th>
-              <Th>Is on Monday?</Th>
+              <Th>What it is</Th>
+              <Th>Already exists?</Th>
               <Th>Is an affiliate?</Th>
               <Th>Rooster brand?</Th>
               <Th>S-tags</Th>
@@ -668,11 +669,15 @@ export function LeadsTable({
                   )}
                 </Td>
                 <Td>
+                  <SiteDescription row={row} />
+                </Td>
+                <Td>
                   <MondayLabelEditor
                     leadId={row.id}
                     isOnMonday={row.is_on_monday}
                     board={row.monday_board}
                     isOverridden={row.monday_overridden_at !== null}
+                    existing={row.existing_state}
                   />
                 </Td>
                 <Td>
@@ -796,12 +801,16 @@ export function LeadsTable({
                   <CopyRowLinkButton leadId={row.id} />
                 )}
               </Field>
-              <Field label="Is on Monday?">
+              <Field label="What it is">
+                <SiteDescription row={row} />
+              </Field>
+              <Field label="Already exists?">
                 <MondayLabelEditor
                   leadId={row.id}
                   isOnMonday={row.is_on_monday}
                   board={row.monday_board}
                   isOverridden={row.monday_overridden_at !== null}
+                  existing={row.existing_state}
                 />
               </Field>
               <Field label="Is an affiliate?">
@@ -994,6 +1003,46 @@ function CopyRowLinkButton({ leadId }: { leadId: number }) {
     >
       {copied ? <Check className="h-3 w-3" strokeWidth={3} /> : <Link2 className="h-3 w-3" />}
     </button>
+  )
+}
+
+/**
+ * What the website is, in the model's words, plus a marker when the result
+ * was judged off-keyword. The description belongs to the domain, so the
+ * same text repeats down a column of one website's pages — that repetition
+ * is the point: it makes a run of junk obvious at a glance.
+ */
+function SiteDescription({ row }: { row: LeadRow }) {
+  const offKeyword = row.is_relevant === false
+  const overridden = row.relevance_overridden_at !== null
+  const text = row.ai_site_description
+
+  if (!text && !offKeyword) {
+    return <span className="text-[11px] text-[color:var(--color-text-secondary)]">—</span>
+  }
+
+  return (
+    <div className="flex max-w-[240px] flex-col gap-0.5">
+      {offKeyword && (
+        <span
+          className={[
+            'w-fit rounded-full px-2 py-0.5 text-[10px] font-medium',
+            overridden ? 'bg-zinc-200 text-zinc-700' : 'bg-rose-100 text-rose-800',
+          ].join(' ')}
+          title={row.relevance_reason ?? 'Judged not relevant to the keyword.'}
+        >
+          {overridden ? 'Off keyword (forced through)' : 'Off keyword'}
+        </span>
+      )}
+      {text && (
+        <span
+          className="line-clamp-2 text-[11px] leading-snug text-[color:var(--color-text-secondary)]"
+          title={text}
+        >
+          {text}
+        </span>
+      )}
+    </div>
   )
 }
 

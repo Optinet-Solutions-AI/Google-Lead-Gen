@@ -21,6 +21,7 @@ import { PushToMondayButton } from '../_components/push-to-monday-button'
 import { CaptchaRecoveryBanner } from '../_components/captcha-recovery-banner'
 import { MobileSkippedRetryBanner } from '../_components/mobile-skipped-retry-banner'
 import { EnrichmentStages } from '../_components/enrichment-stages'
+import { AnalysisSummary, type JobAnalysisSummary } from '../_components/analysis-summary'
 import { KickStreamersPanel } from '../_components/kick-streamers-panel'
 import { KickStreamersTable } from '../_components/kick-streamers-table'
 import { YoutubeChannelsPanel } from '../_components/youtube-channels-panel'
@@ -253,6 +254,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
     twitchSummary,
     twitchRows,
     prefs,
+    analysis,
   ] = await Promise.all([
       queryLeads({
         page,
@@ -292,6 +294,20 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
       isTwitch ? fetchTwitchStreamerSummary(id) : Promise.resolve(null),
       isTwitch ? fetchTwitchStreamerRows(id) : Promise.resolve(null),
       getUserPreferences(),
+      // One round trip for the whole analysis strip — counting these in
+      // the page from `rows` would only ever describe the current page.
+      noLeadsEngine
+        ? Promise.resolve(null)
+        : svc
+            .rpc('job_analysis_summary', { p_job_ids: batchJobIds })
+            .then(({ data, error }) => {
+              if (error) {
+                console.error('[scrape/[id]] job_analysis_summary', error.message)
+                return null
+              }
+              const row = Array.isArray(data) ? data[0] : data
+              return (row as JobAnalysisSummary | undefined) ?? null
+            }),
     ])
 
   const toggleHref = (() => {
@@ -459,6 +475,19 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
           just render an empty "No rows" block — hide them for those engines. */}
       {!noLeadsEngine && (
         <>
+          {analysis && (
+            <AnalysisSummary
+              summary={analysis}
+              baseParams={
+                new URLSearchParams(
+                  Object.entries(sp).flatMap(([k, v]) =>
+                    typeof v === 'string' ? [[k, v] as [string, string]] : [],
+                  ),
+                )
+              }
+            />
+          )}
+
           <div className="pt-2">
             <AdvancedFilters columns={columns} preserve={['show_hidden']} />
           </div>
