@@ -1,4 +1,4 @@
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
@@ -8,6 +8,7 @@ import { getShadowContext } from '@/lib/shadow-filter'
 import { getUserPreferences } from '@/lib/user-preferences'
 import { createServiceClient } from '@/lib/supabase/service'
 import { translateKeywordsToEnglish } from '@/lib/translate'
+import { domainForLead } from '../../websites/_lib/query'
 import { AdvancedFilters } from '../../_components/advanced-filters'
 import { Pagination } from '../../monday/_components/pagination'
 import { LeadsTable } from '../../leads/_components/leads-table'
@@ -117,6 +118,13 @@ async function countNotRelevantInJob(
 export default async function ScrapeJobPage({ params, searchParams }: Props) {
   const { id } = await params
   const sp = await searchParams
+
+  // Old `?lead=<id>` drawer permalinks now resolve to the website's page.
+  const leadParam = typeof sp.lead === 'string' ? Number(sp.lead) : NaN
+  if (Number.isInteger(leadParam) && leadParam > 0) {
+    const leadDomain = await domainForLead(leadParam)
+    if (leadDomain) redirect(`/websites/${encodeURIComponent(leadDomain)}`)
+  }
 
   const svc = createServiceClient()
   const { data: jobRaw, error: jobError } = await svc

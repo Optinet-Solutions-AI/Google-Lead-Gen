@@ -1,3 +1,5 @@
+import { redirect } from 'next/navigation'
+import { domainForLead } from '../websites/_lib/query'
 import Link from 'next/link'
 import { EyeOff, Eye } from 'lucide-react'
 import { LEADS_COLUMNS } from '@/lib/filters/columns-leads'
@@ -43,6 +45,15 @@ export default async function LeadsPage({
   searchParams: Promise<SearchParams>
 }) {
   const sp = await searchParams
+
+  // `?lead=<id>` used to open a drawer over this table. The drawer is gone
+  // and the website has a page of its own, so send previously-shared QA
+  // links there rather than dropping people on an unexplained table.
+  const leadParam = typeof sp.lead === 'string' ? Number(sp.lead) : NaN
+  if (Number.isInteger(leadParam) && leadParam > 0) {
+    const domain = await domainForLead(leadParam)
+    if (domain) redirect(`/websites/${encodeURIComponent(domain)}`)
+  }
 
   const page = clampInt(sp.page, 1, 1_000_000, 1)
   const size = clampPageSize(sp.size, DEFAULT_LEAD_PAGE_SIZE)

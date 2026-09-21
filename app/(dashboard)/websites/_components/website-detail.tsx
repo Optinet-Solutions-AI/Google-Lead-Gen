@@ -6,8 +6,6 @@ import {
   Brain,
   Check,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   Copy,
   EyeOff,
   ExternalLink,
@@ -23,27 +21,20 @@ import {
   Tag,
   Trash2,
   User,
-  X,
   Zap,
 } from 'lucide-react'
-import type { LeadDetail, ContactItemDetail } from '../_lib/detail-query'
-import {
-  getCachedLeadDetail,
-  invalidateLeadDetailCache,
-  setCachedLeadDetail,
-} from '../_lib/detail-cache'
+import type { LeadDetail, ContactItemDetail, MondayCandidate } from '../../leads/_lib/detail-query'
+import { invalidateLeadDetailCache } from '../../leads/_lib/detail-cache'
 import {
   confirmMondayCandidate,
   deleteLeadScreenshot,
   forceEnrichLeadsAction,
   pushLeadToMondayAction,
   pushLeadToMondayNotRelevantAction,
-  setNotRelevantAction,
-  type MarkNotRelevantState,
   type PushNotRelevantState,
   type PushToMondayState,
-} from '../actions'
-import type { MondayCandidate } from '../_lib/detail-query'
+} from '../../leads/actions'
+import { setWebsiteNotRelevantAction, type WebsiteActionState } from '../actions'
 import { MAX_OPERATOR_NOTE_LEN } from '@/lib/monday/push-constants'
 
 type Detail = LeadDetail
@@ -62,297 +53,53 @@ function cleanDomain(raw: string | null): string {
   }
 }
 
-async function fetchLeadDetail(leadId: number, signal: AbortSignal): Promise<Detail> {
-  const res = await fetch(`/api/leads/${leadId}`, { signal, cache: 'no-store' })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body?.error ?? `HTTP ${res.status}`)
-  }
-  return res.json()
-}
-
-
-type Props = {
-  leadId: number | null
-  /** The ordered list of currently-visible lead ids; lets the drawer step
-   *  through them with prev/next without closing. Pass an empty array if
-   *  navigation isn't applicable. */
-  leadIds?: number[]
-  onClose: () => void
-  /** Called when the user clicks the prev/next arrows. If omitted, arrows
-   *  are hidden. */
-  onNavigate?: (id: number) => void
-  /** Called when the user clicks past the first/last visible lead. The
-   *  caller is responsible for advancing to the prev/next page. */
-  onBoundary?: (dir: 'prev' | 'next') => void
-  canGoPrevPage?: boolean
-  canGoNextPage?: boolean
-}
-
-export function LeadDetailDrawer({
-  leadId,
-  leadIds = [],
-  onClose,
-  onNavigate,
-  onBoundary,
-  canGoPrevPage = false,
-  canGoNextPage = false,
-}: Props) {
-  const [detail, setDetail] = useState<Detail | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    if (leadId === null) return
-    const controller = new AbortController()
-
-    // Stale-while-revalidate: if we've fetched this lead before, show
-    // the cached payload immediately and skip the loader. Always re-fetch
-    // in the background to pick up any server-side changes.
-    const cached = getCachedLeadDetail(leadId)
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDetail(cached ?? null)
-
-    setError(null)
-    setLoading(!cached)
-
-    fetchLeadDetail(leadId, controller.signal)
-      .then(d => {
-        if (controller.signal.aborted) return
-        setCachedLeadDetail(leadId, d)
-        setDetail(d)
-      })
-      .catch(e => {
-        if (controller.signal.aborted) return
-        // If we showed cached data and the refresh fails, keep showing
-        // the cache rather than flashing an error — log it instead.
-        if (cached) {
-           
-          console.warn('Background refresh failed for lead', leadId, e)
-          return
-        }
-        setError(e instanceof Error ? e.message : String(e))
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-    return () => controller.abort()
-  }, [leadId])
-
-  // When the drawer closes, clear UI state. We keep the module-level
-  // cache so re-opening the same lead is instant.
-  useEffect(() => {
-    if (leadId !== null) return
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDetail(null)
-
-    setError(null)
-  }, [leadId])
-
-  useEffect(() => {
-    function onEsc(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
-    }
-    if (leadId !== null) {
-      document.addEventListener('keydown', onEsc)
-      return () => document.removeEventListener('keydown', onEsc)
-    }
-  }, [leadId, onClose])
-
-  // Keyboard shortcuts for prev/next while the drawer is open. Re-derive
-  // the navigation state inside the handler so we don't have to hoist
-  // goPrev/goNext above the early return; closure over latest props is
-  // sufficient.
-  useEffect(() => {
-    if (leadId === null) return
-    function onKey(e: KeyboardEvent) {
-      const t = e.target as HTMLElement | null
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-
-      // Spatial mapping: left key on the keyboard = previous, right = next.
-      const isNext = e.key === 'ArrowRight' || e.key === 'm' || e.key === 'M'
-      const isPrev = e.key === 'ArrowLeft'  || e.key === 'n' || e.key === 'N'
-      if (!isNext && !isPrev) return
-
-      const idx = leadIds.indexOf(leadId!)
-      if (idx < 0) return
-      const here = leadIds[idx]
-      const atFirstLocal = idx === 0
-      const atLastLocal = idx === leadIds.length - 1
-      const prev = atFirstLocal ? null : leadIds[idx - 1] ?? null
-      const next = atLastLocal ? null : leadIds[idx + 1] ?? null
-      void here
-
-      if (isNext) {
-        if (next !== null) {
-          e.preventDefault()
-          onNavigate?.(next)
-        } else if (atLastLocal && canGoNextPage) {
-          e.preventDefault()
-          onBoundary?.('next')
-        }
-        return
-      }
-      if (isPrev) {
-        if (prev !== null) {
-          e.preventDefault()
-          onNavigate?.(prev)
-        } else if (atFirstLocal && canGoPrevPage) {
-          e.preventDefault()
-          onBoundary?.('prev')
-        }
-      }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [leadId, leadIds, onNavigate, onBoundary, canGoPrevPage, canGoNextPage])
-
-  if (leadId === null) return null
-
-  const lead = detail?.lead ?? null
-
-  // Prev/next navigation. Walks the visible lead ids the table handed
-  // us; at the boundary of the visible list, falls back to `onBoundary`
-  // to bridge to the adjacent page (if the table indicates one exists).
-  const navIndex = leadIds.indexOf(leadId)
-  const inList = navIndex >= 0
-  const atFirst = inList && navIndex === 0
-  const atLast = inList && navIndex === leadIds.length - 1
-  const prevId = inList && navIndex > 0 ? leadIds[navIndex - 1] ?? null : null
-  const nextId = inList && navIndex < leadIds.length - 1 ? leadIds[navIndex + 1] ?? null : null
-  const prevEnabled = prevId !== null || (atFirst && canGoPrevPage && onBoundary !== undefined)
-  const nextEnabled = nextId !== null || (atLast && canGoNextPage && onBoundary !== undefined)
-  const canNavigate =
-    onNavigate !== undefined && inList && (leadIds.length > 1 || canGoPrevPage || canGoNextPage)
-
-  function goPrev() {
-    if (prevId !== null) onNavigate?.(prevId)
-    else if (atFirst && canGoPrevPage) onBoundary?.('prev')
-  }
-  function goNext() {
-    if (nextId !== null) onNavigate?.(nextId)
-    else if (atLast && canGoNextPage) onBoundary?.('next')
-  }
-
-  return (
-    <>
-      {/* Drawer — no backdrop so pagination + other rows stay clickable.
-          z-50 keeps it above the sidebar (z-40) and mobile backdrop (z-30). */}
-      <aside className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[460px] flex-col border-l border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] shadow-xl">
-        <header className="flex flex-col gap-2 border-b border-[color:var(--color-border)] px-4 py-3">
-          {canNavigate && (
-            <div className="flex items-center gap-1 text-[11px] text-[color:var(--color-text-secondary)]">
-              <button
-                type="button"
-                onClick={goPrev}
-                disabled={!prevEnabled}
-                aria-label={prevId === null && atFirst && canGoPrevPage ? 'Previous page (N or ←)' : 'Previous lead (N or ←)'}
-                title={prevId === null && atFirst && canGoPrevPage ? 'Previous page (N or ←)' : 'Previous lead (N or ←)'}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={goNext}
-                disabled={!nextEnabled}
-                aria-label={nextId === null && atLast && canGoNextPage ? 'Next page (M or →)' : 'Next lead (M or →)'}
-                title={nextId === null && atLast && canGoNextPage ? 'Next page (M or →)' : 'Next lead (M or →)'}
-                className="inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-              <span className="ml-1 tabular-nums">
-                {navIndex + 1} <span className="opacity-60">of {leadIds.length}</span>
-              </span>
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="Close"
-                title="Close"
-                className="ml-auto rounded-md p-1 text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          )}
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[14px] font-semibold text-[color:var(--color-text-primary)]">
-                {cleanDomain(lead?.domain ?? lead?.url ?? null)}
-              </p>
-              {lead?.url && (
-                <a
-                  href={lead.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-0.5 flex items-start gap-1 text-[11px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text-primary)]"
-                >
-                  <ExternalLink className="mt-0.5 h-3 w-3 shrink-0" />
-                  <span className="break-all">{lead.url}</span>
-                </a>
-              )}
-            </div>
-            {!canNavigate && (
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="Close"
-                className="rounded-md p-1 text-[color:var(--color-text-secondary)] hover:bg-[color:var(--color-bg-secondary)] hover:text-[color:var(--color-text-primary)]"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-        </header>
-
-        <div className="flex-1 overflow-y-auto">
-          {loading && <Loading />}
-          {error && <ErrorPanel message={error} />}
-          {detail && !loading && !error && (
-            <DetailBody detail={detail} onOpenLead={onNavigate} />
-          )}
-        </div>
-      </aside>
-    </>
-  )
-}
-
-function Loading() {
-  return (
-    <div className="flex h-40 items-center justify-center text-[12px] text-[color:var(--color-text-secondary)]">
-      Loading…
-    </div>
-  )
-}
-
-function ErrorPanel({ message }: { message: string }) {
-  return (
-    <div className="m-4 rounded-md bg-red-50 px-3 py-2 text-[12px] text-red-700">
-      Error: {message}
-    </div>
-  )
+/**
+ * Everything we know about one website, as a page rather than a drawer.
+ *
+ * This is the drawer's body with its chrome removed. The verdicts it shows
+ * — affiliate, Rooster, contacts, s-tags, the Monday match — were always
+ * facts about the website that happened to be stored on a lead row, so a
+ * page keyed on the domain is where they belonged; the per-appearance
+ * detail (which keyword found it, at what position) lives in the
+ * appearances table alongside.
+ *
+ * The operator actions act on every lead row for the website, not just the
+ * one whose enrichment we happen to be displaying — see WebsiteActions.
+ */
+export function WebsiteDetailBody({
+  detail,
+  leadIds,
+  domain,
+}: {
+  detail: Detail
+  /** Every appearance of this website, so the operator actions act on the
+   *  site rather than on whichever row we happened to render. */
+  leadIds: number[]
+  domain: string
+}) {
+  return <DetailBody detail={detail} leadIds={leadIds} domain={domain} />
 }
 
 function DetailBody({
   detail,
-  onOpenLead,
+  leadIds,
+  domain,
 }: {
   detail: Detail
-  onOpenLead?: ((id: number) => void) | undefined
+  leadIds: number[]
+  domain: string
 }) {
   const lead = detail.lead
   if (!lead) {
     return (
-      <div className="m-4 text-[12px] text-[color:var(--color-text-secondary)]">
-        Lead not found.
+      <div className="text-[12px] text-[color:var(--color-text-secondary)]">
+        No enrichment has run for this website yet.
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-4 p-4 text-[12px]">
+    <div className="flex flex-col gap-4 text-[12px]">
       {lead.inherited_from_lead_id !== null && (
         <MemoryPanel
           leadId={lead.id}
@@ -367,6 +114,8 @@ function DetailBody({
 
       <NotRelevantPanel
         leadId={lead.id}
+        leadIds={leadIds}
+        domain={domain}
         isNotRelevant={lead.is_not_relevant}
         markedAt={lead.not_relevant_marked_at}
         markedBy={lead.not_relevant_marked_by}
@@ -383,7 +132,10 @@ function DetailBody({
         pushedBy={lead.monday_pushed_by}
       />
 
-      <Section title="Context">
+      {/* Which appearance the enrichment below actually ran against —
+          contacts and s-tags are stored per lead row, so saying so keeps
+          the page honest when a later re-sighting inherited the flags. */}
+      <Section title="Enriched from this appearance">
         <KV label="Keyword" value={lead.keyword ?? '—'} />
         <KV label="Country" value={[lead.country, lead.country_code].filter(Boolean).join(' · ') || '—'} />
         <KV
@@ -667,22 +419,14 @@ function DetailBody({
           <ul className="space-y-1.5">
             {detail.cohort.map(sib => {
               const display = sib.domain || sib.url || `lead #${sib.lead_id}`
-              const Wrap: React.ElementType = onOpenLead ? 'button' : 'div'
+              // A sibling is another WEBSITE, so it links to that
+              // website's page rather than reopening a per-lead view.
+              const host = cleanDomain(sib.domain ?? sib.url ?? null)
               return (
                 <li key={sib.lead_id}>
-                  <Wrap
-                    {...(onOpenLead
-                      ? {
-                          type: 'button',
-                          onClick: () => onOpenLead(sib.lead_id),
-                        }
-                      : {})}
-                    className={[
-                      'flex w-full items-center justify-between gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-2.5 py-2 text-left text-[11px]',
-                      onOpenLead
-                        ? 'cursor-pointer transition-colors hover:bg-[color:var(--color-bg-primary)]'
-                        : '',
-                    ].join(' ')}
+                  <Link
+                    href={`/websites/${encodeURIComponent(host)}`}
+                    className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-secondary)] px-2.5 py-2 text-left text-[11px] transition-colors hover:bg-[color:var(--color-bg-primary)]"
                   >
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate font-medium text-[color:var(--color-text-primary)]">
@@ -703,7 +447,7 @@ function DetailBody({
                         ×{sib.shared_count}
                       </span>
                     </span>
-                  </Wrap>
+                  </Link>
                 </li>
               )
             })}
@@ -1352,19 +1096,31 @@ function MemoryPanel({
   )
 }
 
+/**
+ * Not-relevant is a verdict about the WEBSITE — a news site doesn't become
+ * relevant because a different keyword turned it up — so the flag goes on
+ * every appearance at once and onto the profile the next scrape reads.
+ * The optional Monday push still creates a single item, as it always did.
+ */
 function NotRelevantPanel({
   leadId,
+  leadIds,
+  domain,
   isNotRelevant,
   markedAt,
   markedBy,
 }: {
   leadId: number
+  leadIds: number[]
+  domain: string
   isNotRelevant: boolean
   markedAt: string | null
   markedBy: string | null
 }) {
-  const initial: MarkNotRelevantState = null
-  const [state, action, pending] = useActionState(setNotRelevantAction, initial)
+  const ids = leadIds.length > 0 ? leadIds.join(',') : String(leadId)
+  const n = leadIds.length || 1
+  const initial: WebsiteActionState = { status: 'idle' }
+  const [state, action, pending] = useActionState(setWebsiteNotRelevantAction, initial)
   const pushInitial: PushNotRelevantState = null
   const [pushState, pushAction, pushPending] = useActionState(
     pushLeadToMondayNotRelevantAction,
@@ -1377,7 +1133,7 @@ function NotRelevantPanel({
   const [alsoPushToMonday, setAlsoPushToMonday] = useState(true)
 
   useEffect(() => {
-    if (state?.status === 'ok') invalidateLeadDetailCache(leadId)
+    if (state.status === 'ok') invalidateLeadDetailCache(leadId)
   }, [state, leadId])
 
   useEffect(() => {
@@ -1388,8 +1144,7 @@ function NotRelevantPanel({
   // source on next open, but the panel updates immediately so the user
   // sees the new state. Action returns the new value so toggling back
   // and forth in the same drawer session lands on the right UI.
-  const effectivelyHidden =
-    state?.status === 'ok' ? state.isNotRelevant : isNotRelevant
+  const effectivelyHidden = state?.status === 'ok' ? state.message.startsWith('Marked') : isNotRelevant
 
   if (effectivelyHidden) {
     return (
@@ -1400,13 +1155,14 @@ function NotRelevantPanel({
             Marked as not relevant
           </p>
           <p className="truncate text-[10px] text-amber-800/80">
-            Hidden from /leads · skipped by enrichment
+            Hidden from /leads · skipped by enrichment · {n} appearance{n === 1 ? '' : 's'}
             {markedAt ? ` · ${new Date(markedAt).toLocaleString()}` : ''}
             {markedBy ? ` · by ${markedBy}` : ''}
           </p>
         </div>
         <form action={action}>
-          <input type="hidden" name="lead_id" value={leadId} />
+          <input type="hidden" name="lead_ids" value={ids} />
+          <input type="hidden" name="domain" value={domain} />
           <input type="hidden" name="value" value="false" />
           <button
             type="submit"
@@ -1439,8 +1195,9 @@ function NotRelevantPanel({
         )}
       </div>
       <p className="text-[10px] text-[color:var(--color-text-secondary)]">
-        Hides this lead from /leads, cancels in-flight enrichment for it,
-        and prevents future enrichment passes from picking it up. Reversible.
+        Hides this website from /leads across all {n} appearance{n === 1 ? '' : 's'},
+        cancels in-flight enrichment, and stops future passes picking it up.
+        Reversible.
       </p>
       {confirming && (
         <div className="flex flex-col gap-2 rounded-md border border-amber-200 bg-amber-50/50 px-2.5 py-2">
@@ -1482,7 +1239,8 @@ function NotRelevantPanel({
             </form>
           ) : (
             <form action={action} className="flex items-center gap-2">
-              <input type="hidden" name="lead_id" value={leadId} />
+              <input type="hidden" name="lead_ids" value={ids} />
+              <input type="hidden" name="domain" value={domain} />
               <input type="hidden" name="value" value="true" />
               <button
                 type="submit"
@@ -1504,7 +1262,7 @@ function NotRelevantPanel({
           )}
         </div>
       )}
-      {state?.status === 'error' && (
+      {state.status === 'error' && (
         <p className="rounded-md bg-red-50 px-2 py-1 text-[11px] text-red-700">
           {state.error}
         </p>
