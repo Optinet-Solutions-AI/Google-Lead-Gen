@@ -11,7 +11,7 @@ import { Pagination } from '../monday/_components/pagination'
 import { AutoRefresh } from './_components/auto-refresh'
 import { JobsCardList, JobsTable } from './_components/jobs-table'
 import { ScopeBar, type ScopeUser } from './_components/scope-bar'
-import { CreateScrapeButton } from './_components/create-scrape-button'
+import { CreateScrapeFab, CreateScrapeHeaderButton } from './_components/create-scrape-button'
 import { EmptyDay } from './_components/empty-day'
 import { getFleetQueueSnapshot, listActiveProfiles, queryJobs } from './_lib/queries'
 
@@ -163,14 +163,17 @@ export default async function ScrapePage({
   return (
     <div className="flex min-w-0 flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-[16px] font-semibold text-[color:var(--color-text-primary)]">
-          Scraping Batches
-        </h1>
-        {hasActive && (
-          <p className="text-[11px] text-[color:var(--color-text-secondary)]">
-            auto-refreshing every 5 s
-          </p>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-[16px] font-semibold text-[color:var(--color-text-primary)]">
+            Scraping Batches
+          </h1>
+          {hasActive && (
+            <p className="text-[11px] text-[color:var(--color-text-secondary)]">
+              auto-refreshing every 5 s
+            </p>
+          )}
+        </div>
+        <CreateScrapeHeaderButton />
       </header>
 
       <ScopeBar today={today} day={day} owner={ownerScope} meEmail={callerEmail} users={scopeUsers} />
@@ -224,7 +227,7 @@ export default async function ScrapePage({
         <Pagination page={page} size={size} total={total} pageSizeOptions={PAGE_SIZES} />
       </div>
 
-      <CreateScrapeButton />
+      <CreateScrapeFab />
 
       <AutoRefresh enabled={hasActive} />
     </div>
