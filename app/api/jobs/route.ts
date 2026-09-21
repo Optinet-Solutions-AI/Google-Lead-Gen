@@ -41,7 +41,12 @@ export async function GET(req: NextRequest) {
 
   const today = new Date().toISOString().slice(0, 10)
   const dayParam = sp.get('day') ?? ''
-  const day = dayParam === 'all' ? 'all' : /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam : today
+  // Mirror the page: a search spans every date unless a day was picked.
+  const day =
+    dayParam === 'all' ? 'all'
+      : /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam
+      : q.trim().length > 0 ? 'all'
+      : today
 
   try {
     const result = await queryJobs({

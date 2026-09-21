@@ -49,8 +49,14 @@ export default async function ScrapePage({
   // now; ?day=all widens it, ?day=YYYY-MM-DD picks a past day.
   const today = new Date().toISOString().slice(0, 10)
   const dayParam = typeof sp.day === 'string' ? sp.day : ''
+  // A search is a lookup across everything, so it widens the day scope on its
+  // own — otherwise searching on a quiet day returns nothing and looks
+  // broken. An explicitly chosen day still wins.
   const day: string =
-    dayParam === 'all' ? 'all' : /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam : today
+    dayParam === 'all' ? 'all'
+      : /^\d{4}-\d{2}-\d{2}$/.test(dayParam) ? dayParam
+      : q.trim().length > 0 ? 'all'
+      : today
 
   // Owner scope. Default mine; 'all' drops the filter; anything else is a
   // specific person's email chosen from the picker.
@@ -110,7 +116,7 @@ export default async function ScrapePage({
       return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label))
     })(),
   ])
-  const { rows, total } = jobsResult
+  const { rows, total, searchNotes } = jobsResult
 
   // When the scope is empty we offer a jump to the last day with work rather
   // than rendering a blank page.
@@ -180,6 +186,12 @@ export default async function ScrapePage({
 
       <section className="flex flex-col gap-3">
         <AdvancedFilters columns={columns} />
+
+        {q && searchNotes && searchNotes.length > 0 && (
+          <p className="text-[11.5px] text-[color:var(--color-text-secondary)]">
+            Search read: {searchNotes.join(' · ')}
+          </p>
+        )}
 
         {rows.length > 0 && (
         <p className="text-[11.5px] text-[color:var(--color-text-secondary)]">

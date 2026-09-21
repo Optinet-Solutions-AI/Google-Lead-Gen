@@ -17,6 +17,7 @@ import {
   type StageTimings,
 } from './pipeline'
 import { ENGINE_CONFIGS } from '@/lib/monday/engine-config'
+import { buildJobSearch } from './job-search'
 
 // Re-export client-safe types for callers that already import from
 // queries.ts. The actual definitions live in ./pipeline because that
@@ -1618,15 +1619,10 @@ export type JobsQueryOptions = {
 export type JobsQueryResult = {
   rows: ScrapeJob[]
   total: number
+  /** How the advanced search read the query ("norway" -> country NO), so the
+   *  page can show its interpretation rather than leaving it a black box. */
+  searchNotes?: string[]
 }
-
-const JOBS_SEARCH_COLUMNS = [
-  'keyword',
-  'country_code',
-  'error_message',
-  'created_by_display',
-  'created_by_username',
-]
 
 /** Soft cap for the "All rows" dropdown option on /scrape. */
 const JOBS_ROWS_ALL_CAP = 10_000
@@ -1710,12 +1706,17 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
     if (opts.toDay) query = query.lte('created_at', dayEnd(opts.toDay))
   }
 
-  // Free-text search across a small set of columns.
+  // Advanced search — see lib/job-search.ts. Every word must match somewhere
+  // on the row; words are expanded first (country names, status/engine
+  // synonyms, batch numbers, and the domains a batch produced).
+  let searchNotes: string[] = []
   if (opts.q && opts.q.trim().length > 0) {
-    const safe = opts.q.replace(/[,()*]/g, '').trim()
-    if (safe.length > 0) {
-      const or = JOBS_SEARCH_COLUMNS.map(c => `${c}.ilike.%${safe}%`).join(',')
-      query = query.or(or)
+    const plan = await buildJobSearch(svc, opts.q)
+    if (plan) {
+      // Repeated `or=` parameters are ANDed by PostgREST, which is exactly
+      // "every word has to match, but each may match a different column".
+      for (const group of plan.groups) query = query.or(group)
+      searchNotes = plan.notes
     }
   }
 
@@ -1808,6 +1809,7 @@ export async function queryJobs(opts: JobsQueryOptions): Promise<JobsQueryResult
       }
     }),
     total: count ?? jobs.length,
+    ...(searchNotes.length > 0 ? { searchNotes } : {}),
   }
 }
 
