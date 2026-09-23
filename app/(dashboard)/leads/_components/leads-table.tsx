@@ -475,15 +475,21 @@ export function LeadsTable({
       )}
 
       {/* Desktop — table */}
-      {/* No inner overflow: per CSS spec, overflow-x:auto + overflow-y:visible
-       *  still promotes the y-axis to a scroll container, which traps the
-       *  sticky <th> inside the wrapper. On tall tables (e.g. /scrape/[id]?size=100)
-       *  scrolling the page then lifts the whole wrapper — and the "sticky"
-       *  header — above the viewport. Letting the page own both axes keeps
-       *  per-cell sticky pinned to the viewport top. Wide tables fall back to
-       *  page-level horizontal scroll, which is acceptable for this layout. */}
-      <div className="hidden rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
-        <table className="w-full border-collapse text-[11px]">
+      {/* Scrolls sideways, but only sideways.
+       *
+       *  `overflow-x:auto` with `overflow-y:visible` promotes BOTH axes to a
+       *  scroll container, which traps the sticky <th> inside the wrapper —
+       *  on a tall table the header then scrolls away with it. `overflow-y:
+       *  clip` is the exception: it does not create a scroll container, so
+       *  the page still owns vertical scrolling and the header stays pinned
+       *  to the viewport.
+       *
+       *  The min-width is what makes the scrollbar appear at all. Without
+       *  it the table is `w-full` inside a `min-w-0` main, so extra columns
+       *  squeeze the existing ones thinner and thinner instead of
+       *  overflowing, and there is nothing to scroll to. */}
+      <div className="hidden overflow-x-auto [overflow-y:clip] rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] md:block">
+        <table className="w-full min-w-[1180px] border-collapse text-[11px]">
           {/* Sticky lives on each <th> below (not on <thead>). HTML
            *  table layout doesn't reliably honour position:sticky on
            *  the row-group element across browsers; per-cell sticky
@@ -636,6 +642,7 @@ export function LeadsTable({
                     board={row.monday_board}
                     isOverridden={row.monday_overridden_at !== null}
                     existing={row.existing_state}
+                    checkedAt={row.monday_checked_at}
                   />
                 </Td>
                 <Td>
@@ -769,6 +776,7 @@ export function LeadsTable({
                   board={row.monday_board}
                   isOverridden={row.monday_overridden_at !== null}
                   existing={row.existing_state}
+                  checkedAt={row.monday_checked_at}
                 />
               </Field>
               <Field label="Is an affiliate?">

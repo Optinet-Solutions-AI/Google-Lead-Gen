@@ -16,7 +16,7 @@ type CategoryKey =
   | 'email_undelivered_leads'
   | 'email_undelivered_leads_updates'
 
-type CategoryMeta = { label: string; cls: string }
+type CategoryMeta = { label: string; cls: string; hint?: string }
 
 export const CATEGORY_META: Record<CategoryKey, CategoryMeta> = {
   no:                              { label: 'No',                          cls: 'bg-emerald-100 text-emerald-800' },
@@ -56,9 +56,18 @@ type Props = {
    *  the menu behind it still edits the Monday side, the only part that is
    *  a judgement call rather than a fact about our history. */
   existing?: 'monday' | 'system' | 'new'
+  /** When the Monday check last ran, for the badge's tooltip. */
+  checkedAt?: string | null
 }
 
-export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden, existing }: Props) {
+export function MondayLabelEditor({
+  leadId,
+  isOnMonday,
+  board,
+  isOverridden,
+  existing,
+  checkedAt,
+}: Props) {
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
@@ -123,7 +132,9 @@ export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden, exi
     })
   }
 
-  const current = existing ? existsBadgeFor(isOnMonday, board, existing) : badgeFor(isOnMonday, board)
+  const current = existing
+    ? existsBadgeFor(isOnMonday, board, existing, checkedAt ?? null)
+    : badgeFor(isOnMonday, board)
   const currentValue: CategoryKey | 'unset' =
     isOnMonday === null ? 'unset' : isOnMonday === false ? 'no' : (board as CategoryKey | null) ?? 'unset'
 
@@ -136,7 +147,13 @@ export function MondayLabelEditor({ leadId, isOnMonday, board, isOverridden, exi
         disabled={pending}
         aria-haspopup="menu"
         aria-expanded={open}
-        title={isOverridden ? 'Manually set — click to change' : 'Auto-detected — click to override'}
+        title={
+          current.hint
+            ? `${current.hint} — click to change`
+            : isOverridden
+              ? 'Manually set — click to change'
+              : 'Auto-detected — click to override'
+        }
         className={[
           'inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-medium transition-opacity hover:opacity-80 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]',
           current.cls,
@@ -244,24 +261,45 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 /**
  * "Already exists?" — one badge that says where, not whether.
  *
- * Monday wins when it matched, because the board is the more specific
- * answer and it names the table. Otherwise our own history decides, and
- * "New" is the outcome the team is actually hunting for, so it gets the
- * green.
+ * Monday outranks our own database: by the time we have scraped a site it
+ * is in the system by definition, so "on Monday but not in the system"
+ * cannot happen and "in the system" only means anything once Monday has
+ * been ruled out.
+ *
+ * The badge says only that much. Which board it sits on, and when we last
+ * checked, are the second question — they live in the tooltip, so the
+ * column stays scannable.
  */
 function existsBadgeFor(
   isOnMonday: boolean | null,
   board: string | null,
   existing: 'monday' | 'system' | 'new',
+  checkedAt: string | null,
 ): CategoryMeta {
+  const checked = checkedAt
+    ? ` · last checked ${new Date(checkedAt).toLocaleString()}`
+    : ' · never checked'
+
   if (existing === 'monday' || isOnMonday === true) {
-    const meta = board && board in CATEGORY_META ? CATEGORY_META[board as CategoryKey] : FALLBACK_BADGE
-    return { label: `Monday · ${meta.label}`, cls: meta.cls }
+    const meta = board && board in CATEGORY_META ? CATEGORY_META[board as CategoryKey] : null
+    return {
+      label: 'On Monday',
+      cls: 'bg-rose-100 text-rose-800',
+      hint: `${meta ? `Monday board: ${meta.label}` : 'On Monday (board not recorded)'}${checked}`,
+    }
   }
   if (existing === 'system') {
-    return { label: 'In system', cls: 'bg-amber-100 text-amber-800' }
+    return {
+      label: 'In system',
+      cls: 'bg-amber-100 text-amber-800',
+      hint: `An earlier scrape already found this website. Not on any Monday board${checked}`,
+    }
   }
-  return { label: 'New', cls: 'bg-emerald-100 text-emerald-800' }
+  return {
+    label: 'New',
+    cls: 'bg-emerald-100 text-emerald-800',
+    hint: `First time we have seen this website, and not on Monday${checked}`,
+  }
 }
 
 function badgeFor(isOnMonday: boolean | null, board: string | null): CategoryMeta {

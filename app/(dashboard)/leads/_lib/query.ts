@@ -35,6 +35,9 @@ export type LeadRow = {
   monday_board: string | null
   monday_item_id: string | null
   monday_overridden_at: string | null
+  /** When the Monday duplicate check last ran for this row. Shown on the
+   *  "Already exists?" badge so an operator can judge how stale it is. */
+  monday_checked_at: string | null
   // Affiliate detection (7.2)
   is_affiliate: boolean | null
   affiliate_confidence: string | null
@@ -134,7 +137,7 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
         'id, keyword, country, country_code, url, domain',
         'page_number, position_on_page, overall_position',
         'result_type, seen_on, batch_id, scrape_job_id',
-        'is_on_monday, monday_board, monday_item_id, monday_overridden_at',
+        'is_on_monday, monday_board, monday_item_id, monday_overridden_at, monday_checked_at',
         'is_affiliate, affiliate_confidence, is_affiliate_overridden_at',
         'is_rooster_partner, brand, is_rooster_overridden_at',
         'has_contact_details, is_contact_overridden_at',
