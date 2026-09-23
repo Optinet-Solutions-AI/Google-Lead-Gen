@@ -103,16 +103,40 @@ export const dynamic = 'force-dynamic'
 // past the default serverless timeout (mirrors the Monday sync routes).
 export const maxDuration = 300
 
-async function countNotRelevantInJob(
+/**
+ * Every row this batch stored, split by why it is or isn't on screen.
+ *
+ * The header used to count only `is_not_relevant`, so system-flagged rows
+ * vanished without being named and the numbers didn't add up. A reader
+ * should always be able to account for the difference between what the
+ * scrape found and what the table shows.
+ */
+async function countRowsInJob(
   svc: ReturnType<typeof createServiceClient>,
   jobIds: string[],
-): Promise<number> {
-  const { count } = await svc
-    .from('google_lead_gen_table')
-    .select('id', { head: true, count: 'exact' })
-    .in('scrape_job_id', jobIds)
-    .eq('is_not_relevant', true)
-  return count ?? 0
+): Promise<{ stored: number; notRelevant: number; flagged: number }> {
+  const [storedRes, notRelRes, flaggedRes] = await Promise.all([
+    svc
+      .from('google_lead_gen_table')
+      .select('id', { head: true, count: 'exact' })
+      .in('scrape_job_id', jobIds),
+    svc
+      .from('google_lead_gen_table')
+      .select('id', { head: true, count: 'exact' })
+      .in('scrape_job_id', jobIds)
+      .eq('is_not_relevant', true),
+    svc
+      .from('google_lead_gen_table')
+      .select('id', { head: true, count: 'exact' })
+      .in('scrape_job_id', jobIds)
+      .eq('is_not_relevant', false)
+      .not('system_flag', 'is', null),
+  ])
+  return {
+    stored: storedRes.count ?? 0,
+    notRelevant: notRelRes.count ?? 0,
+    flagged: flaggedRes.count ?? 0,
+  }
 }
 
 export default async function ScrapeJobPage({ params, searchParams }: Props) {
@@ -247,7 +271,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
 
   const [
     { rows, total },
-    hiddenCount,
+    rowCounts,
     stageSummary,
     captchaSolverEnabled,
     kickSummary,
@@ -282,7 +306,7 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
         sorts,
         includeNotRelevant: showHidden,
       }),
-      countNotRelevantInJob(svc, batchJobIds),
+      countRowsInJob(svc, batchJobIds),
       // Kick / YouTube jobs have no leads, so the lead-enrichment stages don't apply.
       noLeadsEngine ? Promise.resolve(null) : fetchStageSummary(id),
       mobileCaptchaAborted
@@ -322,6 +346,23 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
               return (row as JobAnalysisSummary | undefined) ?? null
             }),
     ])
+
+  // Both kinds of hidden row come back when the toggle is on, so the count
+  // on the button has to cover both.
+  const hiddenCount = rowCounts.notRelevant + rowCounts.flagged
+
+  // What the search reported, against what we actually stored. The gap is
+  // same-site duplicates collapsing; naming it keeps the header honest.
+  const scrapedCount = (() => {
+    const s = job.result_summary
+    if (!s) return null
+    const org = typeof s['organic_results'] === 'number' ? (s['organic_results'] as number) : 0
+    const ppc = typeof s['ppc_results'] === 'number' ? (s['ppc_results'] as number) : 0
+    const tot = typeof s['total_results'] === 'number' ? (s['total_results'] as number) : null
+    return tot ?? (org + ppc || null)
+  })()
+  const collapsedCount =
+    scrapedCount !== null ? Math.max(0, scrapedCount - rowCounts.stored) : 0
 
   const toggleHref = (() => {
     const next = new URLSearchParams()
@@ -381,7 +422,23 @@ export default async function ScrapeJobPage({ params, searchParams }: Props) {
               {' '}row{total === 1 ? '' : 's'}
               {!showHidden && hiddenCount > 0 && (
                 <span className="ml-1">
-                  · {hiddenCount.toLocaleString()} hidden as not relevant
+                  · {hiddenCount.toLocaleString()} hidden
+                  {rowCounts.flagged > 0 && rowCounts.notRelevant > 0
+                    ? ` (${rowCounts.notRelevant} not relevant, ${rowCounts.flagged} system-flagged)`
+                    : rowCounts.flagged > 0
+                      ? ' by a system flag'
+                      : ' as not relevant'}
+                </span>
+              )}
+              {/* The search can return more results than we store, because
+                  the same website on two pages or in both device passes
+                  collapses to one row. Say so, rather than leaving the
+                  reader to wonder where the difference went. */}
+              {collapsedCount > 0 && (
+                <span className="ml-1">
+                  · {collapsedCount.toLocaleString()} same-site duplicate
+                  {collapsedCount === 1 ? '' : 's'} collapsed from{' '}
+                  {scrapedCount!.toLocaleString()} found
                 </span>
               )}
             </p>

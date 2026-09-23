@@ -120,7 +120,29 @@ export type StageTimings = {
 
 /** Row shape exposed to the client jobs-table. Mirrors the columns
  *  selected by `queryJobs`. Keep in sync with that query. */
+/**
+ * How many rows a job actually stored, and how many the batch view shows.
+ *
+ * The Results column used to read the SERP count out of the scrape
+ * summary, which says nothing about how many rows exist — when dedupe
+ * suppressed the inserts it advertised "21 results" over a batch that
+ * opened empty. Counting real rows means the column cannot drift from
+ * what the batch view renders.
+ */
+export type JobLeadCounts = {
+  /** Rows in google_lead_gen_table for this job. */
+  stored: number
+  /** Of those, the ones the batch view shows by default. */
+  visible: number
+  /** Hidden as not-relevant (Monday duplicate, operator flag, denylist). */
+  notRelevant: number
+  /** Hidden by a system flag (obvious non-affiliate categories). */
+  flagged: number
+}
+
 export type ScrapeJob = {
+  /** Null while a job is still running, or for engines with no leads table. */
+  lead_counts?: JobLeadCounts | null
   id: string
   keyword: string
   country_code: string
