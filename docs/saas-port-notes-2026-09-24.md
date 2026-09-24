@@ -1,18 +1,51 @@
 # What changed in Google-Lead-Gen since the SaaS fork
 
-**Scope:** commits from 2026-09-17 to 2026-09-24 (`32c5072`..`5c0fd52`) — 36 commits, 15 migrations.
+**Scope:** everything after `daaa254` "one batch per engine" (2026-08-19) — the
+last commit this repo and the SaaS repo share. 50 commits, 21 migrations, up to
+2026-09-24.
 
-I picked that start date because the history has a clean sixteen-day gap
-(2026-09-01 → 2026-09-17) and the work resumes in a burst straight after, which
-looks like the pause in which the backup and the fork were made. **If your repo
-already has the integrations page and the new-scrape wizard, tell me and I'll
-extend this back to 2026-09-01 or mid-August.** The one thing before this window
-worth knowing either way: the enrichment chain now stops at the Rooster stage —
-contacts and s-tags became manual (`9027cee`, 2026-09-01).
+Confirmed against `Optinet-Solutions-Prod/lead-enrichment-platform`: its history
+carries ours as far as `cb24643` (same subject, 2026-08-19) and then diverges
+into its own work — Stripe pre-wiring, org switching — with its last commit on
+2026-09-14. The two repos share no git ancestor, so nothing can be cherry-picked
+directly; these are changes to re-apply, not to merge.
 
 Monday.com work is left out as requested. Where something is only *partly*
 Monday-coupled, it's called out under **In the SaaS version** so you know what
-to drop rather than discovering it at runtime.
+to drop rather than discovering it at runtime. Four commits in the delta are
+purely Monday and don't appear below at all: manual tag overrides + Updates
+sync (`8f845ac`), fuzzy match candidates (`d83c875`), match-tier indexes
+(`f242cd5`), TLD-variant auto-matching (`1c7b336`).
+
+---
+
+## 0. August 20 – September 1 — the stretch before the big push
+
+Small but load-bearing, and easy to skip because the headline features came
+later.
+
+- **`20260820150000_lead_domain_functional_index.sql`** (`6550e08`) — a
+  functional index on the lead-domain expression. Without it
+  `complete_scrape_job` was timing out as the table grew. Port this early; it is
+  three lines and it stops a failure mode you would otherwise have to diagnose
+  from scratch.
+- **Affiliate stage always scores** (`77fcec1`) — the affiliate score used to
+  require a full enrichment pass, so partially-enriched leads carried no score
+  at all. Now it scores from whatever is available.
+- **Apify → VM fallback** (`cc06d2f`) — when Apify persistently errors on a job,
+  the scrape falls back to the VM browser instead of failing the batch.
+- **PPC ad extraction** (`3e38493`) — wait for the real `/aclk` ad anchor rather
+  than the "Sponsored" label, which Google had stopped rendering. Three earlier
+  commits in this range (`9fcc82d`, `a2dcc73`, `e0c98fa`) added a diagnostic for
+  this and then reverted it once the question was answered — nothing to port.
+- **Scheduled-scrape timezone** (`07afdf0`) — per-schedule timezone selector,
+  defaulting to Malta.
+- **Enqueue form reset** (`68ad8e9`) — country and language reset after a
+  successful enqueue.
+- **`20260901120000_chain_stops_at_rooster.sql`** (`9027cee`) — the enrichment
+  chain now **stops at the Rooster stage**; contact extraction and s-tags became
+  manual steps. This changes how the pipeline terminates, so if the SaaS repo
+  still auto-runs the full chain, decide deliberately whether to follow.
 
 ---
 
@@ -280,12 +313,14 @@ database so absolute numbers are lower, but the shape holds).
 
 ## Suggested porting order
 
-1. Website profiles + the job-scoped dedupe fix (§1) — everything else sits on it
-2. SERP snippet capture in `worker.py` + the title backfill (§2)
-3. Relevance screen (§2) — cheapest, highest-signal win on its own
-4. Accurate result counts (§5) — small, and prevents a whole class of bug
-5. `loading.tsx` everywhere + the page skeleton (§6)
-6. The website page (§3) — the largest single piece
-7. New-scrape wizard (§4), admin pages (§7) — independent, do them whenever
+1. The lead-domain functional index (§0) — three lines, prevents a timeout
+2. Website profiles + the job-scoped dedupe fix (§1) — everything else sits on it
+3. SERP snippet capture in `worker.py` + the title backfill (§2)
+4. Relevance screen (§2) — cheapest, highest-signal win on its own
+5. Accurate result counts (§5) — small, and prevents a whole class of bug
+6. `loading.tsx` everywhere + the page skeleton (§6)
+7. The website page (§3) — the largest single piece
+8. New-scrape wizard (§4), admin pages (§7) — independent, do them whenever
+9. The rest of §0 — the fallback, the scoring change, the timezone selector
 
 Ask me for the exact diff on any section and I'll pull it.
