@@ -69,6 +69,9 @@ export type LeadRow = {
   /** What the website IS, in a dozen words, from the SERP screen. Lives on
    *  the profile because it describes the site, not this one appearance. */
   ai_site_description: string | null
+  /** True when the website already had a profile when this lead was
+   *  written. Stored, not derived — see 20260925120000. */
+  seen_before: boolean | null
   /** Where this domain already exists. 'monday' — it matched a Monday
    *  board. 'system' — our own database saw it on an earlier scrape.
    *  'new' — a genuinely new lead, which is the one we want. */
@@ -144,7 +147,7 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
         'has_s_tags, is_stag_overridden_at',
         's_tags_checked_at, s_tag_id',
         'created_at',
-        'is_not_relevant, system_flag, profile_id',
+        'is_not_relevant, system_flag, profile_id, seen_before',
         'is_relevant, relevance_reason, relevance_overridden_at',
         // Website profile — FK google_lead_gen_table.profile_id → website_profiles(id).
         'website_profiles:website_profiles!profile_id(last_seen_at, first_seen_at, appearance_count, ai_site_description)',
@@ -180,9 +183,36 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
   if (opts.countryCode) query = query.eq('country_code', opts.countryCode)
   if (opts.resultType) query = query.eq('result_type', opts.resultType)
 
+  // "Already exists?" is a view over two columns, not one, so it can't go
+  // through the generic filter layer — translate it here and hand the rest on.
+  const passThrough: Filter[] = []
+  for (const f of opts.filters ?? []) {
+    if (f.col !== 'existing_state') {
+      passThrough.push(f)
+      continue
+    }
+    const want = (f.v ?? '').toLowerCase()
+    const negate = f.op === 'isnot'
+    if (want === 'monday') {
+      query = negate
+        ? query.or('is_on_monday.is.null,is_on_monday.eq.false')
+        : query.eq('is_on_monday', true)
+    } else if (want === 'system' || want === 'new') {
+      const seen = want === 'system'
+      // "not monday" has to be null-safe: an unchecked row is not on Monday.
+      if (!negate) {
+        query = query
+          .or('is_on_monday.is.null,is_on_monday.eq.false')
+          .eq('seen_before', seen)
+      } else {
+        query = query.not('seen_before', 'eq', seen)
+      }
+    }
+  }
+
   // Advanced filter rows (`?f=col:op:val`). Validated against LEADS_COLUMNS.
-  if (opts.filters && opts.filters.length > 0) {
-    query = applyFilters(query, opts.filters, LEADS_COLUMNS)
+  if (passThrough.length > 0) {
+    query = applyFilters(query, passThrough, LEADS_COLUMNS)
   }
 
   // PPC > Organic alphabetically, so DESC groups PPC above Organic by default.
@@ -240,8 +270,7 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
       ai_site_description: website_profiles?.ai_site_description ?? null,
       existing_state: existingState(
         r.is_on_monday as boolean | null,
-        website_profiles?.first_seen_at ?? null,
-        r.created_at as string,
+        r.seen_before as boolean | null,
       ),
     }
   }) as unknown as LeadRow[]
@@ -253,23 +282,19 @@ export async function queryLeads(opts: LeadsQueryOptions): Promise<LeadsQueryRes
  * need two "have we seen this before?" columns — it needs one that says
  * WHERE.
  *
- * The profile's first sighting is the test for our own history: if the
- * website was first seen more than a minute before this lead was written,
- * an earlier scrape already found it. The minute of slack stops the rows of
- * a single batch from marking each other as pre-existing.
+ * Monday outranks our own history: scraping a site puts it in the system by
+ * definition, so "known externally but not in the system" cannot happen, and
+ * "in system" only means anything once Monday is ruled out.
+ *
+ * `seen_before` is stored on the row rather than recomputed here, so the
+ * filter in the panel and the badge in the table cannot disagree.
  */
 function existingState(
   isOnMonday: boolean | null,
-  profileFirstSeen: string | null,
-  leadCreatedAt: string,
+  seenBefore: boolean | null,
 ): 'monday' | 'system' | 'new' {
   if (isOnMonday === true) return 'monday'
-  if (profileFirstSeen) {
-    const first = Date.parse(profileFirstSeen)
-    const lead = Date.parse(leadCreatedAt)
-    if (Number.isFinite(first) && Number.isFinite(lead) && first < lead - 60_000) return 'system'
-  }
-  return 'new'
+  return seenBefore === true ? 'system' : 'new'
 }
 
 export async function listCountryFilters(): Promise<Array<{ code: string; name: string }>> {

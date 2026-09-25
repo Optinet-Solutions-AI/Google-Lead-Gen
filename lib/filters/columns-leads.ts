@@ -11,6 +11,15 @@ const SEEN_ON_OPTIONS = [
   { value: 'both', label: 'Both' },
 ] as const
 
+/** The three states of the "Already exists?" column. Not a single DB
+ *  column — queryLeads translates these into predicates over is_on_monday
+ *  and seen_before. */
+const EXISTING_OPTIONS = [
+  { value: 'new', label: 'New' },
+  { value: 'system', label: 'In system' },
+  { value: 'monday', label: 'On Monday' },
+] as const
+
 const BOOL_THREE_OPTIONS = [
   { value: 'true', label: 'Yes' },
   { value: 'false', label: 'No' },
@@ -31,6 +40,7 @@ export const LEADS_COLUMNS: ReadonlyArray<ColumnDef> = [
   // The table shows one merged "Already exists?" badge, but the two facts
   // behind it stay separately filterable — "on Monday" is a match against
   // their boards, not against our own history.
+  { key: 'existing_state', label: 'Already exists?', type: 'select', filterable: true, sortable: false, options: [...EXISTING_OPTIONS] },
   { key: 'is_on_monday', label: 'On Monday?', type: 'boolean', filterable: true, sortable: false },
   { key: 'is_relevant', label: 'Relevant to keyword?', type: 'boolean', filterable: true, sortable: false, options: [...BOOL_THREE_OPTIONS] },
   { key: 'is_affiliate', label: 'Is affiliate?', type: 'boolean', filterable: true, sortable: false, options: [...BOOL_THREE_OPTIONS] },

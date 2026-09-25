@@ -125,22 +125,54 @@ export default async function ScrapePage({
   ])
   const { rows, total, searchNotes } = jobsResult
 
-  // When the scope is empty we offer a jump to the last day with work rather
-  // than rendering a blank page.
+  // When the scope is empty, work out WHY before rendering a blank page.
+  //
+  // The list defaults to today + your own work, and different people run the
+  // scrapes on different days. So picking a past date very often lands on a
+  // day somebody else was working, and the page looked broken — "the date
+  // filter doesn't show previous days" — when the date was fine and the owner
+  // scope was hiding everything. Count what is there for everyone on the
+  // chosen day and say so.
   let latestDay: string | null = null
+  let latestDayAnyone: string | null = null
+  let othersOnDay = 0
   if (rows.length === 0) {
     const svc = createServiceClient()
     const ctx = await getShadowContext()
-    let probe = svc
-      .from('scrape_queue')
-      .select('created_at')
-      .is('parent_scrape_job_id', null)
-      .order('created_at', { ascending: false })
-      .limit(1)
-    if (restrictToOwnerEmail) probe = probe.eq('created_by_email', restrictToOwnerEmail)
-    const { data: probeRows } = await (applyShadowFilter(probe, ctx) as typeof probe)
-    const newest = ((probeRows ?? []) as Array<{ created_at: string }>)[0]?.created_at
-    if (newest) latestDay = newest.slice(0, 10)
+
+    const newestIn = async (ownerEmail?: string) => {
+      let probe = svc
+        .from('scrape_queue')
+        .select('created_at')
+        .is('parent_scrape_job_id', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+      if (ownerEmail) probe = probe.eq('created_by_email', ownerEmail)
+      const { data } = await (applyShadowFilter(probe, ctx) as typeof probe)
+      const newest = ((data ?? []) as Array<{ created_at: string }>)[0]?.created_at
+      return newest ? newest.slice(0, 10) : null
+    }
+
+    const countOnDay = async () => {
+      if (day === 'all') return 0
+      const probe = svc
+        .from('scrape_queue')
+        .select('id', { head: true, count: 'exact' })
+        .is('parent_scrape_job_id', null)
+        .gte('created_at', `${day}T00:00:00.000Z`)
+        .lte('created_at', `${day}T23:59:59.999Z`)
+      const { count } = await (applyShadowFilter(probe, ctx) as typeof probe)
+      return count ?? 0
+    }
+
+    const [mineLatest, anyoneLatest, onDay] = await Promise.all([
+      restrictToOwnerEmail ? newestIn(restrictToOwnerEmail) : Promise.resolve(null),
+      newestIn(),
+      countOnDay(),
+    ])
+    latestDay = mineLatest
+    latestDayAnyone = anyoneLatest
+    othersOnDay = onDay
   }
 
   // Auto-refresh stays on while either the scrape itself OR a follow-on
@@ -218,6 +250,8 @@ export default async function ScrapePage({
             today={today}
             ownerScope={ownerScope}
             latestDay={latestDay}
+            latestDayAnyone={latestDayAnyone}
+            othersOnDay={othersOnDay}
             params={new URLSearchParams(
               Object.entries(sp).flatMap(([k, v]) =>
                 typeof v === 'string' ? [[k, v] as [string, string]] : [],
