@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState, useTransition } from 'react'
+import { useRef, useState, useTransition } from 'react'
 import { ChevronDown, RotateCcw } from 'lucide-react'
 import { setMondayLabel, type MondayLabelValue } from '../actions'
 import { invalidateLeadDetailCache } from '../_lib/detail-cache'
+import { AnchoredMenu } from '../../_components/anchored-menu'
 
 type CategoryKey =
   | 'no'
@@ -75,18 +76,6 @@ export function MondayLabelEditor({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!open) return
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false)
-        setError(null)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (!open) return
     if (e.key === 'Escape') {
@@ -139,7 +128,7 @@ export function MondayLabelEditor({
     isOnMonday === null ? 'unset' : isOnMonday === false ? 'no' : (board as CategoryKey | null) ?? 'unset'
 
   return (
-    <div ref={ref} className="relative inline-block" onKeyDown={onKeyDown}>
+    <div ref={ref} className="inline-block" onKeyDown={onKeyDown}>
       <button
         ref={triggerRef}
         type="button"
@@ -164,12 +153,14 @@ export function MondayLabelEditor({
         <ChevronDown className="h-2.5 w-2.5 opacity-60" />
       </button>
 
-      {open && (
-        <div
-          ref={panelRef}
-          role="menu"
-          className="absolute left-0 top-full z-20 mt-1 min-w-[220px] rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-bg-primary)] p-1 shadow-md"
-        >
+      <AnchoredMenu
+        open={open}
+        anchorRef={triggerRef}
+        onClose={() => { setOpen(false); setError(null) }}
+        panelRef={panelRef}
+        minWidth={230}
+        label="Set Monday label"
+      >
           <MenuItem
             value="no"
             currentValue={currentValue}
@@ -211,8 +202,7 @@ export function MondayLabelEditor({
               {error}
             </p>
           )}
-        </div>
-      )}
+      </AnchoredMenu>
     </div>
   )
 }
