@@ -221,6 +221,18 @@ export async function setMondayLabel(formData: FormData): Promise<void> {
 
   const svc = createServiceClient()
 
+  // Placing a lead on a Not-Relevant board means it is not relevant. The
+  // Monday sync has always written both together (see
+  // refresh_profiles_from_monday), but the manual override wrote only the
+  // board — so an operator picking "Not relevant" here saw the badge flip to
+  // "On Monday" while the lead stayed visible and kept getting enriched.
+  const NOT_RELEVANT_BOARDS = new Set(['not_relevant_leads', 'not_relevant_leads_updates'])
+  // Attribution that lets us tell "hidden because of this board" apart from
+  // "hidden because an operator flagged it", so moving off the board only
+  // clears the flag we set.
+  const BY_BOARD = 'monday:not_relevant_leads'
+  const now = new Date().toISOString()
+
   let patch: Record<string, unknown>
   switch (value) {
     case 'clear':
@@ -236,7 +248,7 @@ export async function setMondayLabel(formData: FormData): Promise<void> {
         is_on_monday: false,
         monday_board: null,
         monday_item_id: null,
-        monday_overridden_at: new Date().toISOString(),
+        monday_overridden_at: now,
       }
       break
     default:
@@ -244,8 +256,28 @@ export async function setMondayLabel(formData: FormData): Promise<void> {
       patch = {
         is_on_monday: true,
         monday_board: value,
-        monday_overridden_at: new Date().toISOString(),
+        monday_overridden_at: now,
       }
+  }
+
+  if (value !== 'clear' && NOT_RELEVANT_BOARDS.has(value)) {
+    patch.is_not_relevant = true
+    patch.not_relevant_marked_at = now
+    patch.not_relevant_marked_by = BY_BOARD
+  } else {
+    // Moving off a not-relevant board — or clearing the override — lifts the
+    // flag, but only when this is what put it there.
+    const { data: before } = await svc
+      .from('google_lead_gen_table')
+      .select('not_relevant_marked_by')
+      .eq('id', leadId)
+      .maybeSingle()
+    const markedBy = (before as { not_relevant_marked_by: string | null } | null)?.not_relevant_marked_by
+    if (markedBy === BY_BOARD) {
+      patch.is_not_relevant = false
+      patch.not_relevant_marked_at = null
+      patch.not_relevant_marked_by = null
+    }
   }
 
   const { error } = await svc.from('google_lead_gen_table').update(patch).eq('id', leadId)

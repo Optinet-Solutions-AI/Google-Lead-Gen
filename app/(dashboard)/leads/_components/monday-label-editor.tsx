@@ -161,13 +161,16 @@ export function MondayLabelEditor({
         minWidth={230}
         label="Set Monday label"
       >
-          <MenuItem
+        <p className="px-2 pb-1 pt-1 text-[10px] leading-snug text-[color:var(--color-text-secondary)]">
+          Where does this website already exist on Monday?
+        </p>
+        <MenuItem
             value="no"
             currentValue={currentValue}
             onClick={() => submit('no')}
             disabled={pending}
           />
-          <SectionLabel>Items</SectionLabel>
+          <SectionLabel>Boards</SectionLabel>
           {ITEM_CATEGORIES.map(c => (
             <MenuItem
               key={c}
@@ -177,7 +180,7 @@ export function MondayLabelEditor({
               disabled={pending}
             />
           ))}
-          <SectionLabel>Updates (mention in body text)</SectionLabel>
+          <SectionLabel>Boards — mentioned in an update</SectionLabel>
           {UPDATE_CATEGORIES.map(c => (
             <MenuItem
               key={c}
@@ -233,8 +236,12 @@ function MenuItem({
       <span className={['rounded-full px-2 py-0.5 text-[10px] font-medium', meta.cls].join(' ')}>
         {meta.label}
       </span>
-      {active && (
+      {active ? (
         <span className="text-[10px] text-[color:var(--color-text-secondary)]">current</span>
+      ) : (
+        value.startsWith('not_relevant_leads') && (
+          <span className="text-[10px] text-[color:var(--color-text-secondary)]">also hides it</span>
+        )
       )}
     </button>
   )
