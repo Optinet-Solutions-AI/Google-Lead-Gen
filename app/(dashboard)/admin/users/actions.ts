@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { logActivity } from '@/lib/activity-log'
+import { checkPassword } from '@/lib/auth/password-policy'
 
 export type CreateUserState =
   | { status: 'ok'; message: string; username: string }
@@ -56,8 +57,9 @@ export async function createUserAction(
       error: 'Username must be 2–32 characters, lowercase a–z / 0–9 / . _ - only.',
     }
   }
-  if (password.length < 12) {
-    return { status: 'error', error: 'Password must be at least 12 characters.' }
+  const strength = checkPassword(password)
+  if (!strength.ok) {
+    return { status: 'error', error: strength.error }
   }
 
   const svc = createServiceClient()

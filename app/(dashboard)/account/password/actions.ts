@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { verifyUserPassword } from '@/lib/auth/verify-password'
+import { checkPassword } from '@/lib/auth/password-policy'
 
 export type ChangePasswordState =
   | { status: 'ok'; message: string }
@@ -22,11 +23,12 @@ export async function changePasswordAction(
   if (!currentPassword || !newPassword || !confirmPassword) {
     return { status: 'error', error: 'Fill in all three fields.' }
   }
-  // Min length matches the admin-create policy in admin/users/actions.ts.
-  // Without parity, an admin-set 12-char password could be downgraded to
-  // 8 by the user immediately after first login.
-  if (newPassword.length < 12) {
-    return { status: 'error', error: 'New password must be at least 12 characters.' }
+  // One policy for every place a password is set — see lib/auth/password-policy.
+  // Without parity, an admin-set password could be downgraded the moment the
+  // user reached this form.
+  const strength = checkPassword(newPassword)
+  if (!strength.ok) {
+    return { status: 'error', error: strength.error }
   }
   if (newPassword !== confirmPassword) {
     return { status: 'error', error: 'New password and confirmation do not match.' }

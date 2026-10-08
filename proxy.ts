@@ -82,6 +82,25 @@ export async function proxy(request: NextRequest) {
     return redirect
   }
 
+  // An account issued a temporary password cannot go anywhere until it has
+  // chosen its own. The flag lives in app_metadata — service-role only — so
+  // the account cannot clear its own gate, and it rides along on the
+  // getUser() call the proxy already makes, costing no extra round trip.
+  //
+  // The sign-out route stays reachable: someone handed the wrong temporary
+  // password needs a way back out without clearing cookies by hand.
+  if (
+    result.user.app_metadata?.must_change_password === true &&
+    !pathname.startsWith('/change-password') &&
+    !pathname.startsWith('/auth/sign-out') &&
+    !pathname.startsWith('/api/')
+  ) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/change-password'
+    url.search = ''
+    return NextResponse.redirect(url)
+  }
+
   return result.response
 }
 
