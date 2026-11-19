@@ -40,10 +40,17 @@ type ResultRow = {
   seen_on: 'desktop'
 }
 
-/** Env first, then system_settings — the key survives a redeploy either way. */
+/**
+ * Database first, environment second.
+ *
+ * worker.py read env first, which was right for a VM whose env an operator
+ * could edit over SSH. On Vercel it is backwards: a stale APIFY_TOKEN left in
+ * the project settings would quietly outrank a key rotated through
+ * /admin/integrations, and the rotation would look like it had no effect.
+ * The integrations registry already calls this secret `kind: 'db'` with env
+ * as the fallback — this makes the code agree with it.
+ */
 export async function resolveApifyToken(): Promise<string | null> {
-  const env = (process.env.APIFY_TOKEN ?? '').trim()
-  if (env) return env
   const svc = createServiceClient()
   const { data } = await svc
     .from('system_settings')
@@ -51,7 +58,9 @@ export async function resolveApifyToken(): Promise<string | null> {
     .eq('key', 'apify_api_token')
     .maybeSingle()
   const v = (data as { value?: unknown } | null)?.value
-  return typeof v === 'string' && v.trim() ? v.trim() : null
+  if (typeof v === 'string' && v.trim()) return v.trim()
+  const env = (process.env.APIFY_TOKEN ?? '').trim()
+  return env || null
 }
 
 /**
