@@ -30,6 +30,7 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/api/monday/webhook') ||
     pathname.startsWith('/api/monday/sync') ||
     pathname.startsWith('/api/scheduler/tick') ||
+    pathname.startsWith('/api/scrape/dispatch') ||
     pathname.startsWith('/api/proxy/bandwidth/refresh') ||
     pathname.startsWith('/api/ai-analysis/') ||
     pathname.startsWith('/api/enrichment/') ||
@@ -127,6 +128,6 @@ function isHardAuthError(e: unknown): boolean {
 export const config = {
   // Run on all routes except static assets + endpoints that authenticate themselves.
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|api/monday/webhook|api/monday/sync|api/scheduler/tick|api/proxy/bandwidth/refresh|api/ai-analysis|api/enrichment).*)',
+    '/((?!_next/static|_next/image|favicon.ico|api/monday/webhook|api/monday/sync|api/scheduler/tick|api/scrape/dispatch|api/proxy/bandwidth/refresh|api/ai-analysis|api/enrichment).*)',
   ],
 }

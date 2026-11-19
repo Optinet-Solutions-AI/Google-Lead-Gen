@@ -390,10 +390,11 @@ export async function enqueueScrape(
     if (eng === 'bing') {
       return [{ ...r, scrape_source: 'apify', batch_group_id: groupId, priority: (r.priority ?? 5) + 10 }]
     }
-    return [
-      { ...r, scrape_source: 'apify', result_type_filter: 'Organic', batch_group_id: groupId, priority: (r.priority ?? 5) + 10 },
-      { ...r, scrape_source: 'vm', result_type_filter: 'PPC', batch_group_id: groupId },
-    ]
+    // Google used to fan out into an Apify organic job plus a VM PPC job.
+    // Both halves of that are gone: Google's casino ads are policy-blocked
+    // (the last 200 VM PPC jobs returned zero ads between them), and the VM
+    // fleet went away with the AWS account. One Apify job, like Bing.
+    return [{ ...r, scrape_source: 'apify', batch_group_id: groupId, priority: (r.priority ?? 5) + 10 }]
   })
 
   // Daily-quota gate. Admins are exempt; everyone else gets up to

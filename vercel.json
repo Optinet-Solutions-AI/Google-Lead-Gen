@@ -6,6 +6,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/scrape/dispatch",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/monday/sync?board=leads",
       "schedule": "0 23 * * *"
     },
